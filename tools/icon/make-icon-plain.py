@@ -22,7 +22,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 SRC = os.environ.get("ICON_SRC") or os.path.join(HERE, "source.png")
 RES = os.path.join(REPO, "app", "src", "main", "res")
-FILL = float(os.environ.get("ICON_FILL", "0.471"))
+FILL = float(os.environ.get("ICON_FILL", "0.75"))
 BG = (255, 255, 255, 255)
 VISIBLE = 72.0 / 108.0  # 系统可见区 / 画布
 
@@ -116,20 +116,16 @@ for name in ("ic_launcher.xml", "ic_launcher_round.xml"):
 
 # ---- 预览：旧 61% 圆形(标红被切部分) / 新比例圆形 / 新比例 48px ----
 S = 432
-old61 = compose(S, 0.611)
-lost_n, total, lost, nonwhite = lost_ratio(old61)
-print("  61%% 比例在圆形下被切 %d/%d 像素 (%.2f%%)" % (lost_n, total, 100.0 * lost_n / total))
-vis = np.asarray(old61.convert("RGB")).copy()
-vis[lost] = [255, 40, 40]
-old_marked = Image.fromarray(vis)
-
 new_c = compose(S, FILL)
-ln, tt, _, _ = lost_ratio(new_c)
+ln, tt, lost, nonwhite = lost_ratio(new_c)
 print("  %.3f 比例在圆形下被切 %d/%d 像素 (%.2f%%)" % (FILL, ln, tt, 100.0 * ln / tt))
+vis = np.asarray(new_c.convert("RGB")).copy()
+vis[lost] = [255, 40, 40]
+marked = Image.fromarray(vis)
 
 out = os.path.join(HERE, "out", "preview")
 os.makedirs(out, exist_ok=True)
-items = [circle(old_marked), circle(new_c),
+items = [marked, circle(new_c),
          new_c.resize((48, 48), Image.LANCZOS).resize((S, S), Image.NEAREST)]
 sheet = Image.new("RGBA", (S * 3 + 80, S + 40), (22, 24, 32, 255))
 for i, im2 in enumerate(items):
