@@ -417,6 +417,9 @@ class MainActivity : Activity() {
         card.addView(portrait, matchWrap())
         card.addView(hintText("Ponko · 名字来自日语「ポンコツ」（破铜烂铁）——脑子不中用，但可以随时换成最好的模型。\n模型与推理全部在本机离线运行，对话记录只保存在设备本地。"))
 
+        card.addView(pageTitle("思考模式"), matchWrap().apply { topMargin = dp(16) })
+        card.addView(hintText("开启后模型先输出推理过程再回答（更慢）。切换开关会在下一条消息生效（LiteRT 会话自动按新模式重建，历史保留）。GGUF 模型通过推理预算/模板参数控制，不支持的模型可能仍会思考。"))
+
         sv.addView(card, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
         return sv
@@ -629,13 +632,6 @@ class MainActivity : Activity() {
             buttonTintList = ColorStateList.valueOf(C_PRIMARY)
         }
         bar.addView(thinkCheck, matchWrap())
-        bar.addView(TextView(this).apply {
-            text = "开启后模型先输出推理过程再回答（更慢）。切换开关会在下一条消息生效（LiteRT 会话自动按新模式重建，历史保留）。GGUF 模型通过推理预算/模板参数控制，不支持的模型可能仍会思考。"
-            textSize = 10.5f
-            setTextColor(C_SUBTEXT)
-            setLineSpacing(dp(2).toFloat(), 1f)
-            setPadding(dp(2), 0, dp(2), dp(4))
-        }, matchWrap())
 
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
