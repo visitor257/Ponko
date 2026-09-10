@@ -117,6 +117,8 @@ class MainActivity : Activity() {
     private lateinit var tabModels: View
     private lateinit var tabSettings: View
     private lateinit var inputBar: View
+    private lateinit var appBarMenu: View
+    private lateinit var appBarPlus: View
     private lateinit var drawerPanel: LinearLayout
     private lateinit var drawerMask: View
     private lateinit var drawerBody: LinearLayout
@@ -299,7 +301,8 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        r1.addView(iconButton("☰") { openDrawer() }, wrapWrap())
+        appBarMenu = iconButton("☰") { openDrawer() }
+        r1.addView(appBarMenu, wrapWrap())
 
         val titleBox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -327,7 +330,8 @@ class MainActivity : Activity() {
         titleBox.addView(statusRow, matchWrap())
 
         r1.addView(titleBox, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        r1.addView(iconButton("＋") { newSession() }, wrapWrap())
+        appBarPlus = iconButton("＋") { newSession() }
+        r1.addView(appBarPlus, wrapWrap())
         bar.addView(r1, matchWrap())
         return bar
     }
@@ -395,7 +399,7 @@ class MainActivity : Activity() {
         return sv
     }
 
-    /** 设置页：生成参数 + 对话管理 + 关于。 */
+    /** 关于页：角色原图 + 说明。 */
     private fun buildSettingsPage(): View {
         val sv = ScrollView(this).apply {
             clipToPadding = false
@@ -403,23 +407,7 @@ class MainActivity : Activity() {
         }
         val card = card()
 
-        card.addView(pageTitle("生成"))
-        thinkCheck = CheckBox(this).apply {
-            text = "思考模式（先推理再回答，需模型支持）"
-            textSize = 13f
-            setTextColor(C_TEXT)
-            isChecked = true
-            buttonTintList = ColorStateList.valueOf(C_PRIMARY)
-        }
-        card.addView(thinkCheck, matchWrap().apply { topMargin = dp(6) })
-        card.addView(hintText("开启后模型先输出推理过程再回答（更慢）。切换开关会在下一条消息生效（LiteRT 会话自动按新模式重建，历史保留）。GGUF 模型通过推理预算/模板参数控制，不支持的模型可能仍会思考。"))
-
-        card.addView(pageTitle("对话"), matchWrap().apply { topMargin = dp(16) })
-        card.addView(hintText("新建 / 切换对话：点左上角 ☰ 打开抽屉。"))
-        card.addView(actionButton("删除当前对话") { confirmDeleteSession(current) },
-            matchWrap().apply { topMargin = dp(10) })
-
-        card.addView(pageTitle("关于"), matchWrap().apply { topMargin = dp(16) })
+        card.addView(pageTitle("关于"))
         val portrait = ImageView(this).apply {
             setImageResource(R.drawable.about_portrait)
             adjustViewBounds = true
@@ -467,7 +455,7 @@ class MainActivity : Activity() {
         val items = listOf(
             Triple("💬", "对话", 0),
             Triple("🧠", "模型", 1),
-            Triple("⚙", "设置", 2),
+            Triple("ℹ️", "关于", 2),
         )
         for ((icon, label, idx) in items) {
             val item = LinearLayout(this).apply {
@@ -499,6 +487,9 @@ class MainActivity : Activity() {
         tabModels.visibility = if (index == 1) View.VISIBLE else View.GONE
         tabSettings.visibility = if (index == 2) View.VISIBLE else View.GONE
         inputBar.visibility = if (index == 0) View.VISIBLE else View.GONE
+        val isChat = index == 0
+        appBarMenu.visibility = if (isChat) View.VISIBLE else View.INVISIBLE
+        appBarPlus.visibility = if (isChat) View.VISIBLE else View.INVISIBLE
         for (i in navIcons.indices) {
             val c = if (i == currentTab) C_PRIMARY else C_SUBTEXT
             navIcons[i].setTextColor(c)
@@ -624,11 +615,31 @@ class MainActivity : Activity() {
 
     private fun buildInputBar(): View {
         val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.WHITE)
+            setPadding(dp(10), dp(4), dp(10), dp(8))
+            elevation = dp(6).toFloat()
+        }
+
+        thinkCheck = CheckBox(this).apply {
+            text = "思考模式（先推理再回答，需模型支持）"
+            textSize = 12.5f
+            setTextColor(C_TEXT)
+            isChecked = true
+            buttonTintList = ColorStateList.valueOf(C_PRIMARY)
+        }
+        bar.addView(thinkCheck, matchWrap())
+        bar.addView(TextView(this).apply {
+            text = "开启后模型先输出推理过程再回答（更慢）。切换开关会在下一条消息生效（LiteRT 会话自动按新模式重建，历史保留）。GGUF 模型通过推理预算/模板参数控制，不支持的模型可能仍会思考。"
+            textSize = 10.5f
+            setTextColor(C_SUBTEXT)
+            setLineSpacing(dp(2).toFloat(), 1f)
+            setPadding(dp(2), 0, dp(2), dp(4))
+        }, matchWrap())
+
+        val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.BOTTOM
-            setBackgroundColor(Color.WHITE)
-            setPadding(dp(10), dp(8), dp(10), dp(8))
-            elevation = dp(6).toFloat()
         }
 
         inputEdit = EditText(this).apply {
@@ -645,7 +656,7 @@ class MainActivity : Activity() {
             maxLines = 5
             gravity = Gravity.TOP or Gravity.START
         }
-        bar.addView(inputEdit, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        row.addView(inputEdit, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
 
         sendButton = TextView(this).apply {
             text = "↑"
@@ -656,7 +667,8 @@ class MainActivity : Activity() {
             isClickable = true
             setOnClickListener { onSendOrStop() }
         }
-        bar.addView(sendButton, LinearLayout.LayoutParams(dp(44), dp(44)).apply { leftMargin = dp(8) })
+        row.addView(sendButton, LinearLayout.LayoutParams(dp(44), dp(44)).apply { leftMargin = dp(8) })
+        bar.addView(row, matchWrap())
         return bar
     }
 
@@ -905,8 +917,7 @@ class MainActivity : Activity() {
                     loadButton.background = rounded(Color.rgb(246, 247, 250), 12,
                         strokeDp = 1, strokeColor = Color.rgb(219, 224, 234))
                     loadButton.setTextColor(C_TEXT)
-                    switchTab(0)
-                    addSystemHint("模型加载完成，开始对话吧。")
+                    addSystemHint("模型加载完成，可以开始对话了。")
                 }
             } catch (e: Throwable) {
                 withContext(Dispatchers.Main) {
