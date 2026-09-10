@@ -43,7 +43,8 @@ gradle assembleDebug
 
 ## 许可
 
-[MIT](LICENSE)
+- **代码**：[MIT](LICENSE)
+- **美术资源**（应用图标、角色立绘、原始画稿）：版权归作者所有，保留所有权利，**不在 MIT 许可范围内** —— 详见 [NOTICE](NOTICE)
 
 ## 致谢
 
