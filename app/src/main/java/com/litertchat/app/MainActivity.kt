@@ -35,6 +35,7 @@ import com.google.ai.edge.litertlm.EngineConfig
 import com.google.ai.edge.litertlm.Message
 import com.google.ai.edge.litertlm.ThinkingConfig
 import kotlinx.coroutines.flow.channelFlow
+import net.ladenthin.llama.LlamaIterator
 import net.ladenthin.llama.LlamaModel
 import net.ladenthin.llama.parameters.InferenceParameters
 import net.ladenthin.llama.parameters.ModelParameters
@@ -106,6 +107,7 @@ class MainActivity : Activity() {
 
     /** GGUF（llama.cpp）后端实例；非空表示当前加载的是 .gguf 模型。 */
     private var llamaModel: LlamaModel? = null
+    private var ggufIterator: LlamaIterator? = null
 
     private lateinit var markwonFull: Markwon
     private lateinit var markwonStream: Markwon
@@ -925,6 +927,10 @@ class MainActivity : Activity() {
     private fun onSendOrStop() {
         val job = genJob
         if (job != null && job.isActive) {
+            // 关键：先让原生侧真正停下来。只取消协程 Flow 的话，LiteRT / llama.cpp 的
+            // native 推理线程还在跑，下一次发送会撞上同一份上下文直接卡死。
+            runCatching { conversation?.cancelProcess() }
+            runCatching { ggufIterator?.cancel() }
             job.cancel()
             toast("已中断生成")
         } else {
@@ -1253,13 +1259,17 @@ class MainActivity : Activity() {
 
                     val flow = channelFlow {
                         withContext(Dispatchers.IO) {
-                            val it = lm.generateChat(params)
+                            val iterable = lm.generateChat(params)
+                            val it = iterable.iterator()
+                            ggufIterator = it
                             try {
-                                for (out in it) {
+                                while (it.hasNext()) {
+                                    val out = it.next()
                                     if (out.text.isNotEmpty()) send(out.text)
                                 }
                             } finally {
                                 runCatching { it.close() }
+                                ggufIterator = null
                             }
                         }
                     }
@@ -1292,17 +1302,27 @@ class MainActivity : Activity() {
                     ),
                 ).collect { msg ->
                     val delta = extractText(msg)
-                    val thoughtDelta = msg.channels["thought"]?.takeIf { it.isNotEmpty() }
-                    if (thoughtDelta != null) {
-                        thoughtBuf.append(thoughtDelta)
-                        turn.thought = thoughtBuf.toString()
-                        if (ai.thoughtBox.visibility != View.VISIBLE) ai.thoughtBox.visibility = View.VISIBLE
-                        renderThought(false)
+                    val thoughtDelta = msg.channels["thought"]
+                    if (!thoughtDelta.isNullOrEmpty()) {
+                        val cur = thoughtBuf.toString()
+                        val merged = mergeStreamDelta(cur, thoughtDelta)
+                        if (merged != cur) {
+                            thoughtBuf.setLength(0)
+                            thoughtBuf.append(merged)
+                            turn.thought = merged
+                            if (ai.thoughtBox.visibility != View.VISIBLE) ai.thoughtBox.visibility = View.VISIBLE
+                            renderThought(false)
+                        }
                     }
                     if (delta.isNotEmpty()) {
-                        answerBuf.append(delta)
-                        turn.answer = answerBuf.toString()
-                        renderAnswer(false)
+                        val cur = answerBuf.toString()
+                        val merged = mergeStreamDelta(cur, delta)
+                        if (merged != cur) {
+                            answerBuf.setLength(0)
+                            answerBuf.append(merged)
+                            turn.answer = merged
+                            renderAnswer(false)
+                        }
                     }
                     scrollToBottom()
                 }
@@ -1348,6 +1368,24 @@ class MainActivity : Activity() {
 
     private fun extractText(m: Message): String =
         m.contents.contents.filterIsInstance<Content.Text>().joinToString("") { it.text }
+
+    /**
+     * LiteRT 的流式片段语义在版本间不完全一致（可能是增量片段，也可能带累积内容）。
+     * 统一兼容，避免出现「您好，有什么可以帮你？」被反复拼接的情况：
+     *   - 与已累积内容完全相同     → 重复快照，丢弃
+     *   - 新片段以已累积内容开头   → 全量快照，用新片段替换
+     *   - 已累积内容以新片段结尾   → 尾部重复片段，丢弃（忽略首尾空白）
+     *   - 其余                     → 按增量追加
+     */
+    private fun mergeStreamDelta(cur: String, delta: String): String {
+        if (cur.isEmpty() || delta.isEmpty()) return cur + delta
+        if (delta == cur) return cur
+        if (delta.startsWith(cur)) return delta
+        if (cur.endsWith(delta)) return cur
+        val t = delta.trim()
+        if (t.isNotEmpty() && cur.endsWith(t)) return cur
+        return cur + delta
+    }
 
     private class AiArea(
         val root: LinearLayout,
