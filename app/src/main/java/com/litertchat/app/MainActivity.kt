@@ -1232,15 +1232,22 @@ class MainActivity : Activity() {
             if (!force && now - lastRender < 120) return
             lastRender = now
             val md = answerBuf.toString()
-            if (md.isNotEmpty()) markwonStream.setMarkdown(ai.answer, md)
+            if (md.isNotEmpty()) {
+                // 流式重渲染可能把焦点从输入框抢走：用户正在打字时把焦点还回去
+                val hadFocus = inputEdit.hasFocus()
+                markwonStream.setMarkdown(ai.answer, md)
+                if (hadFocus && !inputEdit.hasFocus()) inputEdit.requestFocus()
+            }
         }
 
         fun renderThought(force: Boolean) {
             val now = SystemClock.uptimeMillis()
             if (!force && now - lastRender < 90) return
+            val hadFocus = inputEdit.hasFocus()
             ai.thoughtBody.text = thoughtBuf.toString()
             ai.thoughtHeader.text = if (ai.thoughtBody.visibility == View.VISIBLE)
                 "🤔 思考过程（点击收起）" else "🤔 思考过程（点击展开）"
+            if (hadFocus && !inputEdit.hasFocus()) inputEdit.requestFocus()
         }
 
         genJob = scope.launch {
@@ -1457,6 +1464,8 @@ class MainActivity : Activity() {
             setTextColor(C_TEXT)
             setLineSpacing(dp(3).toFloat(), 1f)
             setTextIsSelectable(true)
+            // 不参与键盘焦点争夺：否则流式重渲染时会把焦点从输入框抢走，导致打不了字
+            isFocusable = false
         }
         wrap.addView(answer, matchWrap().apply { topMargin = dp(4) })
 
@@ -1508,9 +1517,12 @@ class MainActivity : Activity() {
         if (scrollPending) return
         scrollPending = true
         scrollView.post {
+            // 滚动到底不应影响输入框焦点（用户可能正在打字）
+            val hadFocus = inputEdit.hasFocus()
             scrollView.fullScroll(View.FOCUS_DOWN)
             scrollPending = false
             refreshFollowState()
+            if (hadFocus && !inputEdit.hasFocus()) inputEdit.requestFocus()
         }
     }
 
