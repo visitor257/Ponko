@@ -18,6 +18,7 @@ import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
@@ -419,6 +420,13 @@ class MainActivity : Activity() {
             matchWrap().apply { topMargin = dp(10) })
 
         card.addView(pageTitle("关于"), matchWrap().apply { topMargin = dp(16) })
+        val portrait = ImageView(this).apply {
+            setImageResource(R.drawable.about_portrait)
+            adjustViewBounds = true
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setPadding(0, dp(10), 0, 0)
+        }
+        card.addView(portrait, matchWrap())
         card.addView(hintText("Ponko · 名字来自日语「ポンコツ」（破铜烂铁）——脑子不中用，但可以随时换成最好的模型。\n模型与推理全部在本机离线运行，对话记录只保存在设备本地。"))
 
         sv.addView(card, FrameLayout.LayoutParams(
