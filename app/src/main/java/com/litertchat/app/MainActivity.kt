@@ -420,6 +420,9 @@ class MainActivity : Activity() {
         card.addView(pageTitle("思考模式"), matchWrap().apply { topMargin = dp(16) })
         card.addView(hintText("开启后模型先输出推理过程再回答（更慢）。切换开关会在下一条消息生效（LiteRT 会话自动按新模式重建，历史保留）。GGUF 模型通过推理预算/模板参数控制，不支持的模型可能仍会思考。"))
 
+        card.addView(pageTitle("许可"), matchWrap().apply { topMargin = dp(16) })
+        card.addView(hintText("源代码：MIT License\n美术资源（应用图标、角色立绘、原始画稿）：版权归作者所有，保留所有权利，不适用 MIT 许可。\n第三方组件：LiteRT-LM（Apache-2.0）、llama.cpp（MIT）、Markwon（Apache-2.0）"))
+
         sv.addView(card, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
         return sv
