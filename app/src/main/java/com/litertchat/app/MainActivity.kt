@@ -105,6 +105,9 @@ class MainActivity : Activity() {
     /** 当前会话创建时的思考开关状态；与复选框不一致时需重建会话。 */
     private var convThinking: Boolean? = null
 
+    /** 中断后 LiteRT 会话可能已不可用：标记下一条消息发送前静默重建。 */
+    private var convNeedsRebuild = false
+
     /** GGUF（llama.cpp）后端实例；非空表示当前加载的是 .gguf 模型。 */
     private var llamaModel: LlamaModel? = null
     private var ggufIterator: LlamaIterator? = null
@@ -932,6 +935,14 @@ class MainActivity : Activity() {
             runCatching { conversation?.cancelProcess() }
             runCatching { ggufIterator?.cancel() }
             job.cancel()
+            // 不能只依赖协程的 finally 来复位：native 推理不响应协程取消时 finally 会迟迟不执行，
+            // busy 一直卡在 true，之后每条消息都被「正在生成中」挡回来。这里主动复位。
+            genJob = null
+            if (busy) setBusy(false)
+            setStoppingUi(false)
+            // cancelProcess() 之后 LiteRT 的 Conversation 可能已不可用：
+            // 标记下一条消息发送前用历史静默重建，否则中断后再也发不出内容。
+            if (conversation != null) convNeedsRebuild = true
             toast("已中断生成")
         } else {
             doSend()
@@ -1058,7 +1069,7 @@ class MainActivity : Activity() {
      * 会话跑起来后仅改 per-call 的 ThinkingConfig 不会生效（尤其是 关→开），
      * 所以必须按新模式重建会话；历史通过 initialMessages 保留。
      */
-    private fun rebuildConversation() {
+    private fun rebuildConversation(silent: Boolean = false) {
         val eng = engine ?: return
         val thinking = thinkCheck.isChecked
         try { conversation?.close() } catch (_: Throwable) {}
@@ -1073,10 +1084,12 @@ class MainActivity : Activity() {
             )
         }
         convThinking = thinking
-        addSystemHint(
-            if (thinking) "🤔 已切换为思考模式（会话已按新模式重建，历史保留）"
-            else "已切换为普通模式（会话已按新模式重建，历史保留）"
-        )
+        if (!silent) {
+            addSystemHint(
+                if (thinking) "🤔 已切换为思考模式（会话已按新模式重建，历史保留）"
+                else "已切换为普通模式（会话已按新模式重建，历史保留）"
+            )
+        }
     }
 
     /** 重建 LiteRT 会话（若模型已加载）并把聊天区重绘为当前对话的内容。 */
@@ -1186,8 +1199,14 @@ class MainActivity : Activity() {
         }
         var conv: Conversation? = null
         if (!isGgufRun) {
-            // 思考开关变了 → 发送前重建会话，否则新设置不生效
-            if (convThinking != thinkCheck.isChecked) rebuildConversation()
+            if (convNeedsRebuild) {
+                // 上一轮被中断：cancelProcess() 之后会话可能已不可用，静默用历史重建
+                convNeedsRebuild = false
+                rebuildConversation(silent = true)
+            } else if (convThinking != thinkCheck.isChecked) {
+                // 思考开关变了 → 发送前重建会话，否则新设置不生效
+                rebuildConversation()
+            }
             conv = conversation ?: run { toast("会话不可用，请重新加载模型"); return }
         }
 
