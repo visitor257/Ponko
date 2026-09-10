@@ -143,8 +143,6 @@ class MainActivity : Activity() {
     private var scrollPending = false
     /** Auto-scroll only while locked to the bottom; scrolling up unlocks it. */
     private var autoFollow = true
-    private var lastScrollY = 0
-    private var touchStartY = -1f
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -256,36 +254,10 @@ class MainActivity : Activity() {
             setMargins(0, 0, dp(16), dp(16))
         })
 
-        // 滚动规则（不依赖触摸事件，避免被气泡里的可选中 TextView 吃掉）：
-        //   往上翻（看更早内容）→ 立刻解除底部锁定，不再自动跟随；
-        //   往下翻并滚到最底 → 重新锁定，继续自动跟随。
-        scrollView.setOnScrollChangeListener { _, _, y, _, _ ->
-            val dy = y - lastScrollY
-            lastScrollY = y
-            if (dy < 0) {
-                if (autoFollow) {
-                    autoFollow = false
-                    refreshJumpButton()
-                }
-            } else if (dy > 0) {
-                refreshFollowState()
-            }
-        }
-        // 兜底：已经滚到顶部时 scrollY 不再变化，用触摸方向补判
-        scrollView.setOnTouchListener { _, e ->
-            when (e.actionMasked) {
-                MotionEvent.ACTION_DOWN -> touchStartY = e.y
-                MotionEvent.ACTION_MOVE -> {
-                    if (touchStartY < 0) {
-                        touchStartY = e.y
-                    } else if (e.y - touchStartY > dp(2) && autoFollow) {
-                        autoFollow = false
-                        refreshJumpButton()
-                    }
-                }
-            }
-            false
-        }
+        // 滚动规则：只看「距离底部的距离」，不看滚动方向（方向判在可选中文本上是不可靠的）。
+        //   距底在阈值（约 15 行正文）以内 → 视为已在底部：隐藏「回到底部」按钮，并恢复自动跟随；
+        //   超过阈值 → 停止自动跟随，显示「回到底部」按钮。
+        scrollView.setOnScrollChangeListener { _, _, _, _, _ -> refreshFollowState() }
         return chatWrap
     }
 
@@ -1485,17 +1457,29 @@ class MainActivity : Activity() {
         }
     }
 
-    /** 滚到（或超过）底部时才恢复自动跟随；中途不断开，避免打断平滑回底动画。 */
+    /** 「回到底部」判定阈值：正文 15 行的高度左右。 */
+    private val jumpThresholdPx: Int by lazy {
+        val line = (16f * resources.displayMetrics.scaledDensity * 1.4f).toInt() + dp(3)
+        line * 15
+    }
+
+    /** 距内容底部的像素距离（负数按 0 处理）。 */
+    private fun distanceToBottom(): Int {
+        val child = scrollView.getChildAt(0) ?: return 0
+        return (child.height - (scrollView.scrollY + scrollView.height)).coerceAtLeast(0)
+    }
+
+    /** 按「距底部距离」统一更新自动跟随状态与「回到底部」按钮。 */
     private fun refreshFollowState() {
-        val child = scrollView.getChildAt(0) ?: return
-        if (scrollView.scrollY + scrollView.height >= child.bottom - dp(4)) autoFollow = true
+        autoFollow = distanceToBottom() <= jumpThresholdPx
         refreshJumpButton()
     }
 
     private fun refreshJumpButton() {
         val child = scrollView.getChildAt(0) ?: return
         val scrollable = child.height > scrollView.height + dp(16)
-        jumpButton.visibility = if (!autoFollow && scrollable) View.VISIBLE else View.GONE
+        jumpButton.visibility =
+            if (scrollable && distanceToBottom() > jumpThresholdPx) View.VISIBLE else View.GONE
     }
 
     /** 用户主动行为（发送消息等）：直接恢复跟随并滚到底。 */
@@ -1523,7 +1507,7 @@ class MainActivity : Activity() {
         busy = b
         loadButton.isEnabled = !b
         loadButton.alpha = if (b) 0.5f else 1f
-        inputEdit.isEnabled = !b
+        // 生成过程中不禁用输入框：可以照常打字（此时发送键是「停止」，只是不发送）
     }
 
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
