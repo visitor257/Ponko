@@ -33,3 +33,7 @@ desktop.ini
 
 # 日志
 *.log
+
+# ǩ��˽Կ
+*.jks
+*.keystore
