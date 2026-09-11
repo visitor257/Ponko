@@ -281,7 +281,11 @@ class DrawPage(
         stage("6 创建 ImageClient（隔离子进程 · " + (if (useGpu) "GPU" else "CPU") + "）")
         return try {
             client?.let { runCatching { it.close() } }
-            client = LlmedgeConfigFactory.cpuIsolatedClient(c.applicationContext, scope, useGpu)
+            // 注意：必须在主线程创建。llmedge 内部会启动 ValueAnimator，
+            // 在无 Looper 的后台线程会抛 “Animators may only be run on Looper threads”。
+            client = withContext(Dispatchers.Main) {
+                LlmedgeConfigFactory.cpuIsolatedClient(c.applicationContext, scope, useGpu)
+            }
             stage("7 ImageClient 创建 OK")
 
             val summary = buildString {
@@ -366,7 +370,9 @@ class DrawPage(
     suspend fun generateImage(
         prompt: String,
         onProgress: (Int, Int) -> Unit = { _, _ -> },
-    ): ImageData = withContext(Dispatchers.IO) {
+    ): ImageData {
+        // 不包 withContext：llmedge 内部会自己切线程（且需要 Looper 的地方它用主线程），
+        // 我们包 IO 反而会让它内部的 ValueAnimator 报“Animators may only be run on Looper threads”。
         val cli = client ?: throw IllegalStateException("绘图模型未加载")
         val main = mainModel ?: throw IllegalStateException("未选择绘图模型")
         val steps = stepsEdit.text.toString().toIntOrNull()?.coerceIn(1, 150) ?: 20
@@ -390,7 +396,7 @@ class DrawPage(
             )
         )
         onProgress(steps, steps)
-        ImageData(bmp, useSeed)
+        return ImageData(bmp, useSeed)
     }
 
     fun toBitmap(img: ImageData): Bitmap = img.bitmap
