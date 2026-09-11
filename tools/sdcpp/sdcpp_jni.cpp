@@ -74,11 +74,11 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeLastParams(JNIEnv* env, jobject /
     return env->NewStringUTF(g_last_dump.c_str());
 }
 
-// nativeCreate(modelPath, vaePath, nThreads, wtype) -> handle
+// nativeCreate(modelPath, vaePath, nThreads, wtype, flashAttn) -> handle
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_litertchat_app_draw_SdCppEngine_nativeCreate(
         JNIEnv* env, jobject /*thiz*/,
-        jstring modelPath, jstring vaePath, jint nThreads, jint wtype) {
+        jstring modelPath, jstring vaePath, jint nThreads, jint wtype, jboolean flashAttn) {
     if (modelPath == nullptr) return 0;
 
     std::string model, vae;
@@ -94,7 +94,11 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeCreate(
     // SD_TYPE_COUNT。实测把 -1 强转成 sd_type_t 会让 sd.cpp 内部查表越界，native 直接崩溃。
     if (wtype >= 0) p.wtype = static_cast<enum sd_type_t>(wtype);
     p.enable_mmap  = true;
-    p.flash_attn   = false;     // 华为/Mali 上不稳，先关
+    // 两个 FlashAttention 都要开：flash_attn 影响 CLIP，diffusion_flash_attn 影响 UNet（算力主体）。
+    // 实测不开比开慢约 28%（6 步 125s vs 98s）。注意 sd_ctx_params_init 默认都是 false。
+    const bool fa = (flashAttn == JNI_TRUE);
+    p.flash_attn           = fa;
+    p.diffusion_flash_attn = fa;
     p.lora_apply_mode = LORA_APPLY_AUTO;
 
     char* dump = sd_ctx_params_to_str(&p);

@@ -66,7 +66,7 @@ object SdCppEngine {
     /** 最近一次 new_sd_ctx 的完整参数（诊断加载失败用） */
     external fun nativeLastParams(): String
 
-    external fun nativeCreate(modelPath: String, vaePath: String?, nThreads: Int, wtype: Int): Long
+    external fun nativeCreate(modelPath: String, vaePath: String?, nThreads: Int, wtype: Int, flashAttn: Boolean): Long
 
     external fun nativeGenerate(
         handle: Long,
@@ -93,13 +93,17 @@ object SdCppEngine {
     /** 最近一次 new_sd_ctx 用的参数（多行文本） */
     fun lastParams(): String = runCatching { nativeLastParams() }.getOrDefault("")
 
-    /** 加载模型并返回 handle；0 表示失败。 */
+    /** 加载模型并返回 handle；0 表示失败。
+     *
+     *  flashAttn：CLIP 与 UNet 的 FlashAttention。实测不开会让每步慢约 28%，默认开。
+     */
     fun create(
         modelPath: String,
         vaePath: String?,
-        nThreads: Int = Runtime.getRuntime().availableProcessors().coerceIn(2, 6),
+        nThreads: Int = Runtime.getRuntime().availableProcessors().coerceIn(2, 4),
         wtype: Int = WTYPE_KEEP,
-    ): Long = nativeCreate(modelPath, vaePath, nThreads, wtype)
+        flashAttn: Boolean = true,
+    ): Long = nativeCreate(modelPath, vaePath, nThreads, wtype, flashAttn)
 
     /** 生成一张图；失败返回 null。 */
     fun render(

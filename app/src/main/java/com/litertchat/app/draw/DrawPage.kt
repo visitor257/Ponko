@@ -71,8 +71,11 @@ class DrawPage(
     private var mainModel: File? = null
     private var vaeModel: File? = null
 
-    /** 推理线程数：按 CPU 核数取 2~6（大核数附近最合适） */
-    private val nThreads: Int = Runtime.getRuntime().availableProcessors().coerceIn(2, 6)
+    /** 推理线程数：默认 4（多数手机的大核数；开太多会跑到小核上，反而变慢） */
+    private var nThreads: Int = 4
+
+    /** FlashAttention（CLIP + UNet）。实测不开每步慢约 28%（6 步 125s vs 98s）。 */
+    private var flashAttn: Boolean = true
 
     /** 外部（MainActivity）通知：当前已加载语言模型。用于「生成」按钮给出更准确的提示。 */
     var llmLoaded: Boolean = false
@@ -530,6 +533,7 @@ class DrawPage(
                 vaePath = vae?.absolutePath,
                 nThreads = nThreads,
                 wtype = SdCppEngine.WTYPE_KEEP,
+                flashAttn = flashAttn,
             )
             if (h == 0L) {
                 stage("5 创建失败：new_sd_ctx 返回 0")
@@ -548,7 +552,7 @@ class DrawPage(
                 append("已就绪：").append(main.name)
                 if (q != null) append("（").append(q).append("）")
                 if (vae != null) append("  +  ").append(vae.name)
-                append(" · CPU · ").append(nThreads).append(" 线程 · sd.cpp")
+                append(" · CPU · ").append(nThreads).append(" 线程 · ").append(if (flashAttn) "FA" else "无FA").append(" · sd.cpp")
             }
             statusText.post { statusText.text = summary }
             statusText.post { refreshQuantText() }
