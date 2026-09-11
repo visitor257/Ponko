@@ -27,6 +27,9 @@ struct SdHandle {
 
 SdHandle* g_active = nullptr;  // 同时只允许一个生成（进度回调是全局的）
 
+// 最近一次 new_sd_ctx 的参数字符串（供 Kotlin 写进日志文件，方便定位加载失败）
+std::string g_last_dump;
+
 const char* jstr(JNIEnv* env, jstring s, std::string& holder) {
     if (s == nullptr) return nullptr;
     const char* c = env->GetStringUTFChars(s, nullptr);
@@ -65,6 +68,12 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeInfo(JNIEnv* env, jobject /*thiz*
     return env->NewStringUTF(info.c_str());
 }
 
+// 最近一次 new_sd_ctx 用的完整参数（失败时写进日志文件用）
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_litertchat_app_draw_SdCppEngine_nativeLastParams(JNIEnv* env, jobject /*thiz*/) {
+    return env->NewStringUTF(g_last_dump.c_str());
+}
+
 // nativeCreate(modelPath, vaePath, nThreads, wtype) -> handle
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_litertchat_app_draw_SdCppEngine_nativeCreate(
@@ -81,12 +90,15 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeCreate(
     p.model_path   = model.c_str();
     p.vae_path     = vae.empty() ? nullptr : vae.c_str();
     p.n_threads    = (nThreads > 0) ? nThreads : sd_get_num_physical_cores();
-    p.wtype        = static_cast<enum sd_type_t>(wtype);
+    // wtype < 0 表示「保持模型原样」——此时【不能】覆盖，保留 sd_ctx_params_init 给的
+    // SD_TYPE_COUNT。实测把 -1 强转成 sd_type_t 会让 sd.cpp 内部查表越界，native 直接崩溃。
+    if (wtype >= 0) p.wtype = static_cast<enum sd_type_t>(wtype);
     p.enable_mmap  = true;
     p.flash_attn   = false;     // 华为/Mali 上不稳，先关
     p.lora_apply_mode = LORA_APPLY_AUTO;
 
     char* dump = sd_ctx_params_to_str(&p);
+    g_last_dump = dump ? dump : "";
     LOGI("new_sd_ctx: %s", dump ? dump : "(null)");
     if (dump) free(dump);
 

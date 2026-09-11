@@ -533,11 +533,15 @@ class DrawPage(
             )
             if (h == 0L) {
                 stage("5 创建失败：new_sd_ctx 返回 0")
+                runCatching { stage("4 参数：" + SdCppEngine.lastParams().replace("\n", "  |  ")) }
                 runCatching { stageFile.delete() }
                 return "加载失败：无法创建推理上下文（模型格式可能不受支持）"
             }
             sdHandle = h
             stage("5 上下文创建 OK")
+            runCatching {
+                stage("4 参数：" + SdCppEngine.lastParams().replace("\n", "  |  "))
+            }
 
             val q = GgufProbe.quantType(main)
             val summary = buildString {

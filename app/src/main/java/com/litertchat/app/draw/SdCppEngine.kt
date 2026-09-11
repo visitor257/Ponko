@@ -63,6 +63,9 @@ object SdCppEngine {
 
     external fun nativeInfo(): String
 
+    /** 最近一次 new_sd_ctx 的完整参数（诊断加载失败用） */
+    external fun nativeLastParams(): String
+
     external fun nativeCreate(modelPath: String, vaePath: String?, nThreads: Int, wtype: Int): Long
 
     external fun nativeGenerate(
@@ -86,6 +89,9 @@ object SdCppEngine {
     external fun nativeFree(handle: Long)
 
     fun info(): String = runCatching { nativeInfo() }.getOrDefault("(n/a)")
+
+    /** 最近一次 new_sd_ctx 用的参数（多行文本） */
+    fun lastParams(): String = runCatching { nativeLastParams() }.getOrDefault("")
 
     /** 加载模型并返回 handle；0 表示失败。 */
     fun create(
