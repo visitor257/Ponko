@@ -66,8 +66,6 @@ class DrawPage(
 
     // 控件
     private lateinit var statusText: TextView
-    private lateinit var modelBtn: Button
-    private lateinit var copyBar: ProgressBar
     private lateinit var modeTxt2Img: TextView
     private lateinit var modeImg2Img: TextView
     private lateinit var pickImgBtn: Button
@@ -93,21 +91,11 @@ class DrawPage(
             setBackgroundColor(0xFFF5F6F8.toInt())
         }
 
-        // ---- 模型卡片 ----
+        // ---- 模型状态（模型统一在「模型」页选择并加载） ----
         val modelCard = card()
         modelCard.addView(title("绘图模型（SD 1.5 · ONNX）"))
-        statusText = body("未选择模型 —— 点下面按钮选择包含 ONNX 模型的文件夹")
+        statusText = body("未加载 —— 请到「模型」页选择并加载绘图模型")
         modelCard.addView(statusText)
-        modelBtn = Button(c).apply {
-            text = "选择模型文件夹"
-            setOnClickListener { pickModelTree() }
-        }
-        modelCard.addView(modelBtn, matchWrap(top = 8))
-        copyBar = ProgressBar(c, null, android.R.attr.progressBarStyleHorizontal).apply {
-            max = 100
-            visibility = View.GONE
-        }
-        modelCard.addView(copyBar, matchWrap(top = 8))
         root.addView(modelCard)
 
         // ---- 模式 ----
@@ -194,7 +182,7 @@ class DrawPage(
         root.addView(resultImg, matchWrap())
 
         // 已有可用模型则直接加载
-        scope.launch { tryLoadExisting() }
+        scope.launch { loadModel() }
         return root
     }
 
@@ -203,14 +191,41 @@ class DrawPage(
         pipeline = null
     }
 
-    // ---------- 模型选择与复制 ----------
+    // ---------- 模型加载（入口统一在「模型」页，这里只提供能力） ----------
 
-    private fun pickModelTree() {
-        val it = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    /**
+     * 由模型页调用：把 SAF 选中的目录复制进私有目录并加载。
+     * @param onStage 进度回调（主线程）
+     * @return null 表示成功，否则为错误信息
+     */
+    suspend fun prepareFromTree(treeUri: Uri, onStage: (String) -> Unit): String? {
+        return try {
+            onStage("正在复制模型文件…")
+            val dest = File(c.filesDir, DIR_NAME)
+            withContext(Dispatchers.IO) { copyTree(treeUri, dest) }
+            onStage("正在加载模型…")
+            loadModel()
+        } catch (e: Throwable) {
+            "复制失败：${e.message}"
         }
-        @Suppress("DEPRECATION")
-        act.startActivityForResult(it, REQ_TREE)
+    }
+
+    /** 卸载绘图模型（模型页调用） */
+    fun unloadModel() {
+        runCatching { pipeline?.close() }
+        pipeline = null
+        modelSet = null
+        statusText.text = "未加载 —— 请到「模型」页选择并加载绘图模型"
+    }
+
+    /** 是否已加载绘图模型 */
+    fun hasModel(): Boolean = pipeline != null
+
+    /** 当前模型摘要文案 */
+    fun modelSummary(): String {
+        if (pipeline == null) return "未加载"
+        val s = modelSet
+        return "已就绪：SD 1.5" + if (s?.canImg2Img == true) "（支持图生图）" else "（仅文生图）"
     }
 
     private fun pickInputImage() {
@@ -226,11 +241,6 @@ class DrawPage(
     fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean {
         if (resultCode != Activity.RESULT_OK) return false
         when (requestCode) {
-            REQ_TREE -> {
-                val uri = data?.data ?: return true
-                importModelTree(uri)
-                return true
-            }
             REQ_IMAGE -> {
                 val uri = data?.data ?: return true
                 loadInputImage(uri)
@@ -238,25 +248,6 @@ class DrawPage(
             }
         }
         return false
-    }
-
-    /** 把 SAF 目录整体复制到 filesDir/draw/ ，然后加载 */
-    private fun importModelTree(treeUri: Uri) {
-        scope.launch {
-            copyBar.visibility = View.VISIBLE
-            progressText.text = "正在复制模型文件…"
-            try {
-                val dest = File(c.filesDir, DIR_NAME)
-                withContext(Dispatchers.IO) { copyTree(treeUri, dest) }
-                progressText.text = "复制完成，正在查找模型…"
-                tryLoadExisting()
-            } catch (e: Throwable) {
-                progressText.text = ""
-                toast("复制失败：${e.message}")
-            } finally {
-                copyBar.visibility = View.GONE
-            }
-        }
     }
 
     private fun copyTree(src: Uri, dest: File) {
@@ -321,31 +312,34 @@ class DrawPage(
 
     // ---------- 加载模型 ----------
 
-    private suspend fun tryLoadExisting() {
+    /** 在私有目录里查找并加载 SD 模型；返回 null 表示成功，否则为错误信息 */
+    private suspend fun loadModel(): String? {
         val root = File(c.filesDir, DIR_NAME)
         val found = withContext(Dispatchers.IO) { SdModelSet.find(root) }
         if (found == null) {
-            statusText.text = "未找到可用模型（需要 text_encoder/unet/vae_decoder + tokenizer）"
-            return
+            val msg = "未找到可用模型（需要 text_encoder/unet/vae_decoder + tokenizer）"
+            statusText.text = msg
+            return msg
         }
         val err = found.validate()
         if (err != null) {
-            statusText.text = "模型不完整：$err"
-            return
+            val msg = "模型不完整：$err"
+            statusText.text = msg
+            return msg
         }
         statusText.text = "正在加载模型…"
         try {
-            val p = withContext(Dispatchers.IO) {
-                val np = SdPipeline(found)
-                np
-            }
+            val p = withContext(Dispatchers.IO) { SdPipeline(found) }
             pipeline?.let { runCatching { it.close() } }
             pipeline = p
             modelSet = found
-            statusText.text = "已就绪：SD 1.5" + if (found.canImg2Img) "（支持图生图）" else "（仅文生图，缺 vae_encoder）"
+            statusText.text = modelSummary()
             onPipelineReady?.invoke()
+            return null
         } catch (e: Throwable) {
-            statusText.text = "加载失败：${e.message}"
+            val msg = "加载失败：${e.message}"
+            statusText.text = msg
+            return msg
         }
     }
 

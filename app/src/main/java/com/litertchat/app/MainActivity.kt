@@ -76,6 +76,7 @@ class MainActivity : Activity() {
 
     companion object {
         private const val REQ_PICK_MODEL = 1001
+    private const val REQ_DRAW_TREE = 1002
     }
 
     // ---- palette ----
@@ -156,6 +157,9 @@ class MainActivity : Activity() {
     private val navLabels = mutableListOf<TextView>()
     private lateinit var savedContainer: LinearLayout
     private lateinit var modelInfoText: TextView
+
+    /** 模型页里的绘图模型状态文本（模型统一在模型页加载） */
+    private var drawModelStatus: TextView? = null
     private lateinit var backendSpinner: Spinner
     private lateinit var loadButton: TextView
     private lateinit var thinkCheck: CheckBox
@@ -228,9 +232,9 @@ class MainActivity : Activity() {
         // 绘图模型就绪 → 进入绘图模式（对话页输入即正面提示词）
         dpg.onPipelineReady = {
             drawMode = true
-            drawPage?.llmLoaded = false
+            dpg.llmLoaded = false
             updateThinkEnabled()
-            toast("已切到绘图模式：在对话页输入就是正面提示词")
+            drawModelStatus?.text = dpg.modelSummary()
         }
         tabDraw = ScrollView(this).apply {
             setBackgroundColor(C_BG)
@@ -411,6 +415,45 @@ class MainActivity : Activity() {
             progressTintList = ColorStateList.valueOf(C_PRIMARY)
         }
         card.addView(progressBar, matchWrap().apply { topMargin = dp(8) })
+
+        // ---- 绘图模型（与语言模型统一在这里加载） ----
+        card.addView(pageTitle("绘图模型"), matchWrap().apply { topMargin = dp(20) })
+        card.addView(
+            hintText("SD 1.5 的 ONNX 导出（text_encoder / unet / vae_decoder + tokenizer/vocab.json + merges.txt）。选择包含这些文件的文件夹即可。加载后在「对话」页输入就是正面提示词，按绘图页的参数生成图片。"),
+            matchWrap().apply { topMargin = dp(4) }
+        )
+        val dStatus = TextView(this).apply {
+            text = "未加载"
+            textSize = 12f
+            setTextColor(C_SUBTEXT)
+        }
+        drawModelStatus = dStatus
+        card.addView(dStatus, matchWrap().apply { topMargin = dp(6) })
+        val drawRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(8), 0, 0)
+        }
+        drawRow.addView(
+            actionButton("选择绘图模型文件夹") { pickDrawModelTree() },
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        )
+        drawRow.addView(
+            actionButton("卸载") {
+                val dpg = drawPage
+                if (dpg == null || !dpg.hasModel()) {
+                    toast("当前没有加载绘图模型")
+                } else {
+                    dpg.unloadModel()
+                    drawModelStatus?.text = "未加载"
+                    drawMode = false
+                    updateThinkEnabled()
+                    toast("绘图模型已卸载")
+                }
+            },
+            wrapWrap().apply { leftMargin = dp(8) }
+        )
+        card.addView(drawRow, matchWrap())
 
         sv.addView(card, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
@@ -746,11 +789,41 @@ class MainActivity : Activity() {
         startActivityForResult(i, REQ_PICK_MODEL)
     }
 
+    /** 选择绘图模型文件夹（SD 1.5 ONNX，含 tokenizer） */
+    private fun pickDrawModelTree() {
+        val i = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        startActivityForResult(i, REQ_DRAW_TREE)
+    }
+
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         if (drawPage?.onActivityResult(requestCode, resultCode, data) == true) return
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == REQ_PICK_MODEL && resultCode == RESULT_OK) {
             data?.data?.let { copyModelToPrivate(it) }
+        }
+        if (requestCode == REQ_DRAW_TREE && resultCode == RESULT_OK) {
+            val uri = data?.data ?: return
+            val dpg = drawPage ?: return
+            setBusy(true)
+            setStatus("正在导入绘图模型…", C_WARN)
+            scope.launch {
+                val err = dpg.prepareFromTree(uri) { stage -> drawModelStatus?.text = stage }
+                setBusy(false)
+                if (err == null) {
+                    drawModelStatus?.text = dpg.modelSummary()
+                    drawMode = true
+                    dpg.llmLoaded = false
+                    updateThinkEnabled()
+                    setStatus("绘图模型已加载", C_OK)
+                    toast("绘图模型已加载：到对话页输入即为正面提示词")
+                } else {
+                    drawModelStatus?.text = err
+                    setStatus("绘图模型加载失败", C_ERR)
+                    toast(err)
+                }
+            }
         }
     }
 
