@@ -92,6 +92,7 @@ class DrawPage(
 
     // 控件
     private lateinit var statusText: TextView
+    private lateinit var quantText: TextView
     private lateinit var promptEdit: EditText
     private lateinit var negEdit: EditText
     private lateinit var stepsEdit: EditText
@@ -117,6 +118,12 @@ class DrawPage(
         modelCard.addView(title("绘图模型（stable-diffusion.cpp · GGUF）"))
         statusText = body("未加载 —— 请到「模型」页的「绘图模型」里选择模型文件夹")
         modelCard.addView(statusText)
+        quantText = TextView(c).apply {
+            textSize = 11.5f
+            setTextColor(subText)
+            setPadding(0, dp(6), 0, 0)
+        }
+        modelCard.addView(quantText)
         root.addView(modelCard)
 
         // ---- 提示词 ----
@@ -213,6 +220,7 @@ class DrawPage(
         root.addView(resultImg)
 
         refreshLoraHint()
+        refreshQuantText()
         return root
     }
 
@@ -511,6 +519,7 @@ class DrawPage(
                 append(" · 独立进程")
             }
             statusText.post { statusText.text = summary }
+            statusText.post { refreshQuantText() }
             runCatching { stageFile.delete() }
             onPipelineReady?.invoke()
             null
@@ -528,6 +537,7 @@ class DrawPage(
         try {
             statusText.text = "未加载 —— 请到「模型」页的「绘图模型」里选择模型文件夹"
         } catch (_: Throwable) {}
+        refreshQuantText()
     }
 
     fun hasModel(): Boolean {
@@ -548,6 +558,21 @@ class DrawPage(
 
     fun refreshStatus() {
         try { statusText.text = modelSummary() } catch (_: Throwable) {}
+        refreshQuantText()
+    }
+
+    /** 当前绘图模型的量化等级（始终可见）。
+     *  量化等级是烧在模型文件里的（Q4_0 的 gguf 就是 Q4_0），App 无法凭空转换，只能读出来展示。 */
+    private fun refreshQuantText() {
+        try {
+            val m = mainModel ?: listModels().maxByOrNull { it.length() }
+            quantText.text = if (m == null) {
+                "当前模型量化：未导入模型　·　量化等级写死在模型文件里，App 只负责读出来显示"
+            } else {
+                val q = GgufProbe.quantType(m) ?: "未知"
+                "当前模型量化：$q（${m.name}）　·　Q4_0 每步比 Q8_0 快，质量略降"
+            }
+        } catch (_: Throwable) {}
     }
 
     // ================= 生成 =================
