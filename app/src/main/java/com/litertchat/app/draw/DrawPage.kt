@@ -138,81 +138,67 @@ class DrawPage(
 
     // ================= 模型（由「模型」页驱动） =================
 
-    /** 从 SAF 目录导入绘图模型：收集 .gguf，复制到私有目录后加载。返回 null 表示成功，否则为错误文案。 */
+    /** 从 SAF 目录导入绘图模型：递归收集 .gguf，复制到私有目录后加载。返回 null 表示成功，否则为错误文案。 */
     suspend fun prepareFromTree(treeUri: Uri, onStage: (String) -> Unit): String? {
         return withContext(Dispatchers.IO) {
             try {
                 onStage("正在扫描所选文件夹…")
                 val root = File(c.filesDir, DIR_NAME).apply { mkdirs() }
-                val found = ArrayList<File>()
+                val found = ArrayList<Pair<String, Uri>>() // name -> uri
 
-                fun walk(dir: Uri, depth: Int) {
+                // SAF 坑：tree/document URI 不能直接 query，必须用 buildChildDocumentsUriUsingTree + docId
+                fun listChildren(docId: String): List<Triple<String, String, String>> {
+                    val childUri = android.provider.DocumentsContract
+                        .buildChildDocumentsUriUsingTree(treeUri, docId)
+                    return c.contentResolver.query(childUri, null, null, null, null)?.use { cur ->
+                        val out = ArrayList<Triple<String, String, String>>()
+                        val idIdx = cur.getColumnIndex(android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+                        val nameIdx = cur.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                        val mimeIdx = cur.getColumnIndex(android.provider.DocumentsContract.Document.COLUMN_MIME_TYPE)
+                        while (cur.moveToNext()) {
+                            val id = if (idIdx >= 0) cur.getString(idIdx) else null
+                            val name = if (nameIdx >= 0) cur.getString(nameIdx) else null
+                            val mime = if (mimeIdx >= 0) cur.getString(mimeIdx) else null
+                            if (id != null && name != null) out.add(Triple(name, mime ?: "", id))
+                        }
+                        out
+                    } ?: emptyList()
+                }
+
+                fun walk(docId: String, depth: Int) {
                     if (depth > 3) return
-                    val children = c.contentResolver
-                        .query(dir, null, null, null, null)
-                        ?.use { cur ->
-                            val names = ArrayList<Uri>()
-                            while (cur.moveToNext()) {
-                                val idIdx = cur.getColumnIndex(android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID)
-                                if (idIdx < 0) continue
-                                val id = cur.getString(idIdx) ?: continue
-                                names.add(android.provider.DocumentsContract.buildDocumentUriUsingTree(treeUri, id))
-                            }
-                            names
-                        } ?: return
-                    for (child in children) {
-                        val nm = c.contentResolver.query(child, null, null, null, null)?.use { cur ->
-                            if (cur.moveToFirst()) {
-                                val i = cur.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                                if (i >= 0) cur.getString(i) else null
-                            } else null
-                        } ?: continue
-                        if (nm.endsWith(".gguf", true)) {
-                            found.add(File(root, nm))
-                        } else if (!nm.contains('.')) {
-                            walk(child, depth + 1)
+                    for ((name, mime, childId) in listChildren(docId)) {
+                        if (name.endsWith(".gguf", true)) {
+                            found.add(name to android.provider.DocumentsContract.buildDocumentUriUsingTree(treeUri, childId))
+                        } else if (mime == android.provider.DocumentsContract.Document.MIME_TYPE_DIR) {
+                            walk(childId, depth + 1)
                         }
                     }
                 }
-                walk(treeUri, 0)
+
+                walk(android.provider.DocumentsContract.getTreeDocumentId(treeUri), 0)
 
                 if (found.isEmpty()) return@withContext "所选文件夹里没找到 .gguf 绘图模型"
 
                 var copied = 0
-                for (src in found) {
-                    // URI 遍历后要重新定位：按 display name 再查一次
-                    val uri = findUriByName(treeUri, src.name) ?: continue
-                    onStage("正在复制 ${src.name}…")
-                    c.contentResolver.openInputStream(uri)?.use { ins ->
-                        src.outputStream().use { outs -> ins.copyTo(outs, 1 shl 20) }
+                for ((name, uri) in found) {
+                    onStage("正在复制 $name…")
+                    try {
+                        c.contentResolver.openInputStream(uri)?.use { ins ->
+                            File(root, name).outputStream().use { outs -> ins.copyTo(outs, 1 shl 20) }
+                        }
+                        copied++
+                    } catch (_: Throwable) {
+                        // 单个文件失败不阻断（可能是已存在的同名文件被占用）
                     }
-                    copied++
                 }
-                if (copied == 0) return@withContext "复制模型失败"
+                if (copied == 0) return@withContext "复制模型失败（0 个文件）"
 
                 onStage("正在加载绘图模型（首次需几十秒）…")
                 loadFromPrivateDir()
             } catch (e: Throwable) {
                 "加载失败：${e.message ?: e.javaClass.simpleName}"
             }
-        }
-    }
-
-    private fun findUriByName(treeUri: Uri, name: String): Uri? {
-        val rootDocId = android.provider.DocumentsContract.getTreeDocumentId(treeUri)
-        val child = android.provider.DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, rootDocId)
-        return c.contentResolver.query(child, null, null, null, null)?.use { cur ->
-            while (cur.moveToNext()) {
-                val ni = cur.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                if (ni < 0) continue
-                if (cur.getString(ni) == name) {
-                    val di = cur.getColumnIndex(android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID)
-                    if (di >= 0) {
-                        return@use android.provider.DocumentsContract.buildDocumentUriUsingTree(treeUri, cur.getString(di))
-                    }
-                }
-            }
-            null
         }
     }
 
