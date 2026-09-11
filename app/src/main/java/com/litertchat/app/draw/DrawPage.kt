@@ -206,16 +206,28 @@ class DrawPage(
         }
     }
 
-    /** 扫描私有目录里已复制的 gguf 并加载 */
-    suspend fun loadExisting(): String? = withContext(Dispatchers.IO) {
+    /** 扫描私有目录里已复制的 gguf 并加载（main=null 时自动挑体积最大的） */
+    suspend fun loadExisting(main: File? = null): String? = withContext(Dispatchers.IO) {
         try {
-            loadFromPrivateDir()
+            loadFromPrivateDir(main)
         } catch (e: Throwable) {
             "加载失败：${e.message ?: e.javaClass.simpleName}"
         }
     }
 
-    private suspend fun loadFromPrivateDir(): String? {
+    /** 私有目录里已复制的绘图模型文件（.gguf） */
+    fun listModels(): List<File> =
+        File(c.filesDir, DIR_NAME)
+            .listFiles { f -> f.isFile && f.name.endsWith(".gguf", ignoreCase = true) }
+            ?.sortedByDescending { it.lastModified() } ?: emptyList()
+
+    /** 当前作为主模型的文件名（未指定时取体积最大的） */
+    fun currentMainName(): String? = mainModel?.name
+
+    /** 删除单个已复制的模型文件 */
+    fun deleteModel(f: File): Boolean = runCatching { f.delete() }.getOrDefault(false)
+
+    private suspend fun loadFromPrivateDir(preferred: File? = null): String? {
         val root = File(c.filesDir, DIR_NAME)
         val ggufs = root.listFiles { f -> f.isFile && f.name.endsWith(".gguf", true) }?.toList().orEmpty()
         if (ggufs.isEmpty()) {
@@ -223,8 +235,8 @@ class DrawPage(
             return "私有目录里没有 .gguf 绘图模型"
         }
 
-        // 主模型 = 体积最大的 gguf（Anything V5 合一版）；其余视为 VAE/组件
-        val main = ggufs.maxByOrNull { it.length() }!!
+        // 主模型：优先用指定的，否则取体积最大的 gguf
+        val main = preferred?.takeIf { it.isFile } ?: ggufs.maxByOrNull { it.length() }!!
         val others = ggufs.filter { it !== main }
         val vae = others.firstOrNull { it.name.contains("vae", true) }
 

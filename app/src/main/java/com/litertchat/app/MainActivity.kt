@@ -160,6 +160,10 @@ class MainActivity : Activity() {
 
     /** 模型页里的绘图模型状态文本（模型统一在模型页加载） */
     private var drawModelStatus: TextView? = null
+    /** 已复制的绘图模型列表容器 */
+    private var drawSavedContainer: LinearLayout? = null
+    /** 当前选定的绘图主模型（绝对路径） */
+    private var drawMainPath: String? = null
     /** 上次启动时发现「加载绘图模型」中途崩了（native 崩溃，Java 层捕不到） */
     private var pendingDrawCrash = false
     /** 上次崩溃时已执行的阶段（来自 draw/.loadstage） */
@@ -486,6 +490,13 @@ class MainActivity : Activity() {
                 setPadding(0, dp(6), 0, 0)
             }, matchWrap())
         }
+
+        drawSavedContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+        }
+        card.addView(drawSavedContainer, matchWrap().apply { topMargin = dp(6) })
+
         card.addView(
             actionButton("选择绘图模型文件夹") { pickDrawModelTree() },
             matchWrap().apply { topMargin = dp(8) }
@@ -500,12 +511,15 @@ class MainActivity : Activity() {
                 } else {
                     scope.launch {
                         drawModelStatus?.text = "正在加载绘图模型（首次需几十秒）…"
-                        val err = dpg.loadExisting()
+                        val picked = drawMainPath?.let { File(it) }
+                        val err = dpg.loadExisting(picked)
                         drawModelStatus?.text = if (err == null) dpg.modelSummary() else err
                         if (err == null) {
+                            drawMainPath = dpg.currentMainName()?.let { File(filesDir, "draw/$it").absolutePath }
                             drawMode = true
                             dpg.llmLoaded = false
                             updateThinkEnabled()
+                            refreshDrawModels()
                             toast("绘图模型已加载：到对话页输入就是正面提示词")
                         } else {
                             setStatus("绘图模型加载失败", C_ERR)
@@ -531,6 +545,7 @@ class MainActivity : Activity() {
             },
             matchWrap().apply { topMargin = dp(8) }
         )
+        refreshDrawModels()
 
         sv.addView(card, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
@@ -893,6 +908,7 @@ class MainActivity : Activity() {
                     drawModelStatus?.text = dpg.modelSummary()
                     setStatus("绘图模型已复制", C_OK)
                     toast("已复制，请点「加载绘图模型」")
+                    refreshDrawModels()
                 } else {
                     drawModelStatus?.text = err
                     setStatus("绘图模型导入失败", C_ERR)
@@ -1009,7 +1025,98 @@ class MainActivity : Activity() {
         }
     }
 
+    // ================= 已复制的绘图模型 =================
+
+    /** 列出私有目录里已复制的绘图模型（点击选用并加载 · 长按删除）。 */
+    private fun refreshDrawModels() {
+        val box = drawSavedContainer ?: return
+        box.removeAllViews()
+        val dpg = drawPage
+        val files = dpg?.listModels().orEmpty()
+        if (files.isEmpty()) {
+            box.visibility = View.GONE
+            return
+        }
+        box.visibility = View.VISIBLE
+        box.addView(TextView(this).apply {
+            text = "已复制的绘图模型（点击选用并加载 · 长按删除）"
+            textSize = 12f
+            setTextColor(C_SUBTEXT)
+            setPadding(0, dp(4), 0, 0)
+        }, matchWrap())
+
+        val active = dpg?.currentMainName()
+        for (f in files) {
+            val isMain = active != null && f.name == active
+            val isSel = f.absolutePath == drawMainPath
+            val chip = TextView(this).apply {
+                val role = if (isMain) "当前主模型" else if (files.size > 1) "组件/备选" else ""
+                val suffix = if (role.isEmpty()) "" else "　[$role]"
+                text = "▶ ${f.name}$suffix　${fmtSize(f.length())}"
+                textSize = 12.5f
+                setTextColor(if (isSel || isMain) C_PRIMARY else C_TEXT)
+                setPadding(dp(12), dp(8), dp(12), dp(8))
+                background = rounded(if (isSel || isMain) C_PRIMARY_SOFT else Color.rgb(247, 248, 251), 10,
+                    strokeDp = if (isSel || isMain) 1 else 0, strokeColor = C_PRIMARY)
+                isClickable = true
+            }
+            chip.setOnClickListener { selectAndLoadDrawModel(f) }
+            chip.setOnLongClickListener { confirmDeleteDrawModel(f); true }
+            box.addView(chip, matchWrap().apply { topMargin = dp(4) })
+        }
+    }
+
+    /** 点击某个绘图模型 → 记为主模型并加载。 */
+    private fun selectAndLoadDrawModel(f: File) {
+        val dpg = drawPage
+        if (dpg == null) {
+            toast("绘图页未初始化")
+            return
+        }
+        drawMainPath = f.absolutePath
+        scope.launch {
+            drawModelStatus?.text = "正在加载：${f.name}（首次需几十秒）…"
+            val err = dpg.loadExisting(f)
+            drawModelStatus?.text = if (err == null) dpg.modelSummary() else err
+            if (err == null) {
+                drawMode = true
+                dpg.llmLoaded = false
+                updateThinkEnabled()
+                toast("已加载：${f.name}")
+            } else {
+                setStatus("绘图模型加载失败", C_ERR)
+                toast(err)
+            }
+            refreshDrawModels()
+        }
+    }
+
+    /** 长按删除一个已复制的绘图模型文件。 */
+    private fun confirmDeleteDrawModel(f: File) {
+        val dpg = drawPage ?: return
+        if (dpg.currentMainName() == f.name && dpg.isReady()) {
+            toast("该模型正在使用，请先卸载再删除")
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("删除已复制的绘图模型？")
+            .setMessage("${f.name}\n大小：${fmtSize(f.length())}\n删除后需重新选择原文件夹才会恢复。")
+            .setPositiveButton("删除") { _, _ ->
+                val ok = dpg.deleteModel(f)
+                if (drawMainPath == f.absolutePath) drawMainPath = null
+                toast(if (ok) "已删除 ${f.name}" else "删除失败")
+                drawModelStatus?.text = dpg.modelSummary()
+                refreshDrawModels()
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
     private fun selectSavedModel(f: File) {
+        if (busy) {
+            toast("当前有任务进行中，请稍候")
+            return
+        }
         if (busy) {
             toast("当前有任务进行中，请稍候")
             return
