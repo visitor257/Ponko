@@ -214,6 +214,11 @@ class DrawPage(
         try {
             loadFromPrivateDir(main)
         } catch (e: Throwable) {
+            runCatching {
+                File(File(c.filesDir, DIR_NAME), ".loadstage")
+                    .appendText("E 顶层异常：${e.javaClass.name}: ${e.message}\n" +
+                        android.util.Log.getStackTraceString(e) + "\n")
+            }
             "加载失败：${e.message ?: e.javaClass.simpleName}"
         }
     }
@@ -298,7 +303,9 @@ class DrawPage(
             onPipelineReady?.invoke()
             null
         } catch (e: Throwable) {
-            stage("7 创建失败：${e.message ?: e.javaClass.simpleName}")
+            stage("7 创建失败：${e.javaClass.name}: ${e.message}")
+            // 把完整堆栈落盘，方便定位（尤其是第三方库内部的问题）
+            runCatching { stageFile.appendText(android.util.Log.getStackTraceString(e) + "\n") }
             "加载失败：${e.message ?: e.javaClass.simpleName}"
         }
     }
