@@ -409,6 +409,31 @@ class MainActivity : Activity() {
 
         card.addView(pageTitle("模型"))
 
+        // ================= 运行方式（对话 / 绘图共用） =================
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        row.addView(TextView(this).apply {
+            text = "运行方式"
+            textSize = 13f
+            setTextColor(C_TEXT)
+        }, wrapWrap())
+        backendSpinner = Spinner(this).apply {
+            adapter = ArrayAdapter(
+                this@MainActivity,
+                android.R.layout.simple_spinner_dropdown_item,
+                listOf("CPU", "GPU")
+            )
+            setSelection(0)
+        }
+        row.addView(backendSpinner, wrapWrap().apply { leftMargin = dp(6) })
+        card.addView(row, matchWrap().apply { topMargin = dp(10) })
+        card.addView(
+            hintText("对话与绘图共用。GPU 更快，但部分机型驱动不稳（尤其华为的 Vulkan）——绘图有独立进程保护，崩了会回退 CPU；对话模型若加载失败，改回 CPU 即可。"),
+            matchWrap().apply { topMargin = dp(4) }
+        )
+
         // ================= 对话模型 =================
         card.addView(pageTitle("对话模型"), matchWrap().apply { topMargin = dp(12) })
         card.addView(hintText("本地语言模型，用来聊天：.litertlm（LiteRT-LM）或 .gguf（llama.cpp）。首次会复制到 App 私有目录，之后可直接选用。GGUF 走 CPU 多线程，并在会话内复用 KV 前缀（长对话只需计算新增内容）。"))
@@ -429,28 +454,8 @@ class MainActivity : Activity() {
         }
         card.addView(modelInfoText, matchWrap().apply { topMargin = dp(8) })
 
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        row.addView(TextView(this).apply {
-            text = "运行方式"
-            textSize = 13f
-            setTextColor(C_TEXT)
-        }, wrapWrap())
-        backendSpinner = Spinner(this).apply {
-            adapter = ArrayAdapter(
-                this@MainActivity,
-                android.R.layout.simple_spinner_dropdown_item,
-                listOf("CPU", "GPU")
-            )
-            setSelection(0)
-        }
-        row.addView(backendSpinner, wrapWrap().apply { leftMargin = dp(6) })
         loadButton = actionButton("加载对话模型") { toggleLoad() }
-        row.addView(loadButton, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            .apply { leftMargin = dp(10) })
-        card.addView(row, matchWrap().apply { topMargin = dp(12) })
+        card.addView(loadButton, matchWrap().apply { topMargin = dp(12) })
 
         progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             visibility = View.GONE
@@ -512,6 +517,7 @@ class MainActivity : Activity() {
                     scope.launch {
                         drawModelStatus?.text = "正在加载绘图模型（首次需几十秒）…"
                         val picked = drawMainPath?.let { File(it) }
+                        dpg.useGpu = (backendSpinner.selectedItem.toString() == "GPU")
                         val err = dpg.loadExisting(picked)
                         drawModelStatus?.text = if (err == null) dpg.modelSummary() else err
                         if (err == null) {
@@ -1074,6 +1080,7 @@ class MainActivity : Activity() {
             return
         }
         drawMainPath = f.absolutePath
+        dpg.useGpu = (backendSpinner.selectedItem.toString() == "GPU")
         scope.launch {
             drawModelStatus?.text = "正在加载：${f.name}（首次需几十秒）…"
             val err = dpg.loadExisting(f)

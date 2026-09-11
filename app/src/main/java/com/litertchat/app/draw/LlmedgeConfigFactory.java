@@ -24,7 +24,7 @@ import kotlinx.coroutines.CoroutineScope;
  * 背景：llmedge 0.4.7.x 把 ImageRuntimeConfig 标成了 Kotlin internal，
  * Kotlin 代码无法引用；但字节码层面它是 public，Java 可以正常构造。
  * 我们需要它来设置两个关键项：
- *   - useVulkan = false            → 强制纯 CPU（本机 Vulkan 驱动会让 native 崩）
+ *   - useVulkan = false/true        → 纯 CPU 或尝试 GPU（由模型页「运行方式」决定）
  *   - workerMode = ISOLATED_PROCESS → 在 :llmedge_sd 子进程跑，崩了不连累主 App
  */
 public final class LlmedgeConfigFactory {
@@ -32,12 +32,12 @@ public final class LlmedgeConfigFactory {
     private LlmedgeConfigFactory() {
     }
 
-    /** 纯 CPU + 独立进程的绘图客户端。 */
-    public static ImageClient cpuIsolatedClient(Context context, CoroutineScope scope) {
+    /** 独立进程的绘图客户端；useGpu=true 时尝试 Vulkan（失败会回退 CPU）。 */
+    public static ImageClient cpuIsolatedClient(Context context, CoroutineScope scope, boolean useGpu) {
         ImageRuntimeConfig image = new ImageRuntimeConfig(
                 new RuntimeCacheConfig(1, 4096L),          // cache
                 false,                                      // preferPerformanceMode
-                false,                                      // useVulkan  ← 关掉 GPU
+                useGpu,                                     // useVulkan
                 DiffusionWorkerMode.ISOLATED_PROCESS,       // workerMode ← 独立进程
                 defaultWatchdog(),                          // watchdog
                 HangRecoveryPolicy.RETRY_CPU_THEN_FAIL,     // hangRecoveryPolicy

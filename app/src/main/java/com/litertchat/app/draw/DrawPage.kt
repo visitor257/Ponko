@@ -56,6 +56,9 @@ class DrawPage(
     /** 外部（MainActivity）通知：当前已加载语言模型。用于“生成”按钮给出更准确的提示。 */
     var llmLoaded: Boolean = false
 
+    /** 运行方式：true = 尝试 GPU（Vulkan），false = 纯 CPU。由模型页的“运行方式”决定。 */
+    var useGpu: Boolean = false
+
     /** SD 管线就绪时回调（MainActivity 借此切到绘图模式） */
     var onPipelineReady: (() -> Unit)? = null
 
@@ -275,16 +278,16 @@ class DrawPage(
             runCatching { stageFile.delete() }
             return "native 库 libsdcpp.so 加载失败：${t.message ?: t.javaClass.simpleName}"
         }
-        stage("6 创建 ImageClient（隔离子进程 + 强制 CPU）")
+        stage("6 创建 ImageClient（隔离子进程 · " + (if (useGpu) "GPU" else "CPU") + "）")
         return try {
             client?.let { runCatching { it.close() } }
-            client = LlmedgeConfigFactory.cpuIsolatedClient(c.applicationContext, scope)
+            client = LlmedgeConfigFactory.cpuIsolatedClient(c.applicationContext, scope, useGpu)
             stage("7 ImageClient 创建 OK")
 
             val summary = buildString {
                 append("已就绪：").append(main.name)
                 if (vae != null) append("  +  ").append(vae.name)
-                append("（CPU · 独立进程）")
+                append(if (useGpu) "（GPU · 独立进程）" else "（CPU · 独立进程）")
             }
             statusText.post { statusText.text = summary }
             runCatching { stageFile.delete() }
@@ -310,7 +313,8 @@ class DrawPage(
     }
 
     fun modelSummary(): String = when {
-        client != null -> "已就绪：" + (mainModel?.name ?: "绘图模型") + "（CPU · 独立进程）"
+        client != null -> "已就绪：" + (mainModel?.name ?: "绘图模型") +
+            (if (useGpu) "（GPU · 独立进程）" else "（CPU · 独立进程）")
         hasModel() -> "已复制模型，点「加载绘图模型」开始"
         else -> "未加载 —— 请到「模型」页的「绘图模型」里选择模型文件夹"
     }
