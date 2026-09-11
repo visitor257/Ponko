@@ -236,6 +236,8 @@ class MainActivity : Activity() {
             updateThinkEnabled()
             drawModelStatus?.text = dpg.modelSummary()
         }
+        // App 重启后，若之前已复制过绘图模型，后台自动加载（不阻塞启动）
+        scope.launch { dpg.loadExisting() }
         tabDraw = ScrollView(this).apply {
             setBackgroundColor(C_BG)
             addView(dpg.build())
@@ -422,7 +424,7 @@ class MainActivity : Activity() {
         // ================= 绘图模型 =================
         card.addView(pageTitle("绘图模型"), matchWrap().apply { topMargin = dp(24) })
         card.addView(
-            hintText("Stable Diffusion 1.5 的 ONNX 导出，用来生成图片：文件夹里要有 text_encoder / unet / vae_decoder（+ 可选 vae_encoder）与 tokenizer/vocab.json + merges.txt。加载后在「对话」页输入就是正面提示词。"),
+            hintText("stable-diffusion.cpp 的 GGUF 绘图模型（Anything V5 / SD1.5 等），用来生成图片：文件夹里放 .gguf 文件即可（合一版单文件；分离式模型会自动挑体积最大的当主模型、名字带 vae 的当 VAE）。加载后在「对话」页输入就是正面提示词。"),
             matchWrap().apply { topMargin = dp(4) }
         )
         val dStatus = TextView(this).apply {
@@ -787,7 +789,7 @@ class MainActivity : Activity() {
         startActivityForResult(i, REQ_PICK_MODEL)
     }
 
-    /** 绘图模型：选一个包含 SD ONNX 文件集的文件夹 */
+    /** 绘图模型：选一个包含 SD GGUF 绘图模型的文件夹（stable-diffusion.cpp 格式） */
     private fun pickDrawModelTree() {
         val i = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -907,7 +909,7 @@ class MainActivity : Activity() {
             else null
             val isImageModel = kind == GgufProbe.Kind.IMAGE
             val tag = when {
-                isImageModel -> "画图·不支持"
+                isImageModel -> "绘图·到「绘图模型」加载"
                 isGguf -> "GGUF"
                 else -> "LiteRT"
             }
@@ -922,7 +924,7 @@ class MainActivity : Activity() {
             }
             chip.setOnClickListener {
                 if (isImageModel) {
-                    toast("这是画图模型（扩散模型），Ponko 只能加载语言模型。绘图功能请到「绘图」页选择 ONNX 模型。")
+                    toast("这是绘图模型（扩散模型），不能当对话模型用。请到「模型」页的「绘图模型」区块选择文件夹加载它。")
                 } else {
                     selectSavedModel(f)
                 }

@@ -2,9 +2,7 @@ package com.litertchat.app.draw
 
 import android.app.Activity
 import android.content.Context
-import android.content.Intent
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.Typeface
 import android.net.Uri
@@ -13,15 +11,14 @@ import android.text.InputType
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
-import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
-import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
+import io.aatricks.llmedge.image.diffusion.GenerateParams
+import io.aatricks.llmedge.image.diffusion.StableDiffusion
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -29,10 +26,12 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
- * 绘图页（文生图 / 图生图）。
+ * 绘图页（文生图）。
  *
- * 模型要求：SD1.5 的 ONNX 导出（text_encoder / unet / vae_decoder [/ vae_encoder] + tokenizer）。
- * 与聊天模型一样，ONNX Runtime 需要真实文件路径，所以选择目录后会整体复制到应用私有目录。
+ * 模型：stable-diffusion.cpp 的 **GGUF** 绘图模型（Anything V5 / SD1.5 等），
+ * 由 llmedge 内置的 libsdcpp.so 直接推理（无需 NDK 自行编译）。
+ *
+ * 模型统一在「模型」页选择：选择目录后把 .gguf（+ 可选的 vae/分离 clip）复制到应用私有目录。
  */
 class DrawPage(
     private val act: Activity,
@@ -44,16 +43,14 @@ class DrawPage(
 
     companion object {
         const val DIR_NAME = "draw"
-        private const val REQ_TREE = 0x5D01
         private const val REQ_IMAGE = 0x5D02
     }
 
     private val c: Context get() = act
 
-    private var pipeline: SdPipeline? = null
-    private var modelSet: SdModelSet? = null
-    private var img2imgMode = false
-    private var inputBitmap: Bitmap? = null
+    private var sd: StableDiffusion? = null
+    private var mainModel: File? = null
+    private var vaeModel: File? = null
 
     /** 外部（MainActivity）通知：当前已加载语言模型。用于“生成”按钮给出更准确的提示。 */
     var llmLoaded: Boolean = false
@@ -62,27 +59,18 @@ class DrawPage(
     var onPipelineReady: (() -> Unit)? = null
 
     /** 是否已就绪（可生成） */
-    fun isReady(): Boolean = pipeline != null
+    fun isReady(): Boolean = sd != null
 
     // 控件
     private lateinit var statusText: TextView
-    private lateinit var modeTxt2Img: TextView
-    private lateinit var modeImg2Img: TextView
-    private lateinit var pickImgBtn: Button
-    private lateinit var imgThumb: ImageView
     private lateinit var promptEdit: EditText
     private lateinit var negEdit: EditText
     private lateinit var stepsEdit: EditText
     private lateinit var cfgEdit: EditText
-    private lateinit var sizeRow: LinearLayout
     private lateinit var seedEdit: EditText
-    private lateinit var strengthEdit: EditText
-    private lateinit var strengthLabel: LinearLayout
     private lateinit var genBtn: Button
     private lateinit var progressText: TextView
     private lateinit var resultImg: ImageView
-
-    private var size = 512
 
     fun build(): View {
         val root = LinearLayout(c).apply {
@@ -93,478 +81,372 @@ class DrawPage(
 
         // ---- 模型状态（模型统一在「模型」页选择并加载） ----
         val modelCard = card()
-        modelCard.addView(title("绘图模型（SD 1.5 · ONNX）"))
+        modelCard.addView(title("绘图模型（stable-diffusion.cpp · GGUF）"))
         statusText = body("未加载 —— 请到「模型」页的「绘图模型」里选择模型文件夹")
         modelCard.addView(statusText)
         root.addView(modelCard)
 
-        // ---- 模式 ----
-        val modeCard = card()
-        modeCard.addView(title("模式"))
-        val row = LinearLayout(c).apply { orientation = LinearLayout.HORIZONTAL }
-        modeTxt2Img = modeChip("文生图", true)
-        modeImg2Img = modeChip("图生图", false)
-        modeTxt2Img.setOnClickListener { setMode(false) }
-        modeImg2Img.setOnClickListener { setMode(true) }
-        row.addView(modeTxt2Img, weight())
-        row.addView(modeImg2Img, weight())
-        modeCard.addView(row, matchWrap(top = 6))
-
-        pickImgBtn = Button(c).apply {
-            text = "选择参考图片"
-            visibility = View.GONE
-            setOnClickListener { pickInputImage() }
-        }
-        imgThumb = ImageView(c).apply {
-            adjustViewBounds = true
-            visibility = View.GONE
-            setPadding(0, dp(8), 0, 0)
-        }
-        modeCard.addView(pickImgBtn, matchWrap(top = 8))
-        modeCard.addView(imgThumb, matchWrap())
-        root.addView(modeCard)
-
         // ---- 提示词 ----
         val promptCard = card()
         promptCard.addView(title("提示词"))
-        promptEdit = edit("a cute anime girl, masterpiece, best quality", 3)
-        negEdit = edit("lowres, bad anatomy, extra fingers, watermark", 2)
-        promptCard.addView(label("正向"))
-        promptCard.addView(promptEdit)
-        promptCard.addView(label("负向"))
-        promptCard.addView(negEdit)
+        promptEdit = labeledEdit("一个可爱的动漫女孩，细节丰富", singleLine = false, minLines = 3)
+        promptCard.addView(promptEdit, matchWrap(top = 6))
+        promptCard.addView(smallLabel("负向提示词（不想出现的内容）"))
+        negEdit = labeledEdit("lowres, bad anatomy, bad hands, text, error, worst quality", singleLine = false, minLines = 2)
+        promptCard.addView(negEdit, matchWrap(top = 4))
         root.addView(promptCard)
 
         // ---- 参数 ----
         val paramCard = card()
         paramCard.addView(title("参数"))
-        sizeRow = LinearLayout(c).apply { orientation = LinearLayout.HORIZONTAL }
-        for (s in intArrayOf(256, 384, 512)) {
-            val chip = modeChip("${s}×${s}", s == size)
-            chip.setOnClickListener { size = s; refreshSizeChips() }
-            sizeRow.addView(chip, weight())
-        }
-        paramCard.addView(label("尺寸"))
-        paramCard.addView(sizeRow, matchWrap(top = 4))
-
-        val p2 = LinearLayout(c).apply { orientation = LinearLayout.HORIZONTAL }
-        stepsEdit = numEdit("20")
-        cfgEdit = numEdit("7.5")
-        p2.addView(labeledEdit("步数", stepsEdit), weight())
-        p2.addView(labeledEdit("CFG", cfgEdit), weight())
-        paramCard.addView(p2, matchWrap(top = 6))
-
-        val p3 = LinearLayout(c).apply { orientation = LinearLayout.HORIZONTAL }
-        seedEdit = numEdit("-1")
-        strengthEdit = numEdit("0.75")
-        strengthLabel = labeledEdit("重绘强度", strengthEdit)
-        strengthLabel.visibility = View.GONE
-        p3.addView(labeledEdit("种子(-1随机)", seedEdit), weight())
-        p3.addView(strengthLabel, weight())
-        paramCard.addView(p3, matchWrap(top = 6))
+        stepsEdit = smallNumber("20")
+        cfgEdit = smallNumber("7.0")
+        seedEdit = smallNumber("-1")
+        paramCard.addView(paramRow("采样步数", stepsEdit, "越大越精细，也越慢（20 起步）"))
+        paramCard.addView(paramRow("CFG 引导", cfgEdit, "贴合提示词的程度，7 左右常用"))
+        paramCard.addView(paramRow("随机种子", seedEdit, "-1 = 每次随机；固定值可复现同一张图"))
+        paramCard.addView(smallLabel("尺寸固定 512×512（SD1.5 原生分辨率）"))
         root.addView(paramCard)
 
         // ---- 生成 ----
         genBtn = Button(c).apply {
-            text = "生成"
-            setTypeface(typeface, Typeface.BOLD)
+            text = "开始生成"
             setBackgroundColor(primary)
             setTextColor(Color.WHITE)
-            setOnClickListener { generate() }
+            typeface = Typeface.DEFAULT_BOLD
+            setOnClickListener { generateFromUi() }
         }
         root.addView(genBtn, matchWrap(top = 4))
-        progressText = body("")
+
+        progressText = TextView(c).apply {
+            textSize = 12f
+            setTextColor(subText)
+            visibility = View.GONE
+            setPadding(0, dp(8), 0, 0)
+        }
         root.addView(progressText)
+
         resultImg = ImageView(c).apply {
             adjustViewBounds = true
-            setPadding(0, dp(10), 0, dp(24))
+            visibility = View.GONE
+            setPadding(0, dp(10), 0, 0)
         }
-        root.addView(resultImg, matchWrap())
+        root.addView(resultImg)
 
-        // 已有可用模型则直接加载
-        scope.launch { loadModel() }
         return root
     }
 
-    fun release() {
-        runCatching { pipeline?.close() }
-        pipeline = null
-    }
+    // ================= 模型（由「模型」页驱动） =================
 
-    // ---------- 模型加载（入口在「模型」页，这里只提供能力） ----------
-
-    /**
-     * 由模型页调用：把 SAF 选中的目录复制进私有目录并加载。
-     * @param onStage 进度回调（主线程）
-     * @return null 表示成功，否则为错误信息
-     */
+    /** 从 SAF 目录导入绘图模型：收集 .gguf，复制到私有目录后加载。返回 null 表示成功，否则为错误文案。 */
     suspend fun prepareFromTree(treeUri: Uri, onStage: (String) -> Unit): String? {
-        return try {
-            onStage("正在复制模型文件…")
-            val dest = File(c.filesDir, DIR_NAME)
-            withContext(Dispatchers.IO) { copyTree(treeUri, dest) }
-            onStage("正在加载模型…")
-            loadModel()
-        } catch (e: Throwable) {
-            "复制失败：${e.message}"
-        }
-    }
+        return withContext(Dispatchers.IO) {
+            try {
+                onStage("正在扫描所选文件夹…")
+                val root = File(c.filesDir, DIR_NAME).apply { mkdirs() }
+                val found = ArrayList<File>()
 
-    /** 卸载绘图模型（模型页调用） */
-    fun unloadModel() {
-        runCatching { pipeline?.close() }
-        pipeline = null
-        modelSet = null
-        statusText.text = "未加载 —— 请到「模型」页的「绘图模型」里选择模型文件夹"
-    }
+                fun walk(dir: Uri, depth: Int) {
+                    if (depth > 3) return
+                    val children = c.contentResolver
+                        .query(dir, null, null, null, null)
+                        ?.use { cur ->
+                            val names = ArrayList<Uri>()
+                            while (cur.moveToNext()) {
+                                val idIdx = cur.getColumnIndex(android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+                                if (idIdx < 0) continue
+                                val id = cur.getString(idIdx) ?: continue
+                                names.add(android.provider.DocumentsContract.buildDocumentUriUsingTree(treeUri, id))
+                            }
+                            names
+                        } ?: return
+                    for (child in children) {
+                        val nm = c.contentResolver.query(child, null, null, null, null)?.use { cur ->
+                            if (cur.moveToFirst()) {
+                                val i = cur.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                                if (i >= 0) cur.getString(i) else null
+                            } else null
+                        } ?: continue
+                        if (nm.endsWith(".gguf", true)) {
+                            found.add(File(root, nm))
+                        } else if (!nm.contains('.')) {
+                            walk(child, depth + 1)
+                        }
+                    }
+                }
+                walk(treeUri, 0)
 
-    /** 是否已加载绘图模型 */
-    fun hasModel(): Boolean = pipeline != null
+                if (found.isEmpty()) return@withContext "所选文件夹里没找到 .gguf 绘图模型"
 
-    /** 当前模型摘要文案 */
-    fun modelSummary(): String {
-        if (pipeline == null) return "未加载"
-        val s = modelSet
-        return "已就绪：SD 1.5" + if (s?.canImg2Img == true) "（支持图生图）" else "（仅文生图）"
-    }
+                var copied = 0
+                for (src in found) {
+                    // URI 遍历后要重新定位：按 display name 再查一次
+                    val uri = findUriByName(treeUri, src.name) ?: continue
+                    onStage("正在复制 ${src.name}…")
+                    c.contentResolver.openInputStream(uri)?.use { ins ->
+                        src.outputStream().use { outs -> ins.copyTo(outs, 1 shl 20) }
+                    }
+                    copied++
+                }
+                if (copied == 0) return@withContext "复制模型失败"
 
-    private fun pickInputImage() {
-        val it = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-            type = "image/*"
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        @Suppress("DEPRECATION")
-        act.startActivityForResult(it, REQ_IMAGE)
-    }
-
-    /** 由 Activity 转发 onActivityResult */
-    fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean {
-        if (resultCode != Activity.RESULT_OK) return false
-        when (requestCode) {
-            REQ_IMAGE -> {
-                val uri = data?.data ?: return true
-                loadInputImage(uri)
-                return true
+                onStage("正在加载绘图模型（首次需几十秒）…")
+                loadFromPrivateDir()
+            } catch (e: Throwable) {
+                "加载失败：${e.message ?: e.javaClass.simpleName}"
             }
         }
-        return false
     }
 
-    private fun copyTree(src: Uri, dest: File) {
-        // 只复制可能用到的文件，避免把整目录的无用内容也搬进来
-        val wanted = setOf(
-            "model.onnx", "vocab.json", "merges.txt", "scheduler_config.json", "config.json"
-        )
-        val name = queryName(src) ?: "model"
-        val base = File(dest, sanitize(name))
-        base.mkdirs()
-        copyTreeRecursive(src, base, wanted, 0)
-    }
-
-    private fun copyTreeRecursive(dirUri: Uri, dest: File, wanted: Set<String>, depth: Int) {
-        if (depth > 3) return
-        val children = listChildren(dirUri)
-        for (child in children) {
-            val name = queryName(child) ?: continue
-            if (isDirectory(child)) {
-                val sub = File(dest, sanitize(name))
-                sub.mkdirs()
-                copyTreeRecursive(child, sub, wanted, depth + 1)
-            } else if (name in wanted) {
-                val out = File(dest, sanitize(name))
-                if (out.exists() && out.length() > 0) continue      // 幂等
-                c.contentResolver.openInputStream(child)?.use { input ->
-                    out.outputStream().use { input.copyTo(it, 1 shl 16) }
+    private fun findUriByName(treeUri: Uri, name: String): Uri? {
+        val rootDocId = android.provider.DocumentsContract.getTreeDocumentId(treeUri)
+        val child = android.provider.DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, rootDocId)
+        return c.contentResolver.query(child, null, null, null, null)?.use { cur ->
+            while (cur.moveToNext()) {
+                val ni = cur.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (ni < 0) continue
+                if (cur.getString(ni) == name) {
+                    val di = cur.getColumnIndex(android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+                    if (di >= 0) {
+                        return@use android.provider.DocumentsContract.buildDocumentUriUsingTree(treeUri, cur.getString(di))
+                    }
                 }
             }
+            null
         }
     }
 
-    private fun listChildren(treeUri: Uri): List<Uri> {
-        val docId = android.provider.DocumentsContract.getTreeDocumentId(treeUri)
-        val childrenUri = android.provider.DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, docId)
-        val out = ArrayList<Uri>()
-        c.contentResolver.query(
-            childrenUri,
-            arrayOf(
-                android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID,
-                android.provider.DocumentsContract.Document.COLUMN_MIME_TYPE
-            ),
-            null, null, null
-        )?.use { cur ->
-            while (cur.moveToNext()) {
-                val id = cur.getString(0)
-                out.add(android.provider.DocumentsContract.buildDocumentUriUsingTree(treeUri, id))
-            }
-        }
-        return out
-    }
-
-    private fun isDirectory(uri: Uri): Boolean =
-        c.contentResolver.getType(uri) == android.provider.DocumentsContract.Document.MIME_TYPE_DIR
-
-    private fun queryName(uri: Uri): String? =
-        c.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
-            if (it.moveToFirst()) it.getString(0) else null
-        }
-
-    private fun sanitize(n: String): String = n.replace(Regex("[^A-Za-z0-9._-]"), "_")
-
-    // ---------- 加载模型 ----------
-
-    /** 在私有目录里查找并加载 SD 模型；返回 null 表示成功，否则为错误信息 */
-    private suspend fun loadModel(): String? {
-        val root = File(c.filesDir, DIR_NAME)
-        val found = withContext(Dispatchers.IO) { SdModelSet.find(root) }
-        if (found == null) {
-            val msg = "未找到可用模型（需要 text_encoder/unet/vae_decoder + tokenizer）"
-            statusText.text = msg
-            return msg
-        }
-        val err = found.validate()
-        if (err != null) {
-            val msg = "模型不完整：$err"
-            statusText.text = msg
-            return msg
-        }
-        statusText.text = "正在加载模型…"
+    /** 扫描私有目录里已复制的 gguf 并加载 */
+    suspend fun loadExisting(): String? = withContext(Dispatchers.IO) {
         try {
-            val p = withContext(Dispatchers.IO) { SdPipeline(found) }
-            pipeline?.let { runCatching { it.close() } }
-            pipeline = p
-            modelSet = found
-            statusText.text = modelSummary()
-            onPipelineReady?.invoke()
-            return null
+            loadFromPrivateDir()
         } catch (e: Throwable) {
-            val msg = "加载失败：${e.message}"
-            statusText.text = msg
-            return msg
+            "加载失败：${e.message ?: e.javaClass.simpleName}"
         }
     }
 
-    // ---------- 生成 ----------
-
-    /** 用当前界面参数组装一次生成请求（prompt 由调用方给出） */
-    private fun currentParams(prompt: String): SdPipeline.Params {
-        val steps = stepsEdit.text.toString().toIntOrNull()?.coerceIn(1, 100) ?: 20
-        val cfg = cfgEdit.text.toString().toFloatOrNull()?.coerceIn(1f, 20f) ?: 7.5f
-        val seed = seedEdit.text.toString().toLongOrNull() ?: -1L
-        val strength = strengthEdit.text.toString().toFloatOrNull()?.coerceIn(0.05f, 1f) ?: 0.75f
-        return SdPipeline.Params(
-            prompt = prompt,
-            negative = negEdit.text.toString().trim(),
-            steps = steps,
-            cfgScale = cfg,
-            width = size,
-            height = size,
-            seed = seed,
-            strength = strength,
-        )
-    }
-
-    /** 供对话页调用：用绘图页的参数（除正面提示词）生成一张图。 */
-    suspend fun generateImage(prompt: String, onProgress: (Int, Int) -> Unit): ImageData {
-        val pipe = pipeline ?: throw IllegalStateException("绘图模型未加载")
-        val params = currentParams(prompt)
-        return if (img2imgMode && inputBitmap != null) {
-            val bmp = inputBitmap!!
-            val scaled = Bitmap.createScaledBitmap(bmp, size, size, true)
-            val px = IntArray(size * size)
-            scaled.getPixels(px, 0, size, 0, 0, size, size)
-            val rgb = ByteArray(size * size * 3)
-            for (i in px.indices) {
-                rgb[i * 3] = ((px[i] shr 16) and 0xFF).toByte()
-                rgb[i * 3 + 1] = ((px[i] shr 8) and 0xFF).toByte()
-                rgb[i * 3 + 2] = (px[i] and 0xFF).toByte()
-            }
-            pipe.img2img(params, ImageData(rgb, size, size), onProgress)
-        } else {
-            pipe.txt2img(params, onProgress)
+    private suspend fun loadFromPrivateDir(): String? {
+        val root = File(c.filesDir, DIR_NAME)
+        val ggufs = root.listFiles { f -> f.isFile && f.name.endsWith(".gguf", true) }?.toList().orEmpty()
+        if (ggufs.isEmpty()) {
+            statusText.post { statusText.text = "未加载 —— 私有目录里没有 .gguf 绘图模型" }
+            return "私有目录里没有 .gguf 绘图模型"
         }
+
+        // 主模型 = 体积最大的 gguf（Anything V5 合一版）；其余视为 VAE/组件
+        val main = ggufs.maxByOrNull { it.length() }!!
+        val others = ggufs.filter { it !== main }
+        val vae = others.firstOrNull { it.name.contains("vae", true) }
+
+        mainModel = main
+        vaeModel = vae
+
+        val loaded = withContext(Dispatchers.IO) {
+            StableDiffusion.load(
+                context = c,
+                modelPath = main.absolutePath,
+                vaePath = vae?.absolutePath,
+                allowVulkan = false,        // 兼容 Android 9/10：不用 Vulkan 后端，纯 CPU
+                forceVulkan = false,
+                preferPerformanceMode = true,
+            )
+        }
+        sd = loaded
+
+        val summary = buildString {
+            append("已加载：").append(main.name)
+            if (vae != null) append("  +  ").append(vae.name)
+            append("（CPU）")
+        }
+        statusText.post { statusText.text = summary }
+        onPipelineReady?.invoke()
+        return null
     }
 
-    /** ImageData -> Bitmap（对话页展示用） */
-    fun toBitmap(img: ImageData): Bitmap = decodeBitmap(img)
+    fun unloadModel() {
+        runCatching { sd?.close() }
+        sd = null
+        try {
+            statusText.text = "未加载 —— 请到「模型」页的「绘图模型」里选择模型文件夹"
+        } catch (_: Throwable) {}
+    }
 
-    private fun generate() {
-        if (pipeline == null) {
-            if (llmLoaded) {
-                toast("当前加载的是语言模型，不能绘图。请先在上面选择绘图模型文件夹")
-            } else {
-                toast("请先选择并加载绘图模型")
-            }
+    fun hasModel(): Boolean {
+        val root = File(c.filesDir, DIR_NAME)
+        return root.listFiles { f -> f.isFile && f.name.endsWith(".gguf", true) }?.isNotEmpty() == true
+    }
+
+    fun modelSummary(): String = when {
+        sd != null -> "已加载：" + (mainModel?.name ?: "绘图模型") + "（CPU）"
+        hasModel() -> "已复制模型，点「加载绘图模型」开始"
+        else -> "未加载 —— 请到「模型」页的「绘图模型」里选择模型文件夹"
+    }
+
+    fun refreshStatus() {
+        try { statusText.text = modelSummary() } catch (_: Throwable) {}
+    }
+
+    // ================= 生成 =================
+
+    private fun generateFromUi() {
+        val dpg = this
+        if (sd == null) {
+            val msg = if (llmLoaded) "当前加载的是语言模型，不能绘图。请到「模型」页加载绘图模型（.gguf）。"
+            else "请先到「模型」页的「绘图模型」里选择并加载模型"
+            Toast.makeText(c, msg, Toast.LENGTH_LONG).show()
             return
         }
         val prompt = promptEdit.text.toString().trim()
-        if (prompt.isEmpty()) { toast("请输入提示词"); return }
-        if (img2imgMode && inputBitmap == null) { toast("图生图需要先选择参考图片"); return }
-
-        val params = currentParams(prompt)
-
+        if (prompt.isEmpty()) {
+            Toast.makeText(c, "先写点提示词吧", Toast.LENGTH_SHORT).show()
+            return
+        }
         genBtn.isEnabled = false
-        genBtn.text = "生成中…"
-        progressText.text = "准备中…"
-        val start = System.currentTimeMillis()
-
+        progressText.visibility = View.VISIBLE
+        progressText.text = "正在生成…（纯 CPU，512×512 可能要几分钟）"
         scope.launch {
             try {
-                val result = withContext(Dispatchers.Default) {
-                    val cb: (Int, Int) -> Unit = { cur, total ->
-                        act.runOnUiThread { progressText.text = "去噪 $cur/$total" }
-                    }
-                    if (img2imgMode) {
-                        val bmp = inputBitmap!!
-                        val scaled = Bitmap.createScaledBitmap(bmp, size, size, true)
-                        val px = IntArray(size * size)
-                        scaled.getPixels(px, 0, size, 0, 0, size, size)
-                        val rgb = ByteArray(size * size * 3)
-                        for (i in px.indices) {
-                            rgb[i * 3] = ((px[i] shr 16) and 0xFF).toByte()
-                            rgb[i * 3 + 1] = ((px[i] shr 8) and 0xFF).toByte()
-                            rgb[i * 3 + 2] = (px[i] and 0xFF).toByte()
-                        }
-                        pipeline!!.img2img(params, ImageData(rgb, size, size), cb)
-                    } else {
-                        pipeline!!.txt2img(params, cb)
-                    }
+                val img = generateImage(prompt) { cur, total ->
+                    progressText.post { progressText.text = "正在生成… $cur/$total" }
                 }
-                val bmp = withContext(Dispatchers.Default) { decodeBitmap(result) }
-                resultImg.setImageBitmap(bmp)
-                val sec = (System.currentTimeMillis() - start) / 1000.0
-                progressText.text = "完成 · %.1f 秒 · seed=%d".format(sec, result.seed)
+                val bmp = toBitmap(img)
+                resultImg.post {
+                    resultImg.setImageBitmap(bmp)
+                    resultImg.visibility = View.VISIBLE
+                }
+                progressText.post { progressText.text = "完成：${img.width}×${img.height}，seed=${img.seed}" }
             } catch (e: Throwable) {
-                progressText.text = "生成失败：${e.message}"
-                toast("生成失败：${e.message}")
+                progressText.post { progressText.text = "生成失败：${e.message ?: e.javaClass.simpleName}" }
             } finally {
-                genBtn.isEnabled = true
-                genBtn.text = "生成"
+                genBtn.post { genBtn.isEnabled = true }
             }
         }
+        // 让编译器闭嘴（dpg 未使用）
+        if (false) println(dpg)
     }
 
-    private fun decodeBitmap(img: ImageData): Bitmap {
-        val px = IntArray(img.width * img.height)
-        for (i in px.indices) {
-            val r = img.data[i * 3].toInt() and 0xFF
-            val g = img.data[i * 3 + 1].toInt() and 0xFF
-            val b = img.data[i * 3 + 2].toInt() and 0xFF
-            px[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
-        }
-        return Bitmap.createBitmap(px, img.width, img.height, Bitmap.Config.ARGB_8888)
+    /** 供对话页复用的生成入口：把输入当正面提示词，其余参数取绘图页当前设置。 */
+    suspend fun generateImage(
+        prompt: String,
+        onProgress: (Int, Int) -> Unit = { _, _ -> },
+    ): ImageData = withContext(Dispatchers.IO) {
+        val engine = sd ?: throw IllegalStateException("绘图模型未加载")
+        val steps = stepsEdit.text.toString().toIntOrNull()?.coerceIn(1, 150) ?: 20
+        val cfg = cfgEdit.text.toString().toFloatOrNull()?.coerceIn(1f, 30f) ?: 7.0f
+        val seed = seedEdit.text.toString().toLongOrNull() ?: -1L
+        val useSeed = if (seed < 0) System.currentTimeMillis() else seed
+
+        onProgress(0, steps)
+        val bmp = engine.txt2img(
+            GenerateParams(
+                prompt = prompt,
+                negative = negEdit.text.toString(),
+                width = 512,
+                height = 512,
+                steps = steps,
+                cfgScale = cfg,
+                seed = useSeed,
+            )
+        )
+        onProgress(steps, steps)
+        ImageData(bmp, useSeed)
     }
 
-    private fun loadInputImage(uri: Uri) {
-        scope.launch {
-            val bmp = withContext(Dispatchers.IO) {
-                c.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }
-            }
-            if (bmp == null) { toast("读取图片失败"); return@launch }
-            inputBitmap = bmp
-            imgThumb.setImageBitmap(bmp)
-            imgThumb.visibility = View.VISIBLE
-        }
+    fun toBitmap(img: ImageData): Bitmap = img.bitmap
+
+    fun cancel() {
+        runCatching { sd?.cancelGeneration() }
     }
 
-    // ---------- 小控件 ----------
+    fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?): Boolean = false
 
-    private fun setMode(img2img: Boolean) {
-        img2imgMode = img2img
-        modeTxt2Img.setTextColor(if (img2img) subText else primary)
-        modeImg2Img.setTextColor(if (img2img) primary else subText)
-        modeTxt2Img.setBackgroundColor(if (img2img) Color.WHITE else 0x14000000)
-        modeImg2Img.setBackgroundColor(if (img2img) 0x14000000 else Color.WHITE)
-        pickImgBtn.visibility = if (img2img) View.VISIBLE else View.GONE
-        imgThumb.visibility = if (img2img && inputBitmap != null) View.VISIBLE else View.GONE
-        strengthLabel.visibility = if (img2img) View.VISIBLE else View.GONE
+    fun release() {
+        runCatching { sd?.close() }
+        sd = null
     }
 
-    private fun refreshSizeChips() {
-        for (i in 0 until sizeRow.childCount) {
-            val v = sizeRow.getChildAt(i) as TextView
-            val s = intArrayOf(256, 384, 512)[i]
-            v.setTextColor(if (s == size) primary else subText)
-        }
-    }
+    // ================= UI 小工具 =================
 
-    private fun modeChip(text: String, active: Boolean): TextView = TextView(c).apply {
-        this.text = text
-        gravity = Gravity.CENTER
-        textSize = 13.5f
-        setPadding(dp(10), dp(8), dp(10), dp(8))
-        setTextColor(if (active) primary else subText)
-        setBackgroundColor(if (active) Color.WHITE else 0x14000000)
-    }
+    private fun dp(v: Int): Int = TypedValue.applyDimension(
+        TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), c.resources.displayMetrics
+    ).toInt()
 
-    private fun card(): LinearLayout = LinearLayout(c).apply {
+    private fun card() = LinearLayout(c).apply {
         orientation = LinearLayout.VERTICAL
         setBackgroundColor(Color.WHITE)
         setPadding(dp(14), dp(12), dp(14), dp(12))
-        val lp = LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
-        )
-        lp.bottomMargin = dp(10)
-        layoutParams = lp
+        layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { bottomMargin = dp(10) }
     }
 
-    private fun title(t: String): TextView = TextView(c).apply {
+    private fun title(t: String) = TextView(c).apply {
         text = t
-        textSize = 15f
-        setTypeface(typeface, Typeface.BOLD)
+        textSize = 14.5f
         setTextColor(textColor)
+        typeface = Typeface.DEFAULT_BOLD
     }
 
-    private fun body(t: String): TextView = TextView(c).apply {
+    private fun body(t: String) = TextView(c).apply {
         text = t
         textSize = 12.5f
         setTextColor(subText)
-        setPadding(0, dp(4), 0, 0)
+        setPadding(0, dp(6), 0, 0)
     }
 
-    private fun label(t: String): TextView = TextView(c).apply {
+    private fun smallLabel(t: String) = TextView(c).apply {
         text = t
-        textSize = 12f
+        textSize = 11.5f
         setTextColor(subText)
-        setPadding(0, dp(8), 0, dp(2))
+        setPadding(0, dp(8), 0, 0)
     }
 
-    private fun edit(hintText: String, lines: Int): EditText = EditText(c).apply {
-        hint = hintText
-        textSize = 13.5f
+    private fun labeledEdit(hint: String, singleLine: Boolean, minLines: Int = 1) = EditText(c).apply {
+        this.hint = hint
+        textSize = 13f
         setTextColor(textColor)
-        inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
-        setPadding(dp(8), dp(8), dp(8), dp(8))
-        setBackgroundColor(0x0A000000)
-        minLines = lines
-    }
-
-    private fun numEdit(v: String): EditText = EditText(c).apply {
-        setText(v)
-        textSize = 13.5f
-        setTextColor(textColor)
-        inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
-        setPadding(dp(8), dp(8), dp(8), dp(8))
-        setBackgroundColor(0x0A000000)
-    }
-
-    private fun labeledEdit(name: String, e: EditText): LinearLayout =
-        LinearLayout(c).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(4), 0, dp(4), 0)
-            addView(label(name))
-            addView(e)
+        setHintTextColor(0xFFAAAAAA.toInt())
+        setBackgroundColor(0xFFF2F3F5.toInt())
+        setPadding(dp(10), dp(8), dp(10), dp(8))
+        isSingleLine = singleLine
+        if (!singleLine) {
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            this.minLines = minLines
         }
+    }
 
-    private fun weight(): LinearLayout.LayoutParams =
-        LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+    private fun smallNumber(def: String) = EditText(c).apply {
+        setText(def)
+        textSize = 13f
+        setTextColor(textColor)
+        inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL or InputType.TYPE_NUMBER_FLAG_SIGNED
+        setBackgroundColor(0xFFF2F3F5.toInt())
+        setPadding(dp(10), dp(8), dp(10), dp(8))
+    }
 
-    private fun matchWrap(top: Int = 0): LinearLayout.LayoutParams =
-        LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
-        ).apply { topMargin = dp(top) }
+    private fun paramRow(label: String, input: EditText, hint: String): View {
+        val wrap = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
+        wrap.addView(smallLabel(label))
+        wrap.addView(input, matchWrap(top = 4))
+        wrap.addView(TextView(c).apply {
+            text = hint
+            textSize = 10.5f
+            setTextColor(subText)
+            setPadding(0, dp(3), 0, 0)
+        })
+        return wrap
+    }
 
-    private fun dp(v: Int): Int =
-        TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), c.resources.displayMetrics).toInt()
+    private fun matchWrap(top: Int = 0) = LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams.MATCH_PARENT,
+        LinearLayout.LayoutParams.WRAP_CONTENT
+    ).apply { topMargin = dp(top) }
+}
 
-    private fun toast(m: String) = Toast.makeText(c, m, Toast.LENGTH_SHORT).show()
+
+/** 生成结果：Bitmap + 尺寸 + 实际使用的种子 */
+class ImageData(val bitmap: Bitmap, val seed: Long) {
+    val width: Int get() = bitmap.width
+    val height: Int get() = bitmap.height
 }
