@@ -414,8 +414,13 @@ class DrawPage(
                     if (loraCopied > 0) add("$loraCopied 个 LoRA")
                 }.joinToString("、")
                 val names = ggufs.joinToString("、") { it.first }
-                statusText.post { statusText.text = "已复制：$names${if (loraCopied > 0) "（含 LoRA）" else ""}（点「模型」页的「加载绘图模型」开始）" }
-                "已复制 $parts，请点「加载绘图模型」"
+                statusText.post {
+                    statusText.text = "已复制 $parts：$names" +
+                        (if (loraCopied > 0) "（含 LoRA）" else "") +
+                        "\n点「模型」页的「加载绘图模型」开始"
+                }
+                // 约定：返回 null = 成功（调用方据此刷新列表并提示）；失败才返回错误文案
+                null
             } catch (e: Throwable) {
                 "导入失败：${e.message ?: e.javaClass.simpleName}"
             }

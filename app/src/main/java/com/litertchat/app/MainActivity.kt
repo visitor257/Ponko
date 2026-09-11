@@ -507,16 +507,16 @@ class MainActivity : Activity() {
             }, matchWrap())
         }
 
+        card.addView(
+            actionButton("选择绘图模型文件夹") { pickDrawModelTree() },
+            matchWrap().apply { topMargin = dp(8) }
+        )
+
         drawSavedContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
         }
         card.addView(drawSavedContainer, matchWrap().apply { topMargin = dp(6) })
-
-        card.addView(
-            actionButton("选择绘图模型文件夹") { pickDrawModelTree() },
-            matchWrap().apply { topMargin = dp(8) }
-        )
         card.addView(
             actionButton("加载绘图模型") {
                 val dpg = drawPage
@@ -983,6 +983,8 @@ class MainActivity : Activity() {
                 val err = dpg.prepareFromTree(uri) { stage -> drawModelStatus?.text = stage }
                 setBusy(false)
                 if (err == null) {
+                    // 导入成功：把最新复制的那个默认标为选用
+                    dpg.listModels().firstOrNull()?.let { drawMainPath = it.absolutePath }
                     drawModelStatus?.text = dpg.modelSummary()
                     setStatus("绘图模型已复制", C_OK)
                     toast("已复制，请点「加载绘图模型」")
