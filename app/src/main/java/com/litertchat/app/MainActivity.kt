@@ -1771,7 +1771,7 @@ class MainActivity : Activity() {
                     kotlinx.coroutines.delay(1000)
                     val sec = (System.currentTimeMillis() - drawStartedAt) / 1000
                     val stepInfo = if (totalStep > 0) "第 $curStep/$totalStep 步 · " else ""
-                    markwonStream.setMarkdown(ai.answer, "🎨 正在绘制…$stepInfo已 ${sec} 秒")
+                    markwonStream.setMarkdown(ai.answer, "🎨 正在绘制…${stepInfo}已 ${sec} 秒")
                 }
             }
             try {
