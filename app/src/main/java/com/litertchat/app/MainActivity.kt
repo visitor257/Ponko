@@ -162,6 +162,8 @@ class MainActivity : Activity() {
     private var drawModelStatus: TextView? = null
     /** 已复制的绘图模型列表容器 */
     private var drawSavedContainer: LinearLayout? = null
+    /** 绘图模型的「加载/卸载」二合一按钮 */
+    private var drawToggleBtn: TextView? = null
     /** 当前选定的绘图主模型（绝对路径） */
     private var drawMainPath: String? = null
     /** LoRA 状态文本（模型页） */
@@ -520,53 +522,9 @@ class MainActivity : Activity() {
             visibility = View.GONE
         }
         card.addView(drawSavedContainer, matchWrap().apply { topMargin = dp(6) })
-        card.addView(
-            actionButton("加载绘图模型") {
-                val dpg = drawPage
-                if (dpg == null) {
-                    toast("绘图页未初始化")
-                } else if (!dpg.hasModel()) {
-                    toast("还没有绘图模型，先点上面「选择绘图模型文件夹」")
-                } else {
-                    scope.launch {
-                        drawModelStatus?.text = "正在加载绘图模型（首次需几十秒）…"
-                        val picked = drawMainPath?.let { File(it) }
-                        dpg.useGpu = (backendSpinner.selectedItem.toString() == "GPU")
-                        val err = dpg.loadExisting(picked)
-                        drawModelStatus?.text = if (err == null) dpg.modelSummary() else err
-                        if (err == null) {
-                            drawMainPath = dpg.currentMainName()?.let { File(filesDir, "draw/$it").absolutePath }
-                            drawMode = true
-                            dpg.llmLoaded = false
-                            updateThinkEnabled()
-                            refreshDrawModels()
-                            setStatus("绘图模型已就绪", C_OK)
-                            toast("绘图模型已加载：到对话页输入就是正面提示词")
-                        } else {
-                            setStatus("绘图模型加载失败", C_ERR)
-                            toast(err)
-                        }
-                    }
-                }
-            },
-            matchWrap().apply { topMargin = dp(8) }
-        )
-        card.addView(
-            actionButton("卸载绘图模型") {
-                val dpg = drawPage
-                if (dpg == null || !dpg.hasModel()) {
-                    toast("当前没有加载绘图模型")
-                } else {
-                    dpg.unloadModel()
-                    drawModelStatus?.text = "未加载"
-                    drawMode = false
-                    updateThinkEnabled()
-                    setStatus("未加载模型", C_IDLE)
-                    toast("绘图模型已卸载")
-                }
-            },
-            matchWrap().apply { topMargin = dp(8) }
-        )
+        // 加载 / 卸载合成一个按钮：未加载时点击 = 加载，已加载时点击 = 卸载
+        drawToggleBtn = actionButton("加载绘图模型") { onDrawToggleClick() }
+        card.addView(drawToggleBtn, matchWrap().apply { topMargin = dp(8) })
         card.addView(
             actionButton("查看加载日志") {
                 val f = File(filesDir, "draw/.loadstage")
@@ -1110,8 +1068,57 @@ class MainActivity : Activity() {
 
     // ================= 已复制的绘图模型 =================
 
+    /** 绘图模型的二合一按钮：未加载 → 加载；已加载 → 卸载。 */
+    private fun onDrawToggleClick() {
+        val dpg = drawPage
+        if (dpg == null) {
+            toast("绘图页未初始化")
+            return
+        }
+        if (dpg.isReady()) {
+            dpg.unloadModel()
+            drawMode = false
+            updateThinkEnabled()
+            drawModelStatus?.text = dpg.modelSummary()
+            setStatus("未加载模型", C_IDLE)
+            toast("绘图模型已卸载")
+            refreshDrawToggle()
+            return
+        }
+        if (!dpg.hasModel()) {
+            toast("还没有绘图模型，先点上面「选择绘图模型文件夹」")
+            return
+        }
+        scope.launch {
+            drawModelStatus?.text = "正在加载绘图模型（首次需几十秒）…"
+            val picked = drawMainPath?.let { File(it) }
+            dpg.useGpu = (backendSpinner.selectedItem.toString() == "GPU")
+            val err = dpg.loadExisting(picked)
+            drawModelStatus?.text = if (err == null) dpg.modelSummary() else err
+            if (err == null) {
+                drawMainPath = dpg.currentMainName()?.let { File(filesDir, "draw/$it").absolutePath }
+                drawMode = true
+                dpg.llmLoaded = false
+                updateThinkEnabled()
+                refreshDrawModels()
+                setStatus("绘图模型已就绪", C_OK)
+                toast("绘图模型已加载：到对话页输入就是正面提示词")
+            } else {
+                setStatus("绘图模型加载失败", C_ERR)
+                toast(err)
+            }
+            refreshDrawToggle()
+        }
+    }
+
+    /** 按「绘图模型是否已加载」更新二合一按钮的文案。 */
+    private fun refreshDrawToggle() {
+        drawToggleBtn?.text = if (drawPage?.isReady() == true) "卸载绘图模型" else "加载绘图模型"
+    }
+
     /** 列出私有目录里已复制的绘图模型（点击选用并加载 · 长按删除）。 */
     private fun refreshDrawModels() {
+        refreshDrawToggle()
         val box = drawSavedContainer ?: return
         box.removeAllViews()
         val dpg = drawPage

@@ -1,4 +1,4 @@
-# 构建 Ponko release APK 并交付（Z 盘 + 网盘）
+﻿# 构建 Ponko release APK 并交付（Z 盘 + 网盘）
 #
 # 为什么需要这个脚本：手工把 assembleRelease / 签名 / 拷贝 / 上传串成一行时，
 # 一旦编译失败，后面的步骤照样会用【上一次的旧 APK】继续跑，容易把旧包当新包发出去。
@@ -29,7 +29,14 @@ if ($LASTEXITCODE -ne 0) { throw "gradle 构建失败（exit=$LASTEXITCODE），
 if (-not (Test-Path $unsigned)) { throw "未找到构建产物：$unsigned" }
 
 Step "2/5 签名（ponko-release.jks，v2-only）"
-& powershell -ExecutionPolicy Bypass -File (Join-Path $proj "tools\sign-apk.ps1") -Apk $unsigned -Ks "ponko-release.jks"
+$ks = Join-Path $proj "ponko-release.jks"
+if (-not (Test-Path $ks)) { throw "找不到签名密钥：$ks" }
+Push-Location $proj
+try {
+    & powershell -ExecutionPolicy Bypass -File (Join-Path $proj "tools\sign-apk.ps1") -Apk $unsigned -Ks $ks
+} finally {
+    Pop-Location
+}
 if ($LASTEXITCODE -ne 0) { throw "签名失败，已停止" }
 
 Step "3/5 生成交付文件"
