@@ -51,4 +51,6 @@ dependencies {
     implementation("io.noties.markwon:ext-tables:4.6.2")
     implementation("io.noties.markwon:ext-strikethrough:4.6.2")
     implementation("io.noties.markwon:linkify:4.6.2")
+    // 文生图 / 图生图：ONNX Runtime（Maven 现成 AAR，无需 NDK/CMake 编译）
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.22.0")
 }

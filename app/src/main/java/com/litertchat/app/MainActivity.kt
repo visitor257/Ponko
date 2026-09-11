@@ -28,6 +28,7 @@ import android.widget.TextView
 import android.widget.Toast
 import com.google.ai.edge.litertlm.Backend
 import com.google.ai.edge.litertlm.Content
+import com.litertchat.app.draw.DrawPage
 import com.google.ai.edge.litertlm.Conversation
 import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
@@ -122,7 +123,11 @@ class MainActivity : Activity() {
     private lateinit var tabChat: View
     private lateinit var tabModels: View
     private lateinit var tabSettings: View
+    private lateinit var tabDraw: View
     private lateinit var inputBar: View
+
+    /** 绘图页（文生图/图生图），懒加载 */
+    private var drawPage: DrawPage? = null
     private lateinit var appBarMenu: View
     private lateinit var appBarPlus: View
     private lateinit var drawerPanel: LinearLayout
@@ -176,6 +181,7 @@ class MainActivity : Activity() {
         super.onDestroy()
         try { saveSessions() } catch (_: Throwable) {}
         scope.cancel()
+        try { drawPage?.release() } catch (_: Throwable) {}
         try { engine?.close() } catch (_: Throwable) {}
         try { llamaModel?.close() } catch (_: Throwable) {}
         engine = null
@@ -194,16 +200,24 @@ class MainActivity : Activity() {
 
         main.addView(buildAppBar(), matchWrap())
 
-        // 三页内容：对话 / 模型 / 设置（底部菜单切换）
+        // 四页内容：对话 / 模型 / 绘图 / 关于（底部菜单切换）
         tabChat = buildChatPage()
         tabModels = buildModelsPage()
         tabSettings = buildSettingsPage()
+        val dpg = DrawPage(this, scope, C_PRIMARY, C_TEXT, C_SUBTEXT)
+        drawPage = dpg
+        tabDraw = ScrollView(this).apply {
+            setBackgroundColor(C_BG)
+            addView(dpg.build())
+        }
         val contentFrame = FrameLayout(this)
         contentFrame.addView(tabChat, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         contentFrame.addView(tabModels, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         contentFrame.addView(tabSettings, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        contentFrame.addView(tabDraw, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         main.addView(contentFrame, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -439,7 +453,8 @@ class MainActivity : Activity() {
         val items = listOf(
             Triple("💬", "对话", 0),
             Triple("🧠", "模型", 1),
-            Triple("ℹ️", "关于", 2),
+            Triple("🎨", "绘图", 2),
+            Triple("ℹ️", "关于", 3),
         )
         for ((icon, label, idx) in items) {
             val item = LinearLayout(this).apply {
@@ -469,7 +484,8 @@ class MainActivity : Activity() {
         currentTab = index
         tabChat.visibility = if (index == 0) View.VISIBLE else View.GONE
         tabModels.visibility = if (index == 1) View.VISIBLE else View.GONE
-        tabSettings.visibility = if (index == 2) View.VISIBLE else View.GONE
+        tabDraw.visibility = if (index == 2) View.VISIBLE else View.GONE
+        tabSettings.visibility = if (index == 3) View.VISIBLE else View.GONE
         inputBar.visibility = if (index == 0) View.VISIBLE else View.GONE
         val isChat = index == 0
         appBarMenu.visibility = if (isChat) View.VISIBLE else View.INVISIBLE
@@ -705,6 +721,7 @@ class MainActivity : Activity() {
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (drawPage?.onActivityResult(requestCode, resultCode, data) == true) return
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == REQ_PICK_MODEL && resultCode == RESULT_OK) {
             data?.data?.let { copyModelToPrivate(it) }
