@@ -17,8 +17,9 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
-import io.aatricks.llmedge.image.diffusion.GenerateParams
-import io.aatricks.llmedge.image.diffusion.StableDiffusion
+import io.aatricks.llmedge.image.ImageClient
+import io.aatricks.llmedge.image.ImageGenerationRequest
+import io.aatricks.llmedge.model.ModelSpec
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -48,7 +49,7 @@ class DrawPage(
 
     private val c: Context get() = act
 
-    private var sd: StableDiffusion? = null
+    private var client: ImageClient? = null
     private var mainModel: File? = null
     private var vaeModel: File? = null
 
@@ -59,7 +60,7 @@ class DrawPage(
     var onPipelineReady: (() -> Unit)? = null
 
     /** 是否已就绪（可生成） */
-    fun isReady(): Boolean = sd != null
+    fun isReady(): Boolean = client != null
 
     // 控件
     private lateinit var statusText: TextView
@@ -262,45 +263,30 @@ class DrawPage(
             runCatching { stageFile.delete() }
             return "native 库 libsdcpp.so 加载失败：${t.message ?: t.javaClass.simpleName}"
         }
-        stage("6 开始 native 自检")
-        stage("6.1 isNativeLibraryLoaded = ${runCatching { StableDiffusion.isNativeLibraryLoaded() }.getOrElse { "异常:" + it.javaClass.simpleName }}")
-        stage("6.2 checkBindings = ${runCatching { StableDiffusion.checkBindings() }.getOrElse { "异常:" + it.javaClass.simpleName }}")
-        stage("6.3 isOpenClAvailable = ${runCatching { StableDiffusion.isOpenClAvailable() }.getOrElse { "异常:" + it.javaClass.simpleName }}")
-        // 故意不调 getVulkanDeviceCount()：本机 Vulkan 驱动会让 native 崩（已实测）。
+        stage("6 创建 ImageClient（隔离子进程 + 强制 CPU）")
+        return try {
+            client?.let { runCatching { it.close() } }
+            client = LlmedgeConfigFactory.cpuIsolatedClient(c.applicationContext, scope)
+            stage("7 ImageClient 创建 OK")
 
-        stage("7 开始 StableDiffusion.load()（sequentialLoad=true 跳过 Vulkan 探测）")
-        val loaded = withContext(Dispatchers.IO) {
-            StableDiffusion.load(
-                context = c.applicationContext,
-                modelPath = main.absolutePath,
-                vaePath = vae?.absolutePath,
-                nThreads = 4,
-                offloadToCpu = true,        // 内存优先
-                flashAttn = false,          // 华为/Mali 上 FlashAttention 常出问题
-                sequentialLoad = true,      // 关键：显式指定 → 跳过 Vulkan 探测（否则 native 崩）
-                allowVulkan = false,        // 不用 Vulkan 后端，纯 CPU
-                forceVulkan = false,
-                preferPerformanceMode = false,
-            )
+            val summary = buildString {
+                append("已就绪：").append(main.name)
+                if (vae != null) append("  +  ").append(vae.name)
+                append("（CPU · 独立进程）")
+            }
+            statusText.post { statusText.text = summary }
+            runCatching { stageFile.delete() }
+            onPipelineReady?.invoke()
+            null
+        } catch (e: Throwable) {
+            stage("7 创建失败：${e.message ?: e.javaClass.simpleName}")
+            "加载失败：${e.message ?: e.javaClass.simpleName}"
         }
-        stage("8 StableDiffusion.load() 返回 OK")
-        sd = loaded
-
-        val summary = buildString {
-            append("已加载：").append(main.name)
-            if (vae != null) append("  +  ").append(vae.name)
-            append("（CPU）")
-        }
-        statusText.post { statusText.text = summary }
-        stage("8 完成")
-        runCatching { stageFile.delete() }
-        onPipelineReady?.invoke()
-        return null
     }
 
     fun unloadModel() {
-        runCatching { sd?.close() }
-        sd = null
+        runCatching { client?.close() }
+        client = null
         try {
             statusText.text = "未加载 —— 请到「模型」页的「绘图模型」里选择模型文件夹"
         } catch (_: Throwable) {}
@@ -312,7 +298,7 @@ class DrawPage(
     }
 
     fun modelSummary(): String = when {
-        sd != null -> "已加载：" + (mainModel?.name ?: "绘图模型") + "（CPU）"
+        client != null -> "已就绪：" + (mainModel?.name ?: "绘图模型") + "（CPU · 独立进程）"
         hasModel() -> "已复制模型，点「加载绘图模型」开始"
         else -> "未加载 —— 请到「模型」页的「绘图模型」里选择模型文件夹"
     }
@@ -325,7 +311,7 @@ class DrawPage(
 
     private fun generateFromUi() {
         val dpg = this
-        if (sd == null) {
+        if (client == null) {
             val msg = if (llmLoaded) "当前加载的是语言模型，不能绘图。请到「模型」页加载绘图模型（.gguf）。"
             else "请先到「模型」页的「绘图模型」里选择并加载模型"
             Toast.makeText(c, msg, Toast.LENGTH_LONG).show()
@@ -365,15 +351,16 @@ class DrawPage(
         prompt: String,
         onProgress: (Int, Int) -> Unit = { _, _ -> },
     ): ImageData = withContext(Dispatchers.IO) {
-        val engine = sd ?: throw IllegalStateException("绘图模型未加载")
+        val cli = client ?: throw IllegalStateException("绘图模型未加载")
+        val main = mainModel ?: throw IllegalStateException("未选择绘图模型")
         val steps = stepsEdit.text.toString().toIntOrNull()?.coerceIn(1, 150) ?: 20
         val cfg = cfgEdit.text.toString().toFloatOrNull()?.coerceIn(1f, 30f) ?: 7.0f
         val seed = seedEdit.text.toString().toLongOrNull() ?: -1L
         val useSeed = if (seed < 0) System.currentTimeMillis() else seed
 
         onProgress(0, steps)
-        val bmp = engine.txt2img(
-            GenerateParams(
+        val bmp = cli.generate(
+            ImageGenerationRequest(
                 prompt = prompt,
                 negative = negEdit.text.toString(),
                 width = 512,
@@ -381,6 +368,11 @@ class DrawPage(
                 steps = steps,
                 cfgScale = cfg,
                 seed = useSeed,
+                flashAttention = false,      // 华为/Mali 上 FlashAttention 常出问题
+                forceSequentialLoad = true,  // 顺序加载，避开 Vulkan 探测
+                model = ModelSpec.localFile(main),
+                vae = vaeModel?.let { ModelSpec.localFile(it) },
+                sequential = true,
             )
         )
         onProgress(steps, steps)
@@ -390,14 +382,14 @@ class DrawPage(
     fun toBitmap(img: ImageData): Bitmap = img.bitmap
 
     fun cancel() {
-        runCatching { sd?.cancelGeneration() }
+        runCatching { client?.cancelGeneration() }
     }
 
     fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?): Boolean = false
 
     fun release() {
-        runCatching { sd?.close() }
-        sd = null
+        runCatching { client?.close() }
+        client = null
     }
 
     // ================= UI 小工具 =================

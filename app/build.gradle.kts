@@ -63,7 +63,7 @@ dependencies {
     // 直接读 .gguf 绘图模型；Maven 现成 AAR，无需 NDK/CMake。
     // 注意：其 manifest 声明 minSdk 30（Vulkan 后端要求），我们纯 CPU 跑，
     // 通过 tools:overrideLibrary 绕过声明限制以兼容 Android 9+
-    implementation("io.github.aatricks:llmedge:0.3.9") {
+    implementation("io.github.aatricks:llmedge:0.4.7.2") {
         // 只需它的绘图能力：RAG/OCR/语音/云端下载相关依赖全部剔除，否则白白胖 ~35MB
         exclude(group = "io.gitlab.shubham0204") // sentence-embeddings（拖进 ONNX Runtime）
         exclude(group = "com.google.mlkit")      // text-recognition / image-labeling + native
