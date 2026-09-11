@@ -33,6 +33,7 @@ import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
 import com.google.ai.edge.litertlm.Message
+import com.google.ai.edge.litertlm.SamplerConfig
 import com.google.ai.edge.litertlm.ThinkingConfig
 import kotlinx.coroutines.flow.channelFlow
 import net.ladenthin.llama.LlamaIterator
@@ -1040,6 +1041,8 @@ class MainActivity : Activity() {
             .withTopK(40)
             .withTopP(0.9f)
             .withRepeatPenalty(1.1f)
+            // 每次生成都换随机种子，否则「重新生成」会得到一模一样的回答
+            .withSeed((System.nanoTime() and 0x7FFFFFFF).toInt())
         // 思考开关：开 = 不限推理预算；关 = 压到 0，并给模板传 enable_thinking=false（哪个机制生效都行）
         p = if (thinkCheck.isChecked) {
             p.withReasoningBudgetTokens(-1)
@@ -1059,6 +1062,13 @@ class MainActivity : Activity() {
         }
         return ConversationConfig(
             initialMessages = msgs,
+            // 每次重建会话都换随机种子，否则「重新生成」会得到一模一样的回答
+            samplerConfig = SamplerConfig(
+                seed = (System.nanoTime() and 0x7FFFFFFF).toInt(),
+                topP = 0.9,
+                temperature = 0.7,
+                topK = 40,
+            ),
             thinkingConfig = ThinkingConfig(enableThinking = thinking, thinkingTokenBudget = 2048),
         )
     }
@@ -1244,6 +1254,7 @@ class MainActivity : Activity() {
         setStatus("生成中（点 ■ 可中断）…", C_WARN)
 
         val ai = addAiArea { regenerate(turn) }
+        ai.regenButton.visibility = View.GONE   // 生成结束后再显示，避免与「停止」混淆
         val answerBuf = StringBuilder()
         val thoughtBuf = StringBuilder()
         var lastRender = 0L
@@ -1400,6 +1411,7 @@ class MainActivity : Activity() {
                 saveSessions()
                 setBusy(false)
                 setStoppingUi(false)
+                ai.regenButton.visibility = View.VISIBLE
                 if (cancelled) {
                     if (answerBuf.isNotEmpty()) {
                         markwonFull.setMarkdown(ai.answer, answerBuf.toString())
