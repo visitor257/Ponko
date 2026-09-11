@@ -369,10 +369,8 @@ class DrawPage(
                 cfgScale = cfg,
                 seed = useSeed,
                 flashAttention = false,      // 华为/Mali 上 FlashAttention 常出问题
-                forceSequentialLoad = true,  // 顺序加载，避开 Vulkan 探测
                 model = ModelSpec.localFile(main),
                 vae = vaeModel?.let { ModelSpec.localFile(it) },
-                sequential = true,
             )
         )
         onProgress(steps, steps)
