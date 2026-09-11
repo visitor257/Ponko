@@ -76,6 +76,7 @@ class DrawPage(
     private lateinit var stepsEdit: EditText
     private lateinit var cfgEdit: EditText
     private lateinit var seedEdit: EditText
+    private lateinit var sizeSpinner: android.widget.Spinner
     private lateinit var genBtn: Button
     private lateinit var cancelBtn: Button
     private lateinit var progressText: TextView
@@ -111,6 +112,13 @@ class DrawPage(
         stepsEdit = smallNumber("20")
         cfgEdit = smallNumber("7.0")
         seedEdit = smallNumber("-1")
+        sizeSpinner = android.widget.Spinner(c).apply {
+            adapter = android.widget.ArrayAdapter(
+                c, android.R.layout.simple_spinner_dropdown_item,
+                listOf("512×512（标准）", "384×384", "256×256（快速验证）")
+            )
+        }
+        paramCard.addView(paramRow("图片尺寸", sizeSpinner, "SD1.5 训练分辨率是 512；256 出图快很多，适合先验证能不能跑通"))
         paramCard.addView(paramRow("采样步数", stepsEdit, "越大越精细，也越慢（20 起步）"))
         paramCard.addView(paramRow("CFG 引导", cfgEdit, "贴合提示词的程度，7 左右常用"))
         paramCard.addView(paramRow("随机种子", seedEdit, "-1 = 每次随机；固定值可复现同一张图"))
@@ -430,12 +438,20 @@ class DrawPage(
         val useSeed = if (seed < 0) System.currentTimeMillis() else seed
 
         onProgress(0, steps)
+        val dim = run {
+            val s = sizeSpinner.selectedItem?.toString() ?: ""
+            when {
+                s.startsWith("256") -> 256
+                s.startsWith("384") -> 384
+                else -> 512
+            }
+        }
         val bmp = cli.generate(
             ImageGenerationRequest(
                 prompt = prompt,
                 negative = negEdit.text.toString(),
-                width = 512,
-                height = 512,
+                width = dim,
+                height = dim,
                 steps = steps,
                 cfgScale = cfg,
                 seed = useSeed,
@@ -521,7 +537,7 @@ class DrawPage(
         setPadding(dp(10), dp(8), dp(10), dp(8))
     }
 
-    private fun paramRow(label: String, input: EditText, hint: String): View {
+    private fun paramRow(label: String, input: View, hint: String): View {
         val wrap = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
         wrap.addView(smallLabel(label))
         wrap.addView(input, matchWrap(top = 4))
