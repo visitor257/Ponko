@@ -29,10 +29,21 @@ android {
         }
     }
 
+    // MNN 版文生图：编译官方 transformers/diffusion/engine 的 C++ 引擎 + JNI 桥
+    // （预编译的 libMNN.so 等放在 src/main/jniLibs/arm64-v8a）
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.31.6"
+        }
+    }
+
+    ndkVersion = "27.3.13750724"
+
     packaging {
         jniLibs {
             useLegacyPackaging = true
-            // LiteRT-LM 与 llama.cpp 两个 AAR 各自带了一份 libc++_shared.so，保留一份即可
+            // MNN / LiteRT-LM / llama.cpp / sd.cpp 各自带 libc++_shared.so，保留一份即可
             pickFirsts += "**/libc++_shared.so"
             // llmedge 里我们只用 libsdcpp.so（stable-diffusion.cpp，直接读 GGUF）+ libggufreader/libomp；
             // 其余 llama.cpp 变体(7×18-28MB)、whisper、bark 用不到，排掉以控制体积

@@ -30,10 +30,12 @@ import java.io.File
 /**
  * 绘图页（文生图）。
  *
- * 模型：stable-diffusion.cpp 的 **GGUF** 绘图模型（Anything V5 / SD1.5 等），
- * 由 llmedge 内置的 libsdcpp.so 直接推理（无需 NDK 自行编译）。
+ * 支持两种引擎，按模型格式自动选：
+ * - **GGUF** → stable-diffusion.cpp（llmedge 内置 libsdcpp.so）
+ * - **MNN**  → MNN 官方 diffusion 引擎（自编 libmnn_sd.so）
  *
- * 模型统一在「模型」页选择：选择目录后把 .gguf（+ 可选的 vae/分离 clip）复制到应用私有目录。
+ * MNN 模型是一组文件（unet/text_encoder/vae_decoder 的 .mnn + .mnn.weight
+ * 以及 vocab.json / merges.txt / alphas.txt），统一放在 filesDir/draw/mnn/。
  */
 class DrawPage(
     private val act: Activity,
@@ -51,8 +53,20 @@ class DrawPage(
     private val c: Context get() = act
 
     private var client: ImageClient? = null
+    private var mnnSession: MnnSdSession? = null
     private var mainModel: File? = null
     private var vaeModel: File? = null
+
+    /** MNN 模型目录（含 unet/text_encoder/vae_decoder 与 tokenizer 文件）。 */
+    private fun mnnDir(): File = File(File(c.filesDir, DIR_NAME), "mnn")
+
+    /** 当前用的是哪种引擎："gguf" / "mnn" / null（未加载） */
+    private val engine: String?
+        get() = when {
+            mnnSession != null -> "mnn"
+            client != null -> "gguf"
+            else -> null
+        }
 
     /** 外部（MainActivity）通知：当前已加载语言模型。用于“生成”按钮给出更准确的提示。 */
     var llmLoaded: Boolean = false
@@ -67,7 +81,7 @@ class DrawPage(
     var onPipelineReady: (() -> Unit)? = null
 
     /** 是否已就绪（可生成） */
-    fun isReady(): Boolean = client != null
+    fun isReady(): Boolean = client != null || mnnSession != null
 
     // 控件
     private lateinit var statusText: TextView
@@ -166,13 +180,14 @@ class DrawPage(
 
     // ================= 模型（由「模型」页驱动） =================
 
-    /** 从 SAF 目录导入绘图模型：递归收集 .gguf，复制到私有目录后加载。返回 null 表示成功，否则为错误文案。 */
+    /** 从 SAF 目录导入绘图模型：递归收集 .gguf 或 .mnn 文件集，复制到私有目录。返回 null 表示成功，否则为错误文案。 */
     suspend fun prepareFromTree(treeUri: Uri, onStage: (String) -> Unit): String? {
         return withContext(Dispatchers.IO) {
             try {
                 onStage("正在扫描所选文件夹…")
                 val root = File(c.filesDir, DIR_NAME).apply { mkdirs() }
-                val found = ArrayList<Pair<String, Uri>>() // name -> uri
+                val ggufs = ArrayList<Pair<String, Uri>>() // name -> uri
+                val mnns = ArrayList<Pair<String, Uri>>()   // MNN 相关文件（含 .weight / json / txt）
 
                 // SAF 坑：tree/document URI 不能直接 query，必须用 buildChildDocumentsUriUsingTree + docId
                 fun listChildren(docId: String): List<Triple<String, String, String>> {
@@ -196,20 +211,48 @@ class DrawPage(
                 fun walk(docId: String, depth: Int) {
                     if (depth > 3) return
                     for ((name, mime, childId) in listChildren(docId)) {
-                        if (name.endsWith(".gguf", true)) {
-                            found.add(name to android.provider.DocumentsContract.buildDocumentUriUsingTree(treeUri, childId))
-                        } else if (mime == android.provider.DocumentsContract.Document.MIME_TYPE_DIR) {
-                            walk(childId, depth + 1)
+                        val lower = name.lowercase()
+                        val uri = android.provider.DocumentsContract.buildDocumentUriUsingTree(treeUri, childId)
+                        when {
+                            lower.endsWith(".gguf") -> ggufs.add(name to uri)
+                            lower.endsWith(".mnn") || lower.endsWith(".mnn.weight") ||
+                                lower == "vocab.json" || lower == "merges.txt" || lower == "alphas.txt" ->
+                                mnns.add(name to uri)
+                            mime == android.provider.DocumentsContract.Document.MIME_TYPE_DIR -> walk(childId, depth + 1)
                         }
                     }
                 }
 
                 walk(android.provider.DocumentsContract.getTreeDocumentId(treeUri), 0)
 
-                if (found.isEmpty()) return@withContext "所选文件夹里没找到 .gguf 绘图模型"
+                // MNN 优先：一套完整的 MNN 模型比单个 gguf 更能表明意图
+                val looksMnn = mnns.any { it.first.lowercase().startsWith("unet") } &&
+                    mnns.any { it.first.lowercase().startsWith("text_encoder") } &&
+                    mnns.any { it.first.lowercase().startsWith("vae_decoder") }
+
+                if (looksMnn) {
+                    val dest = mnnDir().apply { mkdirs() }
+                    // 消掉旧模型，避免新旧文件混在一起
+                    dest.listFiles()?.forEach { if (it.isFile) it.delete() }
+                    var copied = 0
+                    for ((name, uri) in mnns) {
+                        onStage("正在复制 $name…")
+                        try {
+                            c.contentResolver.openInputStream(uri)?.use { ins ->
+                                File(dest, name).outputStream().use { outs -> ins.copyTo(outs, 1 shl 20) }
+                            }
+                            copied++
+                        } catch (_: Throwable) { }
+                    }
+                    if (copied == 0) return@withContext "复制 MNN 模型失败（0 个文件）"
+                    statusText.post { statusText.text = "已复制 MNN 模型（$copied 个文件，点「加载绘图模型」开始）" }
+                    return@withContext "已复制 MNN 模型 $copied 个文件，请点「加载绘图模型」"
+                }
+
+                if (ggufs.isEmpty()) return@withContext "所选文件夹里没找到绘图模型（.gguf 或 MNN 的 .mnn 文件集）"
 
                 var copied = 0
-                for ((name, uri) in found) {
+                for ((name, uri) in ggufs) {
                     onStage("正在复制 $name…")
                     try {
                         c.contentResolver.openInputStream(uri)?.use { ins ->
@@ -224,7 +267,7 @@ class DrawPage(
 
                 // 只复制、不在这里加载：native 加载可能崩（实测），
                 // 留给用户在「模型」页手动点「加载绘图模型」，崩了也不会连累启动。
-                val names = found.joinToString("、") { it.first }
+                val names = ggufs.joinToString("、") { it.first }
                 statusText.post { statusText.text = "已复制：$names（点「模型」页的「加载绘图模型」开始）" }
                 "已复制 $copied 个模型文件，请点「加载绘图模型」"
             } catch (e: Throwable) {
@@ -259,12 +302,53 @@ class DrawPage(
     /** 删除单个已复制的模型文件 */
     fun deleteModel(f: File): Boolean = runCatching { f.delete() }.getOrDefault(false)
 
+    /** 加载 MNN 模型集（filesDir/draw/mnn）。 */
+    private suspend fun loadMnn(): String? {
+        val root = mnnDir()
+        val stageFile = File(File(c.filesDir, DIR_NAME), ".loadstage")
+        fun stage(s: String) { runCatching { stageFile.appendText("$s\n") } }
+        runCatching { stageFile.writeText("") }
+        stage("M0 MNN 模型目录：${root.absolutePath}")
+        stage("M1 文件：" + root.listFiles()?.joinToString("、") { it.name })
+
+        return try {
+            // 释放另一条引擎的会话，避免两份模型同时占内存
+            client?.let { runCatching { it.close() } }
+            client = null
+            mnnSession?.let { runCatching { it.close() } }
+            mnnSession = null
+
+            val backend = if (useGpu) MnnSdEngine.BACKEND_OPENCL else MnnSdEngine.BACKEND_CPU
+            stage("M2 创建 MNN 会话（backend=$backend）…")
+            val session = MnnSdEngine.create(root, backend, MnnSdEngine.MEM_LOW)
+            mnnSession = session
+            stage("M3 MNN 加载 OK")
+
+            val summary = "已就绪：MNN · " + (if (useGpu) "OpenCL" else "CPU") + " · 低内存模式"
+            statusText.post { statusText.text = summary }
+            runCatching { stageFile.delete() }
+            onPipelineReady?.invoke()
+            null
+        } catch (e: Throwable) {
+            stage("M9 失败：${e.javaClass.name}: ${e.message}")
+            runCatching { stageFile.appendText(android.util.Log.getStackTraceString(e) + "\n") }
+            "加载失败：${e.message ?: e.javaClass.simpleName}"
+        }
+    }
+
     private suspend fun loadFromPrivateDir(preferred: File? = null): String? {
+        // ---- MNN 优先：如果私有目录里有完整的 MNN 模型集，就走 MNN 引擎 ----
+        val mInfo = MnnSdEngine.inspect(mnnDir())
+        if (mInfo.ok) {
+            return loadMnn()
+        }
+
         val root = File(c.filesDir, DIR_NAME)
         val ggufs = root.listFiles { f -> f.isFile && f.name.endsWith(".gguf", true) }?.toList().orEmpty()
         if (ggufs.isEmpty()) {
-            statusText.post { statusText.text = "未加载 —— 私有目录里没有 .gguf 绘图模型" }
-            return "私有目录里没有 .gguf 绘图模型"
+            val hint = if (mInfo.files.isNotEmpty()) "MNN 模型不完整：${mInfo.desc}" else "私有目录里没有绘图模型"
+            statusText.post { statusText.text = "未加载 —— $hint" }
+            return "未加载 —— $hint"
         }
 
         // 主模型：优先用指定的，否则取体积最大的 gguf
@@ -337,6 +421,8 @@ class DrawPage(
     fun unloadModel() {
         runCatching { client?.close() }
         client = null
+        runCatching { mnnSession?.close() }
+        mnnSession = null
         try {
             statusText.text = "未加载 —— 请到「模型」页的「绘图模型」里选择模型文件夹"
         } catch (_: Throwable) {}
@@ -344,10 +430,12 @@ class DrawPage(
 
     fun hasModel(): Boolean {
         val root = File(c.filesDir, DIR_NAME)
-        return root.listFiles { f -> f.isFile && f.name.endsWith(".gguf", true) }?.isNotEmpty() == true
+        if (root.listFiles { f -> f.isFile && f.name.endsWith(".gguf", true) }?.isNotEmpty() == true) return true
+        return MnnSdEngine.inspect(mnnDir()).ok
     }
 
     fun modelSummary(): String = when {
+        mnnSession != null -> "已就绪：MNN · " + (if (useGpu) "OpenCL" else "CPU")
         client != null -> "已就绪：" + (mainModel?.name ?: "绘图模型") +
             (if (useGpu) "（GPU · 独立进程）" else "（CPU · 独立进程）")
         hasModel() -> "已复制模型，点「加载绘图模型」开始"
@@ -362,8 +450,8 @@ class DrawPage(
 
     private fun generateFromUi() {
         val dpg = this
-        if (client == null) {
-            val msg = if (llmLoaded) "当前加载的是语言模型，不能绘图。请到「模型」页加载绘图模型（.gguf）。"
+        if (!isReady()) {
+            val msg = if (llmLoaded) "当前加载的是语言模型，不能绘图。请到「模型」页加载绘图模型（.gguf 或 MNN）。"
             else "请先到「模型」页的「绘图模型」里选择并加载模型"
             Toast.makeText(c, msg, Toast.LENGTH_LONG).show()
             return
@@ -428,16 +516,10 @@ class DrawPage(
         prompt: String,
         onProgress: (Int, Int) -> Unit = { _, _ -> },
     ): ImageData {
-        // 不包 withContext：llmedge 内部会自己切线程（且需要 Looper 的地方它用主线程），
-        // 我们包 IO 反而会让它内部的 ValueAnimator 报“Animators may only be run on Looper threads”。
-        val cli = client ?: throw IllegalStateException("绘图模型未加载")
-        val main = mainModel ?: throw IllegalStateException("未选择绘图模型")
         val steps = stepsEdit.text.toString().toIntOrNull()?.coerceIn(1, 150) ?: 20
         val cfg = cfgEdit.text.toString().toFloatOrNull()?.coerceIn(1f, 30f) ?: 7.0f
         val seed = seedEdit.text.toString().toLongOrNull() ?: -1L
         val useSeed = if (seed < 0) System.currentTimeMillis() else seed
-
-        onProgress(0, steps)
         val dim = run {
             val s = sizeSpinner.selectedItem?.toString() ?: ""
             when {
@@ -446,6 +528,31 @@ class DrawPage(
                 else -> 512
             }
         }
+        onProgress(0, steps)
+
+        // ---- MNN 引擎 ----
+        mnnSession?.let { session ->
+            val out = File(File(c.filesDir, DIR_NAME), "out_mnn_${System.currentTimeMillis()}.png")
+            session.generate(
+                prompt = prompt,
+                output = out,
+                width = dim,
+                height = dim,
+                steps = steps,
+                seed = useSeed.toInt(),
+                cfgScale = cfg,
+                inputImage = null,
+                onProgress = { pct -> onProgress(pct * steps / 100, steps) }
+            )
+            val bmp = android.graphics.BitmapFactory.decodeFile(out.absolutePath)
+                ?: throw IllegalStateException("MNN 输出图解码失败")
+            onProgress(steps, steps)
+            return ImageData(bmp, useSeed)
+        }
+
+        // ---- GGUF 引擎（llmedge）----
+        val cli = client ?: throw IllegalStateException("绘图模型未加载")
+        val main = mainModel ?: throw IllegalStateException("未选择绘图模型")
         val bmp = cli.generate(
             ImageGenerationRequest(
                 prompt = prompt,
@@ -468,6 +575,7 @@ class DrawPage(
 
     fun cancel() {
         runCatching { client?.cancelGeneration() }
+        // MNN 引擎目前不支持中断（native 阻塞），只能等它跑完
     }
 
     fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?): Boolean = false
@@ -475,6 +583,8 @@ class DrawPage(
     fun release() {
         runCatching { client?.close() }
         client = null
+        runCatching { mnnSession?.close() }
+        mnnSession = null
     }
 
     // ================= UI 小工具 =================
