@@ -61,6 +61,17 @@ class DrawPage(
 
         /** 下载后重命名成这个，prompt 里就用 `lora:lcm-lora-sdv1-5:1` 引用 */
         const val LORA_NAME = "lcm-lora-sdv1-5"
+
+        /** Anything V5 的官方 GGUF 仓库（含 Q4_0/Q5_0/Q8_0/F16 各量化档） */
+        private const val MODEL_HF_REPO = "genai-archive/anything-v5-gguf"
+
+        /** 可下载的量化档位：显示标签 → 远端文件名 */
+        private val MODEL_PRESETS = listOf(
+            "Q4_0 · 体积最小、最快（1.46 GB）" to "anything-v5.q4_0.gguf",
+            "Q5_0 · 折中（1.51 GB）" to "anything-v5.q5_0.gguf",
+            "Q8_0 · 质量较高（1.64 GB）" to "anything-v5.q8_0.gguf",
+            "F16 · 质量最高（1.99 GB）" to "anything-v5.f16.gguf",
+        )
     }
 
     private val c: Context get() = act
@@ -275,59 +286,85 @@ class DrawPage(
      * 下载 LCM-LoRA。useMirror=true 走 hf-mirror.com（国内可用）。
      * 返回 null 表示成功；否则为错误文案。onProgress(已下载字节, 总字节[未知为 -1])
      */
-    suspend fun downloadLora(useMirror: Boolean, onProgress: (Long, Long) -> Unit): String? =
-        withContext(Dispatchers.IO) {
-            val host = if (useMirror) "https://hf-mirror.com" else "https://huggingface.co"
-            val url = "$host/$LORA_HF_PATH"
-            val dir = loraDir()
-            val dest = File(dir, "$LORA_NAME.safetensors")
-            val tmp = File(dir, "$LORA_NAME.safetensors.part")
-            try {
-                val conn = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
-                    connectTimeout = 20_000
-                    readTimeout = 60_000
-                    instanceFollowRedirects = true
-                    setRequestProperty("User-Agent", "Ponko/1.0 (Android)")
-                }
-                conn.connect()
-                val code = conn.responseCode
-                if (code !in 200..299) return@withContext "下载失败：HTTP $code（可换另一个源试试）"
-                val total = conn.contentLengthLong
-                conn.inputStream.use { ins ->
-                    tmp.outputStream().use { outs ->
-                        val buf = ByteArray(1 shl 16)
-                        var done = 0L
-                        var lastTick = 0L
-                        while (true) {
-                            val r = ins.read(buf)
-                            if (r < 0) break
-                            outs.write(buf, 0, r)
-                            done += r
-                            if (done - lastTick > (1 shl 20)) {
-                                lastTick = done
-                                onProgress(done, total)
-                            }
-                        }
-                        outs.flush()
-                    }
-                }
-                if (tmp.length() < 100L * 1024) {
-                    runCatching { tmp.delete() }
-                    return@withContext "下载失败：文件不完整（${tmp.length()} 字节）"
-                }
-                if (dest.exists()) dest.delete()
-                if (!tmp.renameTo(dest)) {
-                    tmp.copyTo(dest, overwrite = true)
-                    runCatching { tmp.delete() }
-                }
-                loraFile = dest
-                refreshLoraHint()
-                null
-            } catch (e: Throwable) {
-                runCatching { tmp.delete() }
-                "下载失败：${e.message ?: e.javaClass.simpleName}"
-            }
+    suspend fun downloadLora(useMirror: Boolean, onProgress: (Long, Long) -> Unit): String? {
+        val host = if (useMirror) "https://hf-mirror.com" else "https://huggingface.co"
+        val dest = File(loraDir(), "$LORA_NAME.safetensors")
+        val err = downloadToFile("$host/$LORA_HF_PATH", dest, 100L * 1024, onProgress)
+        if (err == null) {
+            loraFile = dest
+            refreshLoraHint()
         }
+        return err
+    }
+
+    /** 可下载的绘图模型档位标签 */
+    fun modelPresetLabels(): List<String> = MODEL_PRESETS.map { it.first }
+
+    private fun modelPresetFileName(index: Int): String =
+        MODEL_PRESETS.getOrNull(index)?.second ?: MODEL_PRESETS[0].second
+
+    /** 下载指定量化档的 Anything V5（官方 GGUF）。返回 null = 成功。 */
+    suspend fun downloadModel(index: Int, useMirror: Boolean, onProgress: (Long, Long) -> Unit): String? {
+        val fileName = modelPresetFileName(index)
+        val host = if (useMirror) "https://hf-mirror.com" else "https://huggingface.co"
+        val dir = File(c.filesDir, DIR_NAME).apply { mkdirs() }
+        val dest = File(dir, fileName)
+        return downloadToFile("$host/$MODEL_HF_REPO/resolve/main/$fileName", dest, 10L * 1024 * 1024, onProgress)
+    }
+
+    /** 通用下载：边下边写 .part，完成后改名为目标文件。返回 null = 成功。 */
+    private suspend fun downloadToFile(
+        url: String,
+        dest: File,
+        minBytes: Long,
+        onProgress: (Long, Long) -> Unit,
+    ): String? = withContext(Dispatchers.IO) {
+        val tmp = File(dest.parentFile, dest.name + ".part")
+        try {
+            val conn = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
+                connectTimeout = 20_000
+                readTimeout = 60_000
+                instanceFollowRedirects = true
+                setRequestProperty("User-Agent", "Ponko/1.0 (Android)")
+            }
+            conn.connect()
+            val code = conn.responseCode
+            if (code !in 200..299) return@withContext "下载失败：HTTP $code（可换另一个源试试）"
+            val total = conn.contentLengthLong
+            conn.inputStream.use { ins ->
+                tmp.outputStream().use { outs ->
+                    val buf = ByteArray(1 shl 16)
+                    var done = 0L
+                    var lastTick = 0L
+                    while (true) {
+                        val r = ins.read(buf)
+                        if (r < 0) break
+                        outs.write(buf, 0, r)
+                        done += r
+                        if (done - lastTick > (1 shl 20)) {
+                            lastTick = done
+                            onProgress(done, total)
+                        }
+                    }
+                    outs.flush()
+                }
+            }
+            if (tmp.length() < minBytes) {
+                runCatching { tmp.delete() }
+                return@withContext "下载失败：文件不完整（${tmp.length()} 字节）"
+            }
+            if (dest.exists()) dest.delete()
+            if (!tmp.renameTo(dest)) {
+                tmp.copyTo(dest, overwrite = true)
+                runCatching { tmp.delete() }
+            }
+            onProgress(dest.length(), dest.length())
+            null
+        } catch (e: Throwable) {
+            runCatching { tmp.delete() }
+            "下载失败：${e.message ?: e.javaClass.simpleName}"
+        }
+    }
 
     // ================= 模型（由「模型」页驱动） =================
 
