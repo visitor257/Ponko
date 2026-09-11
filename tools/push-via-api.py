@@ -71,6 +71,16 @@ def git(*args):
     return r.stdout
 
 
+def git_raw(*args):
+    """同 git()，但返回原始字节。用于读取仓库内内容（LF），
+    避免工作区的 CRLF 让 blob sha 对不上、导致同一文件每次都被重传。"""
+    cmd = '"' + GIT + '" ' + " ".join('"' + str(a) + '"' for a in args)
+    r = subprocess.run(cmd, cwd=ROOT, capture_output=True, shell=NEEDS_SHELL)
+    if r.returncode != 0:
+        raise RuntimeError(r.stderr.decode("utf-8", "replace").strip())
+    return r.stdout
+
+
 def ident(s):
     m = re.match(r"^(.*) <(.*)> (\d+) ([+-]\d{4})$", s)
     name, email, ts, tz = m.groups()
@@ -121,7 +131,10 @@ def main():
         if remote_files.get(path) == sha:
             continue
         p = os.path.join(ROOT, path.replace("/", os.sep))
-        data = open(p, "rb").read()
+        if not os.path.exists(p):
+            print("  跳过（工作区已无此文件） %s" % path)
+            continue
+        data = git_raw("cat-file", "blob", sha)
         blob = api("POST", "/repos/%s/git/blobs" % REPO,
                    {"content": base64.b64encode(data).decode(), "encoding": "base64"})
         entries.append({"path": path, "mode": mode, "type": "blob", "sha": blob["sha"]})
