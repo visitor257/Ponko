@@ -236,8 +236,8 @@ class MainActivity : Activity() {
             updateThinkEnabled()
             drawModelStatus?.text = dpg.modelSummary()
         }
-        // App 重启后，若之前已复制过绘图模型，后台自动加载（不阻塞启动）
-        scope.launch { dpg.loadExisting() }
+        // 注意：不在启动时自动加载绘图模型——native 加载失败会直接崩掉启动流程。
+        // 改为在「模型」页手动点「加载绘图模型」（见下方按钮）。
         tabDraw = ScrollView(this).apply {
             setBackgroundColor(C_BG)
             addView(dpg.build())
@@ -436,6 +436,32 @@ class MainActivity : Activity() {
         card.addView(dStatus, matchWrap().apply { topMargin = dp(6) })
         card.addView(
             actionButton("选择绘图模型文件夹") { pickDrawModelTree() },
+            matchWrap().apply { topMargin = dp(8) }
+        )
+        card.addView(
+            actionButton("加载绘图模型") {
+                val dpg = drawPage
+                if (dpg == null) {
+                    toast("绘图页未初始化")
+                } else if (!dpg.hasModel()) {
+                    toast("还没有绘图模型，先点上面「选择绘图模型文件夹」")
+                } else {
+                    scope.launch {
+                        drawModelStatus?.text = "正在加载绘图模型（首次需几十秒）…"
+                        val err = dpg.loadExisting()
+                        drawModelStatus?.text = if (err == null) dpg.modelSummary() else err
+                        if (err == null) {
+                            drawMode = true
+                            dpg.llmLoaded = false
+                            updateThinkEnabled()
+                            toast("绘图模型已加载：到对话页输入就是正面提示词")
+                        } else {
+                            setStatus("绘图模型加载失败", C_ERR)
+                            toast(err)
+                        }
+                    }
+                }
+            },
             matchWrap().apply { topMargin = dp(8) }
         )
         card.addView(
@@ -813,14 +839,11 @@ class MainActivity : Activity() {
                 setBusy(false)
                 if (err == null) {
                     drawModelStatus?.text = dpg.modelSummary()
-                    drawMode = true
-                    dpg.llmLoaded = false
-                    updateThinkEnabled()
-                    setStatus("绘图模型已加载", C_OK)
-                    toast("绘图模型已加载：到对话页输入即为正面提示词")
+                    setStatus("绘图模型已复制", C_OK)
+                    toast("已复制，请点「加载绘图模型」")
                 } else {
                     drawModelStatus?.text = err
-                    setStatus("绘图模型加载失败", C_ERR)
+                    setStatus("绘图模型导入失败", C_ERR)
                     toast(err)
                 }
             }

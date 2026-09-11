@@ -194,10 +194,13 @@ class DrawPage(
                 }
                 if (copied == 0) return@withContext "复制模型失败（0 个文件）"
 
-                onStage("正在加载绘图模型（首次需几十秒）…")
-                loadFromPrivateDir()
+                // 只复制、不在这里加载：native 加载可能崩（实测），
+                // 留给用户在「模型」页手动点「加载绘图模型」，崩了也不会连累启动。
+                val names = found.joinToString("、") { it.first }
+                statusText.post { statusText.text = "已复制：$names（点「模型」页的「加载绘图模型」开始）" }
+                "已复制 $copied 个模型文件，请点「加载绘图模型」"
             } catch (e: Throwable) {
-                "加载失败：${e.message ?: e.javaClass.simpleName}"
+                "导入失败：${e.message ?: e.javaClass.simpleName}"
             }
         }
     }
