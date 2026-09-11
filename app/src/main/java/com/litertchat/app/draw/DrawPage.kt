@@ -27,6 +27,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
+/** 用户主动中断生成时抛出（与真正的失败区分开）。 */
+class GenerationCancelledException : RuntimeException("已中断")
+
 /**
  * 绘图页（文生图）。
  *
@@ -155,7 +158,7 @@ class DrawPage(
             visibility = View.GONE
             setOnClickListener {
                 cancel()
-                progressText.text = "已请求取消…"
+                progressText.text = "正在中断…（当前采样步结束后生效）"
             }
         }
         root.addView(cancelBtn, matchWrap(top = 4))
@@ -394,6 +397,9 @@ class DrawPage(
         stage("6 创建 ImageClient（隔离子进程 · " + (if (useGpu) "GPU" else "CPU") + "）")
         return try {
             client?.let { runCatching { it.close() } }
+            // 切到 llmedge 前先把 MNN 会话释放掉：两份模型同时驻留会白吃 1GB+ 内存
+            mnnSession?.let { runCatching { it.close() } }
+            mnnSession = null
             // 注意：必须在主线程创建。llmedge 内部会启动 ValueAnimator，
             // 在无 Looper 的后台线程会抛 “Animators may only be run on Looper threads”。
             client = withContext(Dispatchers.Main) {
@@ -497,8 +503,13 @@ class DrawPage(
             } catch (e: Throwable) {
                 ticker.cancel()
                 val sec = (System.currentTimeMillis() - startedAt) / 1000
-                progressText.post { progressText.text = "生成失败（${sec} 秒）：${e.message ?: e.javaClass.simpleName}\n${"完整堆栈见「查看加载日志」"}" }
-                onStatus?.invoke("绘图失败：${e.message ?: e.javaClass.simpleName}", true)
+                if (cancelRequested) {
+                    progressText.post { progressText.text = "已中断（${sec} 秒）" }
+                    onStatus?.invoke("绘图已中断", false)
+                } else {
+                    progressText.post { progressText.text = "生成失败（${sec} 秒）：${e.message ?: e.javaClass.simpleName}\n${"完整堆栈见「查看加载日志」"}" }
+                    onStatus?.invoke("绘图失败：${e.message ?: e.javaClass.simpleName}", true)
+                }
             } finally {
                 genBtn.post { genBtn.isEnabled = true }
                 cancelBtn.post { cancelBtn.visibility = View.GONE }
@@ -510,6 +521,9 @@ class DrawPage(
 
     private var curStep = 0
     private var totalStep = 0
+
+    /** 用户是否已请求中断当前生成（用于把“取消”与“真失败”区分开）。 */
+    @Volatile private var cancelRequested = false
 
     /** 供对话页复用的生成入口：把输入当正面提示词，其余参数取绘图页当前设置。 */
     suspend fun generateImage(
@@ -529,21 +543,27 @@ class DrawPage(
             }
         }
         onProgress(0, steps)
+        cancelRequested = false
 
         // ---- MNN 引擎 ----
         mnnSession?.let { session ->
             val out = File(File(c.filesDir, DIR_NAME), "out_mnn_${System.currentTimeMillis()}.png")
-            session.generate(
-                prompt = prompt,
-                output = out,
-                width = dim,
-                height = dim,
-                steps = steps,
-                seed = useSeed.toInt(),
-                cfgScale = cfg,
-                inputImage = null,
-                onProgress = { pct -> onProgress(pct * steps / 100, steps) }
-            )
+            try {
+                session.generate(
+                    prompt = prompt,
+                    output = out,
+                    width = dim,
+                    height = dim,
+                    steps = steps,
+                    seed = useSeed.toInt(),
+                    cfgScale = cfg,
+                    inputImage = null,
+                    onProgress = { pct -> onProgress(pct * steps / 100, steps) }
+                )
+            } catch (e: Throwable) {
+                if (cancelRequested) throw GenerationCancelledException()
+                throw e
+            }
             val bmp = android.graphics.BitmapFactory.decodeFile(out.absolutePath)
                 ?: throw IllegalStateException("MNN 输出图解码失败")
             onProgress(steps, steps)
@@ -574,8 +594,9 @@ class DrawPage(
     fun toBitmap(img: ImageData): Bitmap = img.bitmap
 
     fun cancel() {
+        cancelRequested = true
         runCatching { client?.cancelGeneration() }
-        // MNN 引擎目前不支持中断（native 阻塞），只能等它跑完
+        runCatching { mnnSession?.cancel() }
     }
 
     fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?): Boolean = false

@@ -125,6 +125,7 @@ object MnnSdEngine {
         cfgScale: Float, progress: ((Int) -> Unit)?
     ): Boolean
     @JvmStatic external fun nativeDestroy(handle: Long)
+    @JvmStatic external fun nativeCancel(handle: Long)
 }
 
 /** 一个已加载的 MNN SD 会话。用 use{} 或手动 close() 释放。 */
@@ -158,6 +159,13 @@ class MnnSdSession internal constructor(private val handle: Long) : AutoCloseabl
     override fun close() {
         if (closed) return
         closed = true
+        runCatching { MnnSdEngine.nativeCancel(handle) }
         MnnSdEngine.nativeDestroy(handle)
+    }
+
+    /** 请求中断当前生成（可在另一线程调用）。已在采样循环中的话，会在下一步生效。 */
+    fun cancel() {
+        if (closed) return
+        runCatching { MnnSdEngine.nativeCancel(handle) }
     }
 }

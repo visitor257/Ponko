@@ -11,6 +11,7 @@
 #include <memory>
 #include <mutex>
 #include <atomic>
+#include <stdexcept>
 #include "diffusion/diffusion.hpp"
 
 #define LOG_TAG "PonkoMNN"
@@ -23,6 +24,11 @@ namespace {
 
 // 缓存 JavaVM，供 native 线程回调使用
 JavaVM* g_vm = nullptr;
+
+// 取消时抛这个异常，只用于跳出 native 采样循环
+struct CancelledException : public std::exception {
+    const char* what() const noexcept override { return "generation cancelled"; }
+};
 
 struct SdHandle {
     std::unique_ptr<Diffusion> diffusion;
@@ -135,6 +141,9 @@ Java_com_litertchat_app_draw_MnnSdEngine_nativeRun(JNIEnv* env, jclass clazz,
     std::string outImg = jstr(env, outputPath);
     if (m.empty()) m = "text2img";
 
+    // 每次生成前清掉上次的取消标记
+    h->cancelled.store(false);
+
     if (progressCb != nullptr) {
         h->cbObj = env->NewGlobalRef(progressCb);
         jclass cls = env->GetObjectClass(progressCb);
@@ -144,6 +153,10 @@ Java_com_litertchat_app_draw_MnnSdEngine_nativeRun(JNIEnv* env, jclass clazz,
     }
 
     auto cb = [h](int progress) {
+        // 取消检查：每步去噪都会回调到这里，抛异常即可跳出采样循环
+        if (h->cancelled.load()) {
+            throw CancelledException();
+        }
         if (h->cbObj == nullptr || h->cbMethod == nullptr) return;
         bool detach = false;
         JNIEnv* e = getEnv(&detach);
@@ -159,14 +172,22 @@ Java_com_litertchat_app_draw_MnnSdEngine_nativeRun(JNIEnv* env, jclass clazz,
          (float) cfgScale, outImg.c_str());
 
     bool ok;
-    if (m == "img2img") {
-        // 图生图走统一接口（input_embeds 传 nullptr，由引擎内部做文本编码）
-        ok = h->diffusion->run(VARP(nullptr), m, inImg, outImg,
-                               (int) width, (int) height, (int) steps,
-                               (int) seed, true, (float) cfgScale, cb);
-    } else {
-        // 文生图：简单接口（iterNum + seed）
-        ok = h->diffusion->run(p, outImg, (int) steps, (int) seed, cb);
+    try {
+        if (m == "img2img") {
+            // 图生图走统一接口（input_embeds 传 nullptr，由引擎内部做文本编码）
+            ok = h->diffusion->run(VARP(nullptr), m, inImg, outImg,
+                                   (int) width, (int) height, (int) steps,
+                                   (int) seed, true, (float) cfgScale, cb);
+        } else {
+            // 文生图：简单接口（iterNum + seed）
+            ok = h->diffusion->run(p, outImg, (int) steps, (int) seed, cb);
+        }
+    } catch (const CancelledException&) {
+        LOGI("nativeRun cancelled by user");
+        ok = false;
+    } catch (const std::exception& e) {
+        LOGE("nativeRun exception: %s", e.what());
+        ok = false;
     }
 
     if (h->cbObj != nullptr) {
@@ -176,6 +197,15 @@ Java_com_litertchat_app_draw_MnnSdEngine_nativeRun(JNIEnv* env, jclass clazz,
     }
     LOGI("nativeRun done ok=%d", (int) ok);
     return ok ? JNI_TRUE : JNI_FALSE;
+}
+
+/** 请求取消当前生成（从任意线程调用都安全）。 */
+extern "C" JNIEXPORT void JNICALL
+Java_com_litertchat_app_draw_MnnSdEngine_nativeCancel(JNIEnv* env, jclass clazz, jlong handle) {
+    auto* h = reinterpret_cast<SdHandle*>(handle);
+    if (h == nullptr) return;
+    h->cancelled.store(true);
+    LOGI("nativeCancel requested");
 }
 
 /** 释放实例。 */

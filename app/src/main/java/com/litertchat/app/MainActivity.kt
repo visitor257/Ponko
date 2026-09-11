@@ -1299,6 +1299,8 @@ class MainActivity : Activity() {
             // native 推理线程还在跑，下一次发送会撞上同一份上下文直接卡死。
             runCatching { conversation?.cancelProcess() }
             runCatching { ggufIterator?.cancel() }
+            // 绘图（MNN / sd.cpp）也要打断：否则 native 还在跑，界面已停
+            drawPage?.cancel()
             job.cancel()
             // 不能只依赖协程的 finally 来复位：native 推理不响应协程取消时 finally 会迟迟不执行，
             // busy 一直卡在 true，之后每条消息都被「正在生成中」挡回来。这里主动复位。
@@ -1639,6 +1641,10 @@ class MainActivity : Activity() {
                 markwonStream.setMarkdown(ai.answer, "")
                 attachImageBubble(ai, bmp, name)
                 setStatus("绘图完成", C_OK)
+            } catch (e: com.litertchat.app.draw.GenerationCancelledException) {
+                turn.answer = "(已中断)"
+                markwonStream.setMarkdown(ai.answer, "(已中断)")
+                setStatus("已中断", C_IDLE)
             } catch (e: CancellationException) {
                 turn.answer = "(已中断)"
                 markwonStream.setMarkdown(ai.answer, "(已中断)")
