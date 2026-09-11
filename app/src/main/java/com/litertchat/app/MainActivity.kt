@@ -160,6 +160,8 @@ class MainActivity : Activity() {
 
     /** 模型页里的绘图模型状态文本（模型统一在模型页加载） */
     private var drawModelStatus: TextView? = null
+    /** 上次启动时发现「加载绘图模型」中途崩了（native 崩溃，Java 层捕不到） */
+    private var pendingDrawCrash = false
     private lateinit var backendSpinner: Spinner
     private lateinit var loadButton: TextView
     private lateinit var thinkCheck: CheckBox
@@ -192,7 +194,36 @@ class MainActivity : Activity() {
             .usePlugin(LinkifyPlugin.create())
             .build()
         loadSessions()
+        installCrashHandler()
         buildUi()
+    }
+
+    /** 崩溃自捕获：Java/ART 层异常（含 UnsatisfiedLinkError）写进文件，下次启动可见。 */
+    private fun installCrashHandler() {
+        val prev = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { t, e ->
+            try {
+                File(filesDir, "crash.txt").writeText(
+                    "${java.util.Date()}\nthread=${t.name}\n" + android.util.Log.getStackTraceString(e)
+                )
+            } catch (_: Throwable) {}
+            prev?.uncaughtException(t, e)
+        }
+        // 上次加载绘图模型中途崩了？标记文件还在 → 说明 native 崩（Java 层捕不到）
+        val mark = File(filesDir, "draw/.loading")
+        if (mark.exists()) {
+            mark.delete()
+            pendingDrawCrash = true
+        }
+    }
+
+    /** 读并清空崩溃日志（供模型页展示） */
+    private fun takeCrashLog(): String? {
+        val f = File(filesDir, "crash.txt")
+        if (!f.exists()) return null
+        val s = runCatching { f.readText() }.getOrNull()
+        runCatching { f.delete() }
+        return s
     }
 
     override fun onPause() {
@@ -434,6 +465,23 @@ class MainActivity : Activity() {
         }
         drawModelStatus = dStatus
         card.addView(dStatus, matchWrap().apply { topMargin = dp(6) })
+        // 上次崩溃信息（自捕获，供排查）
+        if (pendingDrawCrash) {
+            card.addView(TextView(this).apply {
+                text = "⚠ 上次「加载绘图模型」中途崩溃了（native 层，无法自动取日志）。"
+                textSize = 11.5f
+                setTextColor(C_ERR)
+                setPadding(0, dp(6), 0, 0)
+            }, matchWrap())
+        }
+        takeCrashLog()?.let { log ->
+            card.addView(TextView(this).apply {
+                text = "上次崩溃日志：\n" + log.takeLast(1200)
+                textSize = 10.5f
+                setTextColor(C_ERR)
+                setPadding(0, dp(6), 0, 0)
+            }, matchWrap())
+        }
         card.addView(
             actionButton("选择绘图模型文件夹") { pickDrawModelTree() },
             matchWrap().apply { topMargin = dp(8) }

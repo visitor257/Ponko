@@ -230,6 +230,24 @@ class DrawPage(
         mainModel = main
         vaeModel = vae
 
+        // 崩溃标记：如果这几行间 App 挂了（native 崩溃），下次启动就能识别出来
+        val mark = File(root, ".loading")
+        runCatching { mark.writeText("${main.name}\n${System.currentTimeMillis()}") }
+
+        // 先单独探一拍 native 库能不能加载（这步失败会抛 UnsatisfiedLinkError，能捕获）
+        try {
+            System.loadLibrary("omp")
+        } catch (t: Throwable) {
+            runCatching { mark.delete() }
+            return "native 库 libomp.so 加载失败：${t.message ?: t.javaClass.simpleName}"
+        }
+        try {
+            System.loadLibrary("sdcpp")
+        } catch (t: Throwable) {
+            runCatching { mark.delete() }
+            return "native 库 libsdcpp.so 加载失败：${t.message ?: t.javaClass.simpleName}"
+        }
+
         val loaded = withContext(Dispatchers.IO) {
             StableDiffusion.load(
                 context = c,
@@ -241,6 +259,7 @@ class DrawPage(
             )
         }
         sd = loaded
+        runCatching { mark.delete() }
 
         val summary = buildString {
             append("已加载：").append(main.name)
