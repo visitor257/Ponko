@@ -55,6 +55,15 @@ class DrawPage(
     private var img2imgMode = false
     private var inputBitmap: Bitmap? = null
 
+    /** 外部（MainActivity）通知：当前已加载语言模型。用于“生成”按钮给出更准确的提示。 */
+    var llmLoaded: Boolean = false
+
+    /** SD 管线就绪时回调（MainActivity 借此切到绘图模式） */
+    var onPipelineReady: (() -> Unit)? = null
+
+    /** 是否已就绪（可生成） */
+    fun isReady(): Boolean = pipeline != null
+
     // 控件
     private lateinit var statusText: TextView
     private lateinit var modelBtn: Button
@@ -334,6 +343,7 @@ class DrawPage(
             pipeline = p
             modelSet = found
             statusText.text = "已就绪：SD 1.5" + if (found.canImg2Img) "（支持图生图）" else "（仅文生图，缺 vae_encoder）"
+            onPipelineReady?.invoke()
         } catch (e: Throwable) {
             statusText.text = "加载失败：${e.message}"
         }
@@ -341,18 +351,13 @@ class DrawPage(
 
     // ---------- 生成 ----------
 
-    private fun generate() {
-        val pipe = pipeline ?: run { toast("请先选择并加载绘图模型"); return }
-        val prompt = promptEdit.text.toString().trim()
-        if (prompt.isEmpty()) { toast("请输入提示词"); return }
-        if (img2imgMode && inputBitmap == null) { toast("图生图需要先选择参考图片"); return }
-
+    /** 用当前界面参数组装一次生成请求（prompt 由调用方给出） */
+    private fun currentParams(prompt: String): SdPipeline.Params {
         val steps = stepsEdit.text.toString().toIntOrNull()?.coerceIn(1, 100) ?: 20
         val cfg = cfgEdit.text.toString().toFloatOrNull()?.coerceIn(1f, 20f) ?: 7.5f
         val seed = seedEdit.text.toString().toLongOrNull() ?: -1L
         val strength = strengthEdit.text.toString().toFloatOrNull()?.coerceIn(0.05f, 1f) ?: 0.75f
-
-        val params = SdPipeline.Params(
+        return SdPipeline.Params(
             prompt = prompt,
             negative = negEdit.text.toString().trim(),
             steps = steps,
@@ -362,6 +367,46 @@ class DrawPage(
             seed = seed,
             strength = strength,
         )
+    }
+
+    /** 供对话页调用：用绘图页的参数（除正面提示词）生成一张图。 */
+    suspend fun generateImage(prompt: String, onProgress: (Int, Int) -> Unit): ImageData {
+        val pipe = pipeline ?: throw IllegalStateException("绘图模型未加载")
+        val params = currentParams(prompt)
+        return if (img2imgMode && inputBitmap != null) {
+            val bmp = inputBitmap!!
+            val scaled = Bitmap.createScaledBitmap(bmp, size, size, true)
+            val px = IntArray(size * size)
+            scaled.getPixels(px, 0, size, 0, 0, size, size)
+            val rgb = ByteArray(size * size * 3)
+            for (i in px.indices) {
+                rgb[i * 3] = ((px[i] shr 16) and 0xFF).toByte()
+                rgb[i * 3 + 1] = ((px[i] shr 8) and 0xFF).toByte()
+                rgb[i * 3 + 2] = (px[i] and 0xFF).toByte()
+            }
+            pipe.img2img(params, ImageData(rgb, size, size), onProgress)
+        } else {
+            pipe.txt2img(params, onProgress)
+        }
+    }
+
+    /** ImageData -> Bitmap（对话页展示用） */
+    fun toBitmap(img: ImageData): Bitmap = decodeBitmap(img)
+
+    private fun generate() {
+        if (pipeline == null) {
+            if (llmLoaded) {
+                toast("当前加载的是语言模型，不能绘图。请先在上面选择绘图模型文件夹")
+            } else {
+                toast("请先选择并加载绘图模型")
+            }
+            return
+        }
+        val prompt = promptEdit.text.toString().trim()
+        if (prompt.isEmpty()) { toast("请输入提示词"); return }
+        if (img2imgMode && inputBitmap == null) { toast("图生图需要先选择参考图片"); return }
+
+        val params = currentParams(prompt)
 
         genBtn.isEnabled = false
         genBtn.text = "生成中…"
@@ -385,12 +430,12 @@ class DrawPage(
                             rgb[i * 3 + 1] = ((px[i] shr 8) and 0xFF).toByte()
                             rgb[i * 3 + 2] = (px[i] and 0xFF).toByte()
                         }
-                        pipe.img2img(params, ImageData(rgb, size, size), cb)
+                        pipeline!!.img2img(params, ImageData(rgb, size, size), cb)
                     } else {
-                        pipe.txt2img(params, cb)
+                        pipeline!!.txt2img(params, cb)
                     }
                 }
-                val bmp = withContext(Dispatchers.Default) { toBitmap(result) }
+                val bmp = withContext(Dispatchers.Default) { decodeBitmap(result) }
                 resultImg.setImageBitmap(bmp)
                 val sec = (System.currentTimeMillis() - start) / 1000.0
                 progressText.text = "完成 · %.1f 秒 · seed=%d".format(sec, result.seed)
@@ -404,7 +449,7 @@ class DrawPage(
         }
     }
 
-    private fun toBitmap(img: ImageData): Bitmap {
+    private fun decodeBitmap(img: ImageData): Bitmap {
         val px = IntArray(img.width * img.height)
         for (i in px.indices) {
             val r = img.data[i * 3].toInt() and 0xFF

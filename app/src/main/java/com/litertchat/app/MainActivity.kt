@@ -18,6 +18,12 @@ import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.content.ContentValues
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
@@ -29,6 +35,7 @@ import android.widget.Toast
 import com.google.ai.edge.litertlm.Backend
 import com.google.ai.edge.litertlm.Content
 import com.litertchat.app.draw.DrawPage
+import com.litertchat.app.draw.GgufProbe
 import com.google.ai.edge.litertlm.Conversation
 import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
@@ -91,10 +98,22 @@ class MainActivity : Activity() {
     private var conversation: Conversation? = null
     private var modelPath: String? = null
     private var busy = false
+
+    /** 当前处于绘图模式：对话页的输入会被当作正面提示词去生成图片 */
+    private var drawMode = false
+
+    /** .gguf 架构探测结果缓存，避免重复读头部 */
+    private val ggufKindCache = HashMap<String, GgufProbe.Kind>()
     private var genJob: Job? = null
 
     /** 一次问答（用于会话重建/持久化）。 */
-    private class QaTurn(val user: String, var answer: String = "", var thought: String = "")
+    private class QaTurn(
+        val user: String,
+        var answer: String = "",
+        var thought: String = "",
+        /** 绘图轮次：生成图在本地的文件名（filesDir/chatimg/ 下），非绘图轮为 null */
+        var image: String? = null,
+    )
 
     /** 一个独立对话，拥有自己的完整历史。 */
     private class ChatSession(var id: Long, var title: String) {
@@ -206,6 +225,13 @@ class MainActivity : Activity() {
         tabSettings = buildSettingsPage()
         val dpg = DrawPage(this, scope, C_PRIMARY, C_TEXT, C_SUBTEXT)
         drawPage = dpg
+        // 绘图模型就绪 → 进入绘图模式（对话页输入即正面提示词）
+        dpg.onPipelineReady = {
+            drawMode = true
+            drawPage?.llmLoaded = false
+            updateThinkEnabled()
+            toast("已切到绘图模式：在对话页输入就是正面提示词")
+        }
         tabDraw = ScrollView(this).apply {
             setBackgroundColor(C_BG)
             addView(dpg.build())
@@ -804,17 +830,32 @@ class MainActivity : Activity() {
 
         for (f in files) {
             val sel = f.absolutePath == modelPath
+            val isGguf = f.name.endsWith(".gguf", ignoreCase = true)
+            // .gguf 可能是语言模型也可能是画图模型，读头部元数据判断
+            val kind = if (isGguf) ggufKindCache.getOrPut(f.absolutePath) { GgufProbe.probe(f) }
+            else null
+            val isImageModel = kind == GgufProbe.Kind.IMAGE
+            val tag = when {
+                isImageModel -> "画图·不支持"
+                isGguf -> "GGUF"
+                else -> "LiteRT"
+            }
             val chip = TextView(this).apply {
-                val tag = if (f.name.endsWith(".gguf", ignoreCase = true)) "GGUF" else "LiteRT"
                 text = "▶ ${f.name}　[$tag] ${fmtSize(f.length())}"
                 textSize = 12.5f
-                setTextColor(if (sel) C_PRIMARY else C_TEXT)
+                setTextColor(if (isImageModel) C_IDLE else if (sel) C_PRIMARY else C_TEXT)
                 setPadding(dp(12), dp(8), dp(12), dp(8))
                 background = rounded(if (sel) C_PRIMARY_SOFT else Color.rgb(247, 248, 251), 10,
                     strokeDp = if (sel) 1 else 0, strokeColor = C_PRIMARY)
                 isClickable = true
             }
-            chip.setOnClickListener { selectSavedModel(f) }
+            chip.setOnClickListener {
+                if (isImageModel) {
+                    toast("这是画图模型（扩散模型），Ponko 只能加载语言模型。绘图功能请到「绘图」页选择 ONNX 模型。")
+                } else {
+                    selectSavedModel(f)
+                }
+            }
             chip.setOnLongClickListener { confirmDeleteModel(f); true }
             savedContainer.addView(chip, matchWrap().apply { topMargin = dp(4) })
         }
@@ -911,6 +952,10 @@ class MainActivity : Activity() {
                     loadButton.background = rounded(Color.rgb(246, 247, 250), 12,
                         strokeDp = 1, strokeColor = Color.rgb(219, 224, 234))
                     loadButton.setTextColor(C_TEXT)
+                    // 加载语言模型 → 退出绘图模式
+                    drawMode = false
+                    drawPage?.llmLoaded = true
+                    updateThinkEnabled()
                     addSystemHint("模型加载完成，可以开始对话了。")
                 }
             } catch (e: Throwable) {
@@ -935,6 +980,7 @@ class MainActivity : Activity() {
         llamaModel = null
         conversation = null
         convThinking = null
+        drawPage?.llmLoaded = false
         loadButton.text = "加载模型"
         loadButton.background = rounded(C_PRIMARY, 12)
         loadButton.setTextColor(Color.WHITE)
@@ -1165,9 +1211,21 @@ class MainActivity : Activity() {
     }
 
     /** 把一轮已有问答重绘到聊天区（历史回填）。 */
+    /** 绘图模式下思考开关无意义（不经过对话模型），置灰禁用 */
+    private fun updateThinkEnabled() {
+        val enabled = !drawMode
+        thinkCheck.isEnabled = enabled
+        thinkCheck.alpha = if (enabled) 1f else 0.45f
+    }
+
     private fun renderTurn(t: QaTurn) {
         addUserBubble(t.user)
         val ai = addAiArea { regenerate(t) }
+        val imgName = t.image
+        if (imgName != null) {
+            val bmp = readChatImage(imgName)
+            if (bmp != null) attachImageBubble(ai, bmp, imgName) else ai.answer.text = "(图片已丢失)"
+        }
         if (t.thought.isNotEmpty()) {
             ai.thoughtBox.visibility = View.VISIBLE
             ai.thoughtBody.text = t.thought
@@ -1196,7 +1254,10 @@ class MainActivity : Activity() {
                 o.put("title", s.title)
                 val ts = JSONArray()
                 for (t in s.turns) {
-                    ts.put(JSONObject().put("u", t.user).put("a", t.answer).put("th", t.thought))
+                    ts.put(
+                        JSONObject().put("u", t.user).put("a", t.answer).put("th", t.thought)
+                            .put("img", t.image ?: "")
+                    )
                 }
                 o.put("turns", ts)
                 arr.put(o)
@@ -1225,7 +1286,10 @@ class MainActivity : Activity() {
                         if (ts != null) {
                             for (j in 0 until ts.length()) {
                                 val t = ts.getJSONObject(j)
-                                s.turns += QaTurn(t.optString("u"), t.optString("a"), t.optString("th"))
+                                s.turns += QaTurn(
+                                    t.optString("u"), t.optString("a"), t.optString("th"),
+                                    t.optString("img").ifEmpty { null }
+                                )
                             }
                         }
                         sessions += s
@@ -1237,9 +1301,135 @@ class MainActivity : Activity() {
         current = sessions.getOrElse(idx) { sessions.first() }
     }
 
+    // ================= 绘图模式（对话页直接出图） =================
+
+    private fun doDrawFromChat(prompt: String, dpg: DrawPage) {
+        if (busy) { toast("正在生成中，请稍候"); return }
+        val turn = QaTurn(prompt)
+        current.turns += turn
+        if (current.title == "新对话") current.title = prompt.take(18)
+
+        inputEdit.setText("")
+        addUserBubble(prompt)
+        jumpToBottom()
+        setBusy(true)
+        setStoppingUi(true)
+        setStatus("绘图生成中（点 ■ 可中断）…", C_WARN)
+
+        val ai = addAiArea()
+        ai.regenButton.visibility = View.GONE
+        markwonStream.setMarkdown(ai.answer, "🎨 正在生成图片…")
+
+        genJob = scope.launch {
+            try {
+                val img = dpg.generateImage(prompt) { cur, total ->
+                    runOnUiThread {
+                        if (cur == total || cur % 2 == 0) setStatus("绘图 $cur/$total", C_WARN)
+                    }
+                }
+                val bmp = dpg.toBitmap(img)
+                val name = "ponko_${System.currentTimeMillis()}.png"
+                val saved = withContext(Dispatchers.IO) { writeChatImage(bmp, name) }
+                turn.image = if (saved) name else null
+                turn.answer = "🎨 seed=${img.seed}"
+                markwonStream.setMarkdown(ai.answer, "")
+                attachImageBubble(ai, bmp, name)
+                setStatus("绘图完成", C_OK)
+            } catch (e: CancellationException) {
+                turn.answer = "(已中断)"
+                markwonStream.setMarkdown(ai.answer, "(已中断)")
+                setStatus("已中断", C_IDLE)
+                throw e
+            } catch (e: Throwable) {
+                turn.answer = "绘图失败：${e.message}"
+                markwonStream.setMarkdown(ai.answer, "❌ 绘图失败：${e.message}")
+                setStatus("绘图失败", C_ERR)
+            } finally {
+                ai.regenButton.visibility = View.VISIBLE
+                saveSessions()
+                setBusy(false)
+                setStoppingUi(false)
+                scrollToBottom()
+            }
+        }
+    }
+
+    /** 把图片写进应用私有目录，返回是否成功 */
+    private fun writeChatImage(bmp: Bitmap, name: String): Boolean = try {
+        val dir = File(filesDir, "chatimg").apply { mkdirs() }
+        File(dir, name).outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        true
+    } catch (_: Throwable) {
+        false
+    }
+
+    private fun readChatImage(name: String): Bitmap? = try {
+        BitmapFactory.decodeFile(File(File(filesDir, "chatimg"), name).absolutePath)
+    } catch (_: Throwable) {
+        null
+    }
+
+    /** 在 AI 气泡里插入图片，点图可存到相册 */
+    private fun attachImageBubble(ai: AiArea, bmp: Bitmap, name: String) {
+        val iv = ImageView(this).apply {
+            setImageBitmap(bmp)
+            adjustViewBounds = true
+            isClickable = true
+            isFocusable = false
+            setPadding(0, dp(6), 0, 0)
+            setOnClickListener { saveImageToGallery(bmp, name) }
+        }
+        ai.root.addView(iv, matchWrap())
+        ai.root.addView(TextView(this).apply {
+            text = "点图片可保存到相册"
+            textSize = 11f
+            setTextColor(C_SUBTEXT)
+            setPadding(0, dp(4), 0, 0)
+        }, matchWrap())
+    }
+
+    private fun saveImageToGallery(bmp: Bitmap, name: String) {
+        scope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                try {
+                    val values = ContentValues().apply {
+                        put(MediaStore.Images.Media.DISPLAY_NAME, name)
+                        put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            put(
+                                MediaStore.Images.Media.RELATIVE_PATH,
+                                Environment.DIRECTORY_PICTURES + "/Ponko"
+                            )
+                        }
+                    }
+                    val uri = contentResolver.insert(
+                        MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values
+                    )
+                    if (uri != null) {
+                        contentResolver.openOutputStream(uri)?.use {
+                            bmp.compress(Bitmap.CompressFormat.PNG, 100, it)
+                        }
+                        true
+                    } else false
+                } catch (_: Throwable) {
+                    false
+                }
+            }
+            toast(if (ok) "已保存到相册（Pictures/Ponko）" else "保存失败：请检查存储权限")
+        }
+    }
+
     private fun doSend() {
         val text = inputEdit.text.toString().trim()
         if (text.isEmpty()) return
+
+        // 绘图模式：把输入当作正面提示词，按绘图页的参数（除正面提示词外）生成
+        val dpg = drawPage
+        if (drawMode && dpg != null && dpg.isReady()) {
+            doDrawFromChat(text, dpg)
+            return
+        }
+
         val isGgufRun = llamaModel != null
         if (conversation == null && !isGgufRun) { toast("请先加载模型"); return }
         if (busy) {
