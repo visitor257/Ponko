@@ -262,18 +262,31 @@ class DrawPage(
             runCatching { stageFile.delete() }
             return "native 库 libsdcpp.so 加载失败：${t.message ?: t.javaClass.simpleName}"
         }
-        stage("6 开始 StableDiffusion.load()")
+        stage("6 开始 native 自检")
+        stage("6.1 isNativeLibraryLoaded = ${runCatching { StableDiffusion.isNativeLibraryLoaded() }.getOrElse { "异常:" + it.javaClass.simpleName }}")
+        stage("6.2 checkBindings = ${runCatching { StableDiffusion.checkBindings() }.getOrElse { "异常:" + it.javaClass.simpleName }}")
+        stage("6.3 isOpenClAvailable = ${runCatching { StableDiffusion.isOpenClAvailable() }.getOrElse { "异常:" + it.javaClass.simpleName }}")
+        stage("6.4 vulkanDeviceCount = ${runCatching { StableDiffusion.getVulkanDeviceCount() }.getOrElse { "异常:" + it.javaClass.simpleName }}")
+        stage("6.5 estimateModelMemory 开始读取 GGUF 头…")
+        val estMem = runCatching { StableDiffusion.estimateModelParamsMemoryBytes(main.absolutePath) }
+            .getOrElse { -1L }
+        stage("6.6 estimateModelMemory = ${if (estMem < 0) "调用失败" else (estMem / 1048576).toString() + " MB"}")
+
+        stage("7 开始 StableDiffusion.load()（保守参数：flashAttn=false, offloadToCpu=true, threads=4）")
         val loaded = withContext(Dispatchers.IO) {
             StableDiffusion.load(
-                context = c,
+                context = c.applicationContext,
                 modelPath = main.absolutePath,
                 vaePath = vae?.absolutePath,
-                allowVulkan = false,        // 兼容 Android 9/10：不用 Vulkan 后端，纯 CPU
+                nThreads = 4,
+                offloadToCpu = true,        // 内存优先
+                flashAttn = false,          // 华为/Mali 上 FlashAttention 常出问题
+                allowVulkan = false,        // 不用 Vulkan 后端，纯 CPU
                 forceVulkan = false,
-                preferPerformanceMode = true,
+                preferPerformanceMode = false,
             )
         }
-        stage("7 StableDiffusion.load() 返回 OK")
+        stage("8 StableDiffusion.load() 返回 OK")
         sd = loaded
 
         val summary = buildString {
