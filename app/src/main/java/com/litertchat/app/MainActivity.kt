@@ -270,10 +270,14 @@ class MainActivity : Activity() {
         drawPage = dpg
         // 绘图模型就绪 → 进入绘图模式（对话页输入即正面提示词）
         dpg.onPipelineReady = {
-            drawMode = true
-            dpg.llmLoaded = false
-            updateThinkEnabled()
-            drawModelStatus?.text = dpg.modelSummary()
+            // 回调可能来自 IO 线程，UI 操作统一回主线程
+            runOnUiThread {
+                drawMode = true
+                dpg.llmLoaded = false
+                updateThinkEnabled()
+                drawModelStatus?.text = dpg.modelSummary()
+                refreshDrawModels()
+            }
         }
         // 注意：不在启动时自动加载绘图模型——native 加载失败会直接崩掉启动流程。
         // 改为在「模型」页手动点「加载绘图模型」（见下方按钮）。
@@ -1504,9 +1508,12 @@ class MainActivity : Activity() {
     /** 把一轮已有问答重绘到聊天区（历史回填）。 */
     /** 绘图模式下思考开关无意义（不经过对话模型），置灰禁用 */
     private fun updateThinkEnabled() {
-        val enabled = !drawMode
-        thinkCheck.isEnabled = enabled
-        thinkCheck.alpha = if (enabled) 1f else 0.45f
+        // 可能由 IO 线程上的回调触发；setEnabled 会驱动 Ripple 动画，必须回主线程
+        runOnUiThread {
+            val enabled = !drawMode
+            thinkCheck.isEnabled = enabled
+            thinkCheck.alpha = if (enabled) 1f else 0.45f
+        }
     }
 
     private fun renderTurn(t: QaTurn) {
