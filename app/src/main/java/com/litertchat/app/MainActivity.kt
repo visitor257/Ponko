@@ -555,11 +555,27 @@ class MainActivity : Activity() {
             actionButton("查看加载日志") {
                 val f = File(filesDir, "draw/.loadstage")
                 val log = if (f.exists()) runCatching { f.readText() }.getOrDefault("（读取失败）") else "（无日志）"
+                val body = log.takeLast(8000)
+                val tv = TextView(this).apply {
+                    text = body
+                    textSize = 11f
+                    setTextIsSelectable(true)
+                    setPadding(dp(16), dp(8), dp(16), dp(8))
+                }
+                val sc = ScrollView(this).apply { addView(tv) }
                 AlertDialog.Builder(this)
                     .setTitle("绘图模型加载日志")
-                    .setMessage(log.takeLast(4000))
-                    .setPositiveButton("知道了", null)
-                    .setNeutralButton("清空") { _, _ -> runCatching { f.delete() } }
+                    .setView(sc)
+                    .setPositiveButton("复制") { _, _ ->
+                        val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                        cm.setPrimaryClip(android.content.ClipData.newPlainText("ponko-draw-log", body))
+                        toast("已复制到剪贴板")
+                    }
+                    .setNeutralButton("清空") { _, _ ->
+                        runCatching { f.delete() }
+                        toast("日志已清空")
+                    }
+                    .setNegativeButton("关闭", null)
                     .show()
             },
             matchWrap().apply { topMargin = dp(8) }
