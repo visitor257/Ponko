@@ -1,10 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools">
-
-    <!-- llmedge 的 manifest 声明 minSdk 30（Vulkan 后端要求）；我们纯 CPU 运行，
-         用 overrideLibrary 绕过声明限制，保持兼容 Android 9+ -->
-    <uses-sdk tools:overrideLibrary="io.aatricks.llmedge" />
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!-- Android 9 及以下保存图片到相册需要；Android 10+ 走 MediaStore，无需权限 -->
     <uses-permission

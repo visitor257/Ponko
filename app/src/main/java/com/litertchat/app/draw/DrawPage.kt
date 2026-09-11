@@ -18,9 +18,6 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
-import io.aatricks.llmedge.image.ImageClient
-import io.aatricks.llmedge.image.ImageGenerationRequest
-import io.aatricks.llmedge.model.ModelSpec
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -34,7 +31,7 @@ class GenerationCancelledException : RuntimeException("已中断")
 /**
  * 绘图页（文生图）。
  *
- * 引擎固定为 **stable-diffusion.cpp**（llmedge 内置 libsdcpp.so），直接读 `.gguf` 绘图模型
+ * 引擎为 **自编的 stable-diffusion.cpp**（libstable-diffusion.so + libponko_sd.so JNI 桥），直接读 `.gguf` 绘图模型
  * （Anything V5 / ChilloutMix / Pony 等 SD1.5 系；CivitAI 上几乎都有 GGUF 版）。
  *
  * 加速有两条**互相独立**的线，可以叠加：
@@ -69,9 +66,13 @@ class DrawPage(
 
     private val c: Context get() = act
 
-    private var client: ImageClient? = null
+    /** 自编 sd.cpp 的上下文句柄（0 = 未加载） */
+    private var sdHandle: Long = 0L
     private var mainModel: File? = null
     private var vaeModel: File? = null
+
+    /** 推理线程数：按 CPU 核数取 2~6（大核数附近最合适） */
+    private val nThreads: Int = Runtime.getRuntime().availableProcessors().coerceIn(2, 6)
 
     /** 外部（MainActivity）通知：当前已加载语言模型。用于「生成」按钮给出更准确的提示。 */
     var llmLoaded: Boolean = false
@@ -101,7 +102,7 @@ class DrawPage(
     var onPipelineReady: (() -> Unit)? = null
 
     /** 是否已就绪（可生成） */
-    fun isReady(): Boolean = client != null
+    fun isReady(): Boolean = sdHandle != 0L
 
     // 控件
     private lateinit var statusText: TextView
@@ -511,41 +512,39 @@ class DrawPage(
         stage("1 内存：maxHeap=${Runtime.getRuntime().maxMemory() / 1048576}MB freeDisk=${root.usableSpace / 1048576}MB")
 
         // 分步探测：每步都先落盘，后执行
-        stage("2 准备 loadLibrary(omp)")
+        stage("2 加载 native 库（libponko_sd.so）")
         try {
-            System.loadLibrary("omp")
-            stage("3 loadLibrary(omp) OK")
+            SdCppEngine.info().let { stage("3 native OK：$it") }
         } catch (t: Throwable) {
-            stage("3 loadLibrary(omp) 失败：${t.message ?: t.javaClass.simpleName}")
+            stage("3 native 加载失败：${t.message ?: t.javaClass.simpleName}")
             runCatching { stageFile.delete() }
-            return "native 库 libomp.so 加载失败：${t.message ?: t.javaClass.simpleName}"
+            return "native 库加载失败：${t.message ?: t.javaClass.simpleName}"
         }
-        stage("4 准备 loadLibrary(sdcpp)")
-        try {
-            System.loadLibrary("sdcpp")
-            stage("5 loadLibrary(sdcpp) OK")
-        } catch (t: Throwable) {
-            stage("5 loadLibrary(sdcpp) 失败：${t.message ?: t.javaClass.simpleName}")
-            runCatching { stageFile.delete() }
-            return "native 库 libsdcpp.so 加载失败：${t.message ?: t.javaClass.simpleName}"
-        }
-        stage("6 创建 ImageClient（隔离子进程 · " + (if (useGpu) "GPU" else "CPU") + "）")
+
+        stage("4 创建 sd.cpp 上下文（CPU · ${nThreads} 线程）")
         return try {
-            client?.let { runCatching { it.close() } }
-            // 注意：必须在主线程创建。llmedge 内部会启动 ValueAnimator，
-            // 在无 Looper 的后台线程会抛 “Animators may only be run on Looper threads”。
-            client = withContext(Dispatchers.Main) {
-                LlmedgeConfigFactory.cpuIsolatedClient(c.applicationContext, scope, useGpu)
+            if (sdHandle != 0L) runCatching { SdCppEngine.nativeFree(sdHandle) }
+            sdHandle = 0L
+            val h = SdCppEngine.create(
+                modelPath = main.absolutePath,
+                vaePath = vae?.absolutePath,
+                nThreads = nThreads,
+                wtype = SdCppEngine.WTYPE_KEEP,
+            )
+            if (h == 0L) {
+                stage("5 创建失败：new_sd_ctx 返回 0")
+                runCatching { stageFile.delete() }
+                return "加载失败：无法创建推理上下文（模型格式可能不受支持）"
             }
-            stage("7 ImageClient 创建 OK")
+            sdHandle = h
+            stage("5 上下文创建 OK")
 
             val q = GgufProbe.quantType(main)
             val summary = buildString {
                 append("已就绪：").append(main.name)
                 if (q != null) append("（").append(q).append("）")
                 if (vae != null) append("  +  ").append(vae.name)
-                append(if (useGpu) " · GPU" else " · CPU")
-                append(" · 独立进程")
+                append(" · CPU · ").append(nThreads).append(" 线程 · sd.cpp")
             }
             statusText.post { statusText.text = summary }
             statusText.post { refreshQuantText() }
@@ -553,16 +552,15 @@ class DrawPage(
             onPipelineReady?.invoke()
             null
         } catch (e: Throwable) {
-            stage("7 创建失败：${e.javaClass.name}: ${e.message}")
-            // 把完整堆栈落盘，方便定位（尤其是第三方库内部的问题）
+            stage("5 创建失败：${e.javaClass.name}: ${e.message}")
             runCatching { stageFile.appendText(android.util.Log.getStackTraceString(e) + "\n") }
             "加载失败：${e.message ?: e.javaClass.simpleName}"
         }
     }
 
     fun unloadModel() {
-        runCatching { client?.close() }
-        client = null
+        if (sdHandle != 0L) runCatching { SdCppEngine.nativeFree(sdHandle) }
+        sdHandle = 0L
         try {
             statusText.text = "未加载 —— 请到「模型」页的「绘图模型」里选择模型文件夹"
         } catch (_: Throwable) {}
@@ -575,11 +573,11 @@ class DrawPage(
     }
 
     fun modelSummary(): String = when {
-        client != null -> {
+        sdHandle != 0L -> {
             val q = mainModel?.let { GgufProbe.quantType(it) }
             "已就绪：" + (mainModel?.name ?: "绘图模型") +
                 (if (q != null) "（$q）" else "") +
-                (if (useGpu) " · GPU" else " · CPU") + " · 独立进程"
+                " · CPU · " + nThreads + " 线程 · sd.cpp"
         }
         hasModel() -> "已复制模型，点「加载绘图模型」开始"
         else -> "未加载 —— 请到「模型」页的「绘图模型」里选择模型文件夹"
@@ -625,7 +623,7 @@ class DrawPage(
         onStatus?.invoke("绘图生成中…", false)
         val startedAt = System.currentTimeMillis()
         scope.launch {
-            // 逐秒报“已耗时”，否则 llmedge 不报中间进度，看着像卡死
+            // 逐秒报“已耗时”，否则底层不报中间进度，看着像卡死
             val ticker = launch {
                 while (true) {
                     delay(1000)
@@ -694,28 +692,32 @@ class DrawPage(
         onProgress(0, steps)
         cancelRequested = false
 
-        val cli = client ?: throw IllegalStateException("绘图模型未加载")
-        val main = mainModel ?: throw IllegalStateException("未选择绘图模型")
+        val h = sdHandle
+        if (h == 0L) throw IllegalStateException("绘图模型未加载")
+        if (mainModel == null) throw IllegalStateException("未选择绘图模型")
 
-        // LoRA：sd.cpp 约定 —— 在 prompt 里写 `lora:文件名(不含扩展名):权重`
+        // LoRA：走结构化参数（sd.cpp 原生接口，不再拼 prompt 里的 lora: 语法）
         val lora = if (useLora) activeLora() else null
-        val finalPrompt = if (lora != null) "$prompt lora:${lora.nameWithoutExtension}:1" else prompt
 
-        val bmp = cli.generate(
-            ImageGenerationRequest(
-                prompt = finalPrompt,
-                negative = negEdit.text.toString(),
-                width = dim,
-                height = dim,
-                steps = steps,
-                cfgScale = cfg,
-                seed = useSeed,
-                flashAttention = true,       // C 档：打开 FlashAttention（华为/Mali 上可能不稳，失败只报错不闪退）
-                model = ModelSpec.localFile(main),
-                vae = vaeModel?.let { ModelSpec.localFile(it) },
-                loraModelDir = if (lora != null) lora.parentFile?.absolutePath else null,
-            )
-        )
+        // 采样器/调度器：勾了 LoRA 就走 LCM（否则 LCM-LoRA 效果大打折扣），否则 Euler a
+        val sampler = if (lora != null) SdCppEngine.Sampler.LCM else SdCppEngine.Sampler.EULER_A
+        val scheduler = if (lora != null) SdCppEngine.Scheduler.LCM else SdCppEngine.Scheduler.DISCRETE
+
+        val bmp = SdCppEngine.render(
+            handle = h,
+            prompt = prompt,
+            negative = negEdit.text.toString(),
+            loraPath = lora?.absolutePath,
+            loraScale = 1.0f,
+            width = dim,
+            height = dim,
+            steps = steps,
+            cfg = cfg,
+            seed = useSeed,
+            sampler = sampler,
+            scheduler = scheduler,
+            cb = { cur, total -> onProgress(cur, total) },
+        ) ?: throw IllegalStateException("生成失败（sd.cpp 返回空）")
         onProgress(steps, steps)
         return ImageData(bmp, useSeed)
     }
@@ -724,14 +726,14 @@ class DrawPage(
 
     fun cancel() {
         cancelRequested = true
-        runCatching { client?.cancelGeneration() }
+        if (sdHandle != 0L) runCatching { SdCppEngine.nativeCancel(sdHandle) }
     }
 
     fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?): Boolean = false
 
     fun release() {
-        runCatching { client?.close() }
-        client = null
+        if (sdHandle != 0L) runCatching { SdCppEngine.nativeFree(sdHandle) }
+        sdHandle = 0L
     }
 
     // ================= UI 小工具 =================

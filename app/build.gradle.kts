@@ -32,16 +32,8 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
-            // sd.cpp 依赖 libc++_shared.so；llmedge 的 AAR 不自带，由 jniLibs 提供一份
+            // 自编的 libstable-diffusion.so（+ libponko_sd.so / libomp.so）依赖它
             pickFirsts += "**/libc++_shared.so"
-            // llmedge 里我们只用 libsdcpp.so（stable-diffusion.cpp，直接读 GGUF）+ libggufreader/libomp；
-            // 其余 llama.cpp 变体(7×18-28MB)、whisper、bark 用不到，排掉以控制体积
-            excludes += listOf(
-                "**/libsmollm*.so",
-                "**/libbark_jni.so",
-                "**/libwhisper_jni.so",
-                "**/libllama*.so",
-            )
         }
     }
 }
@@ -59,15 +51,7 @@ dependencies {
     implementation("io.noties.markwon:ext-tables:4.6.2")
     implementation("io.noties.markwon:ext-strikethrough:4.6.2")
     implementation("io.noties.markwon:linkify:4.6.2")
-    // 文生图 / 图生图（GGUF）：llmedge 打包了 stable-diffusion.cpp 的 Android 运行时，
-    // 直接读 .gguf 绘图模型；Maven 现成 AAR，无需 NDK/CMake。
-    // 注意：其 manifest 声明 minSdk 30（Vulkan 后端要求），我们纯 CPU 跑，
-    // 通过 tools:overrideLibrary 绕过声明限制以兼容 Android 9+
-    implementation("io.github.aatricks:llmedge:0.4.7.2") {
-        // 只需它的绘图能力：RAG/OCR/语音/云端下载相关依赖全部剔除，否则白白胖 ~35MB
-        exclude(group = "io.gitlab.shubham0204") // sentence-embeddings（拖进 ONNX Runtime）
-        exclude(group = "com.google.mlkit")      // text-recognition / image-labeling + native
-        exclude(group = "com.tom-roush")         // pdfbox-android（RAG 解析 PDF）
-        exclude(group = "io.ktor")               // HF 下载客户端
-    }
+    // 绘图（文生图）：自编的 stable-diffusion.cpp（arm64-v8a）。native 库直接放在
+    // app/src/main/jniLibs/arm64-v8a/：libstable-diffusion.so + libponko_sd.so(JNI 桥) + libomp.so
+    // 相比现成 AAR，这里能直接控制线程数 / 采样器 / 调度器 / LoRA / 量化类型 / 取消。
 }
