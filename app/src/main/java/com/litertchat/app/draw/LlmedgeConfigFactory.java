@@ -36,7 +36,7 @@ public final class LlmedgeConfigFactory {
     public static ImageClient cpuIsolatedClient(Context context, CoroutineScope scope, boolean useGpu) {
         ImageRuntimeConfig image = new ImageRuntimeConfig(
                 new RuntimeCacheConfig(1, 4096L),          // cache
-                false,                                      // preferPerformanceMode
+                true,                                       // preferPerformanceMode ← C 档：偏好性能（更多内存换速度）
                 useGpu,                                     // useVulkan
                 DiffusionWorkerMode.ISOLATED_PROCESS,       // workerMode ← 独立进程
                 defaultWatchdog(),                          // watchdog

@@ -710,7 +710,7 @@ class DrawPage(
                 steps = steps,
                 cfgScale = cfg,
                 seed = useSeed,
-                flashAttention = false,      // 华为/Mali 上 FlashAttention 常出问题
+                flashAttention = true,       // C 档：打开 FlashAttention（华为/Mali 上可能不稳，失败只报错不闪退）
                 model = ModelSpec.localFile(main),
                 vae = vaeModel?.let { ModelSpec.localFile(it) },
                 loraModelDir = if (lora != null) lora.parentFile?.absolutePath else null,
