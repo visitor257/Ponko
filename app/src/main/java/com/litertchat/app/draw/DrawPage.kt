@@ -16,6 +16,7 @@ import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import kotlinx.coroutines.CoroutineScope
@@ -121,6 +122,7 @@ class DrawPage(
     private lateinit var genBtn: Button
     private lateinit var cancelBtn: Button
     private lateinit var progressText: TextView
+    private lateinit var progressBar: ProgressBar
     private lateinit var resultImg: ImageView
 
     fun build(): View {
@@ -228,6 +230,13 @@ class DrawPage(
             setPadding(0, dp(8), 0, 0)
         }
         root.addView(progressText)
+
+        progressBar = ProgressBar(c, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            progress = 0
+            visibility = View.GONE
+        }
+        root.addView(progressBar, matchWrap(top = 6))
 
         resultImg = ImageView(c).apply {
             adjustViewBounds = true
@@ -627,6 +636,10 @@ class DrawPage(
         genBtn.isEnabled = false
         progressText.visibility = View.VISIBLE
         progressText.text = "正在准备…（首次会先加载模型，1GB+ 可能要几分钟）"
+        curStep = 0
+        totalStep = 0
+        progressBar.progress = 0
+        progressBar.visibility = View.VISIBLE
         cancelBtn.visibility = View.VISIBLE
         onStatus?.invoke("绘图生成中…", false)
         val startedAt = System.currentTimeMillis()
@@ -638,8 +651,11 @@ class DrawPage(
                     val sec = (System.currentTimeMillis() - startedAt) / 1000
                     progressText.post {
                         val phase = if (sec < 8) "正在加载模型…" else "正在去噪采样…"
-                        progressText.text = "$phase 已 ${sec} 秒\n" +
-                            "纯 CPU 推理很慢，请保持前台。若长时间没反应可点「取消」"
+                        val stepInfo = if (totalStep > 0) " · 第 $curStep/$totalStep 步" else ""
+                        progressText.text = "$phase$stepInfo · 已 ${sec} 秒"
+                        if (totalStep > 0) {
+                            progressBar.progress = (curStep * 100 / totalStep).coerceIn(0, 100)
+                        }
                     }
                 }
             }
@@ -670,6 +686,7 @@ class DrawPage(
             } finally {
                 genBtn.post { genBtn.isEnabled = true }
                 cancelBtn.post { cancelBtn.visibility = View.GONE }
+                progressBar.post { progressBar.visibility = View.GONE }
             }
         }
     }

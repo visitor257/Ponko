@@ -1761,12 +1761,28 @@ class MainActivity : Activity() {
         markwonStream.setMarkdown(ai.answer, "🎨 正在生成图片…")
 
         genJob = scope.launch {
+            // 气泡里每秒刷新一次进度（sd.cpp 每步回调 + 本地计时），
+            // 否则整段生成期间只能看到静止的「🎨 正在生成图片…」
+            var curStep = 0
+            var totalStep = 0
+            val drawStartedAt = System.currentTimeMillis()
+            val ticker = launch {
+                while (true) {
+                    kotlinx.coroutines.delay(1000)
+                    val sec = (System.currentTimeMillis() - drawStartedAt) / 1000
+                    val stepInfo = if (totalStep > 0) "第 $curStep/$totalStep 步 · " else ""
+                    markwonStream.setMarkdown(ai.answer, "🎨 正在绘制…$stepInfo已 ${sec} 秒")
+                }
+            }
             try {
                 val img = dpg.generateImage(prompt) { cur, total ->
+                    curStep = cur
+                    totalStep = total
                     runOnUiThread {
                         if (cur == total || cur % 2 == 0) setStatus("绘图 $cur/$total", C_WARN)
                     }
                 }
+                ticker.cancel()
                 val bmp = dpg.toBitmap(img)
                 val name = "ponko_${System.currentTimeMillis()}.png"
                 val saved = withContext(Dispatchers.IO) { writeChatImage(bmp, name) }
@@ -1776,19 +1792,23 @@ class MainActivity : Activity() {
                 attachImageBubble(ai, bmp, name)
                 setStatus("绘图完成", C_OK)
             } catch (e: com.litertchat.app.draw.GenerationCancelledException) {
+                ticker.cancel()
                 turn.answer = "(已中断)"
                 markwonStream.setMarkdown(ai.answer, "(已中断)")
                 setStatus("已中断", C_IDLE)
             } catch (e: CancellationException) {
+                ticker.cancel()
                 turn.answer = "(已中断)"
                 markwonStream.setMarkdown(ai.answer, "(已中断)")
                 setStatus("已中断", C_IDLE)
                 throw e
             } catch (e: Throwable) {
+                ticker.cancel()
                 turn.answer = "绘图失败：${e.message}"
                 markwonStream.setMarkdown(ai.answer, "❌ 绘图失败：${e.message}")
                 setStatus("绘图失败", C_ERR)
             } finally {
+                ticker.cancel()
                 ai.regenButton.visibility = View.VISIBLE
                 saveSessions()
                 setBusy(false)
