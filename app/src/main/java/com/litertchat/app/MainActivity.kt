@@ -76,7 +76,6 @@ class MainActivity : Activity() {
 
     companion object {
         private const val REQ_PICK_MODEL = 1001
-    private const val REQ_DRAW_TREE = 1002
     }
 
     // ---- palette ----
@@ -369,7 +368,7 @@ class MainActivity : Activity() {
         card.addView(pageTitle("模型"))
         card.addView(hintText("从本地选 .litertlm（LiteRT-LM）或 .gguf（llama.cpp）模型；首次会复制到 App 私有目录，之后可直接选用。GGUF 走 CPU 多线程，并在会话内复用 KV 前缀（长对话只需计算新增内容）。"))
 
-        card.addView(actionButton("选择模型文件（.litertlm / .gguf）") { pickModelFile() },
+        card.addView(actionButton("选择模型文件夹") { pickModelTree() },
             matchWrap().apply { topMargin = dp(12) })
 
         savedContainer = LinearLayout(this).apply {
@@ -419,7 +418,7 @@ class MainActivity : Activity() {
         // ---- 绘图模型（与语言模型统一在这里加载） ----
         card.addView(pageTitle("绘图模型"), matchWrap().apply { topMargin = dp(20) })
         card.addView(
-            hintText("SD 1.5 的 ONNX 导出（text_encoder / unet / vae_decoder + tokenizer/vocab.json + merges.txt）。选择包含这些文件的文件夹即可。加载后在「对话」页输入就是正面提示词，按绘图页的参数生成图片。"),
+            hintText("用上面同一个「选择模型文件夹」导入：文件夹含 vocab.json + merges.txt + *.onnx（SD 1.5）时会自动按绘图模型加载。加载后在「对话」页输入就是正面提示词。"),
             matchWrap().apply { topMargin = dp(4) }
         )
         val dStatus = TextView(this).apply {
@@ -429,17 +428,8 @@ class MainActivity : Activity() {
         }
         drawModelStatus = dStatus
         card.addView(dStatus, matchWrap().apply { topMargin = dp(6) })
-        val drawRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(8), 0, 0)
-        }
-        drawRow.addView(
-            actionButton("选择绘图模型文件夹") { pickDrawModelTree() },
-            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        )
-        drawRow.addView(
-            actionButton("卸载") {
+        card.addView(
+            actionButton("卸载绘图模型") {
                 val dpg = drawPage
                 if (dpg == null || !dpg.hasModel()) {
                     toast("当前没有加载绘图模型")
@@ -451,9 +441,8 @@ class MainActivity : Activity() {
                     toast("绘图模型已卸载")
                 }
             },
-            wrapWrap().apply { leftMargin = dp(8) }
+            matchWrap().apply { topMargin = dp(8) }
         )
-        card.addView(drawRow, matchWrap())
 
         sv.addView(card, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
@@ -781,47 +770,59 @@ class MainActivity : Activity() {
 
     // ================= model loading =================
 
-    private fun pickModelFile() {
-        val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-            addCategory(Intent.CATEGORY_OPENABLE)
-            type = "*/*"
-        }
-        startActivityForResult(i, REQ_PICK_MODEL)
-    }
-
-    /** 选择绘图模型文件夹（SD 1.5 ONNX，含 tokenizer） */
-    private fun pickDrawModelTree() {
+    /** 单一入口：选择包含模型的文件夹，由内容自动判断是语言模型还是绘图模型 */
+    private fun pickModelTree() {
         val i = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        startActivityForResult(i, REQ_DRAW_TREE)
+        startActivityForResult(i, REQ_PICK_MODEL)
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         if (drawPage?.onActivityResult(requestCode, resultCode, data) == true) return
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == REQ_PICK_MODEL && resultCode == RESULT_OK) {
-            data?.data?.let { copyModelToPrivate(it) }
+            data?.data?.let { importModelTree(it) }
         }
-        if (requestCode == REQ_DRAW_TREE && resultCode == RESULT_OK) {
-            val uri = data?.data ?: return
-            val dpg = drawPage ?: return
-            setBusy(true)
-            setStatus("正在导入绘图模型…", C_WARN)
-            scope.launch {
-                val err = dpg.prepareFromTree(uri) { stage -> drawModelStatus?.text = stage }
-                setBusy(false)
-                if (err == null) {
-                    drawModelStatus?.text = dpg.modelSummary()
-                    drawMode = true
-                    dpg.llmLoaded = false
-                    updateThinkEnabled()
-                    setStatus("绘图模型已加载", C_OK)
-                    toast("绘图模型已加载：到对话页输入即为正面提示词")
-                } else {
-                    drawModelStatus?.text = err
-                    setStatus("绘图模型加载失败", C_ERR)
-                    toast(err)
+    }
+
+    /** 扫描选中的文件夹：SD ONNX 模型走绘图管线，.gguf / .litertlm 走语言模型 */
+    private fun importModelTree(treeUri: Uri) {
+        val dpg = drawPage ?: return
+        setBusy(true)
+        setStatus("正在扫描文件夹…", C_WARN)
+        scope.launch {
+            val ins = runCatching { dpg.inspectTree(treeUri) }.getOrNull()
+            if (ins == null) {
+                setBusy(false); setStatus("扫描失败", C_ERR); return@launch
+            }
+            when {
+                ins.llmFiles.isNotEmpty() -> {
+                    setBusy(false)
+                    setStatus("发现 ${ins.llmFiles.size} 个语言模型", C_OK)
+                    for ((_, u) in ins.llmFiles) copyModelToPrivate(u)
+                }
+                ins.looksSd -> {
+                    setStatus("检测到绘图模型（SD ONNX），正在导入…", C_WARN)
+                    val err = dpg.prepareFromTree(treeUri) { stage -> drawModelStatus?.text = stage }
+                    setBusy(false)
+                    if (err == null) {
+                        drawModelStatus?.text = dpg.modelSummary()
+                        drawMode = true
+                        dpg.llmLoaded = false
+                        updateThinkEnabled()
+                        setStatus("绘图模型已加载", C_OK)
+                        toast("绘图模型已加载：到对话页输入即为正面提示词")
+                    } else {
+                        drawModelStatus?.text = err
+                        setStatus("绘图模型加载失败", C_ERR)
+                        toast(err)
+                    }
+                }
+                else -> {
+                    setBusy(false)
+                    setStatus("未找到模型", C_ERR)
+                    toast("这个文件夹里没找到模型：需要 .gguf / .litertlm 文件，或含 vocab.json + merges.txt + *.onnx 的 SD 模型")
                 }
             }
         }

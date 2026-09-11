@@ -193,6 +193,39 @@ class DrawPage(
 
     // ---------- 模型加载（入口统一在「模型」页，这里只提供能力） ----------
 
+    /** SAF 目录探测结果 */
+    data class TreeInspect(
+        /** 目录里的候选模型文件：文件名 -> URI（递归≤2 层） */
+        val files: List<Pair<String, Uri>>,
+        /** 语言模型候选（.gguf / .litertlm） */
+        val llmFiles: List<Pair<String, Uri>>,
+        /** 是否像 SD ONNX 模型（含 CLIP tokenizer 与 onnx） */
+        val looksSd: Boolean,
+    )
+
+    /** 扫描 SAF 目录，判断里面是语言模型还是绘图模型 */
+    suspend fun inspectTree(treeUri: Uri): TreeInspect = withContext(Dispatchers.IO) {
+        val all = ArrayList<Pair<String, Uri>>()
+        collectFiles(treeUri, all, 0)
+        val llm = all.filter {
+            val n = it.first.lowercase()
+            n.endsWith(".gguf") || n.endsWith(".litertlm")
+        }
+        val names = all.map { it.first.lowercase() }
+        val hasOnnx = names.any { it.endsWith(".onnx") }
+        val hasTokenizer = names.any { it == "vocab.json" } && names.any { it == "merges.txt" }
+        TreeInspect(all, llm, hasOnnx && hasTokenizer)
+    }
+
+    private fun collectFiles(dirUri: Uri, out: MutableList<Pair<String, Uri>>, depth: Int) {
+        if (depth > 2) return
+        for (child in listChildren(dirUri)) {
+            val name = queryName(child) ?: continue
+            if (isDirectory(child)) collectFiles(child, out, depth + 1)
+            else out.add(name to child)
+        }
+    }
+
     /**
      * 由模型页调用：把 SAF 选中的目录复制进私有目录并加载。
      * @param onStage 进度回调（主线程）
