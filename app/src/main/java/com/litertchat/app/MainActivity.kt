@@ -511,10 +511,6 @@ class MainActivity : Activity() {
             actionButton("选择绘图模型文件夹") { pickDrawModelTree() },
             matchWrap().apply { topMargin = dp(8) }
         )
-        card.addView(
-            actionButton("下载绘图模型（Anything V5 · 可选量化档）") { pickDownloadModel() },
-            matchWrap().apply { topMargin = dp(8) }
-        )
 
         drawSavedContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1270,62 +1266,6 @@ class MainActivity : Activity() {
             }
             .setNegativeButton("取消", null)
             .show()
-    }
-
-    /** 下载绘图模型：先选量化档，再选源。 */
-    private fun pickDownloadModel() {
-        val dpg = drawPage ?: return
-        val labels = dpg.modelPresetLabels()
-        AlertDialog.Builder(this)
-            .setTitle("下载哪个量化档？（Anything V5）")
-            .setItems(labels.toTypedArray()) { _, which -> pickModelDownloadSource(which) }
-            .setNegativeButton("取消", null)
-            .show()
-    }
-
-    private fun pickModelDownloadSource(index: Int) {
-        AlertDialog.Builder(this)
-            .setTitle("从哪个源下载？")
-            .setItems(arrayOf("hf-mirror.com（国内镜像，推荐）", "huggingface.co（官方源）")) { _, which ->
-                startModelDownload(index, useMirror = which == 0)
-            }
-            .setNegativeButton("取消", null)
-            .show()
-    }
-
-    private fun startModelDownload(index: Int, useMirror: Boolean) {
-        val dpg = drawPage ?: return
-        val src = if (useMirror) "hf-mirror.com" else "huggingface.co"
-        val label = dpg.modelPresetLabels().getOrNull(index) ?: "模型"
-        drawModelStatus?.text = "正在从 $src 下载 $label…"
-        setStatus("绘图模型下载中…", C_WARN)
-        var lastPct = -2
-        scope.launch {
-            val err = dpg.downloadModel(index, useMirror) { done, total ->
-                val pct = if (total > 0) ((done * 100) / total).toInt() else -1
-                if (pct != lastPct) {
-                    lastPct = pct
-                    runOnUiThread {
-                        drawModelStatus?.text = if (pct >= 0)
-                            "正在从 $src 下载… $pct%（${fmtSize(done)} / ${fmtSize(total)}）"
-                        else
-                            "正在从 $src 下载… ${fmtSize(done)}"
-                    }
-                }
-            }
-            runOnUiThread {
-                if (err == null) {
-                    dpg.listModels().firstOrNull()?.let { drawMainPath = it.absolutePath }
-                    toast("下载完成 —— 点「加载绘图模型」开始")
-                    setStatus("绘图模型已下载", C_OK)
-                    refreshDrawModels()
-                } else {
-                    drawModelStatus?.text = err
-                    setStatus("绘图模型下载失败", C_ERR)
-                    toast(err)
-                }
-            }
-        }
     }
 
     /** 长按删除一个已复制的绘图模型文件。 */

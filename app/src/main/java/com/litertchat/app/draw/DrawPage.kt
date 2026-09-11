@@ -61,17 +61,6 @@ class DrawPage(
 
         /** 下载后重命名成这个，prompt 里就用 `lora:lcm-lora-sdv1-5:1` 引用 */
         const val LORA_NAME = "lcm-lora-sdv1-5"
-
-        /** Anything V5 的官方 GGUF 仓库（含 Q4_0/Q5_0/Q8_0/F16 各量化档） */
-        private const val MODEL_HF_REPO = "genai-archive/anything-v5-gguf"
-
-        /** 可下载的量化档位：显示标签 → 远端文件名 */
-        private val MODEL_PRESETS = listOf(
-            "Q4_0 · 体积最小、最快（1.46 GB）" to "anything-v5.q4_0.gguf",
-            "Q5_0 · 折中（1.51 GB）" to "anything-v5.q5_0.gguf",
-            "Q8_0 · 质量较高（1.64 GB）" to "anything-v5.q8_0.gguf",
-            "F16 · 质量最高（1.99 GB）" to "anything-v5.f16.gguf",
-        )
     }
 
     private val c: Context get() = act
@@ -295,21 +284,6 @@ class DrawPage(
             refreshLoraHint()
         }
         return err
-    }
-
-    /** 可下载的绘图模型档位标签 */
-    fun modelPresetLabels(): List<String> = MODEL_PRESETS.map { it.first }
-
-    private fun modelPresetFileName(index: Int): String =
-        MODEL_PRESETS.getOrNull(index)?.second ?: MODEL_PRESETS[0].second
-
-    /** 下载指定量化档的 Anything V5（官方 GGUF）。返回 null = 成功。 */
-    suspend fun downloadModel(index: Int, useMirror: Boolean, onProgress: (Long, Long) -> Unit): String? {
-        val fileName = modelPresetFileName(index)
-        val host = if (useMirror) "https://hf-mirror.com" else "https://huggingface.co"
-        val dir = File(c.filesDir, DIR_NAME).apply { mkdirs() }
-        val dest = File(dir, fileName)
-        return downloadToFile("$host/$MODEL_HF_REPO/resolve/main/$fileName", dest, 10L * 1024 * 1024, onProgress)
     }
 
     /** 通用下载：边下边写 .part，完成后改名为目标文件。返回 null = 成功。 */
