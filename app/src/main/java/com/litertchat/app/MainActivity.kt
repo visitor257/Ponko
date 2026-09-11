@@ -1093,7 +1093,7 @@ class MainActivity : Activity() {
     }
 
     /** 重建 LiteRT 会话（若模型已加载）并把聊天区重绘为当前对话的内容。 */
-    private fun restoreSession() {
+    private fun restoreSession(showHint: Boolean = true) {
         try { conversation?.close() } catch (_: Throwable) {}
         conversation = null
         convThinking = null
@@ -1107,18 +1107,40 @@ class MainActivity : Activity() {
         autoFollow = true
         jumpButton.visibility = View.GONE
         if (current.turns.isEmpty()) {
-            addSystemHint("① 点「选择模型」选 .litertlm / .gguf 文件（已复制过的可直接点列表选用）\n" +
-                "② 点「加载模型」开始（首次初始化需几秒~几十秒）")
+            if (showHint) {
+                addSystemHint("① 点「选择模型」选 .litertlm / .gguf 文件（已复制过的可直接点列表选用）\n" +
+                    "② 点「加载模型」开始（首次初始化需几秒~几十秒）")
+            }
         } else {
             for (t in current.turns) renderTurn(t)
         }
         scrollToBottom(force = true)
     }
 
+    /**
+     * 重新生成某一轮的回答。
+     * 该轮之后的轮次依赖这轮的上下文，必须一并丢弃；然后把它重新送进去生成。
+     */
+    private fun regenerate(turn: QaTurn) {
+        if (busy) {
+            toast("生成中，请稍候")
+            return
+        }
+        val idx = current.turns.indexOf(turn)
+        if (idx < 0) return
+        val text = turn.user
+        val dropped = current.turns.size - idx - 1
+        while (current.turns.size > idx) current.turns.removeAt(current.turns.size - 1)
+        restoreSession(showHint = false)
+        if (dropped > 0) toast("该回答之后的 $dropped 轮对话已丢弃，正在重新生成")
+        inputEdit.setText(text)
+        doSend()
+    }
+
     /** 把一轮已有问答重绘到聊天区（历史回填）。 */
     private fun renderTurn(t: QaTurn) {
         addUserBubble(t.user)
-        val ai = addAiArea()
+        val ai = addAiArea { regenerate(t) }
         if (t.thought.isNotEmpty()) {
             ai.thoughtBox.visibility = View.VISIBLE
             ai.thoughtBody.text = t.thought
@@ -1221,7 +1243,7 @@ class MainActivity : Activity() {
         setStoppingUi(true)
         setStatus("生成中（点 ■ 可中断）…", C_WARN)
 
-        val ai = addAiArea()
+        val ai = addAiArea { regenerate(turn) }
         val answerBuf = StringBuilder()
         val thoughtBuf = StringBuilder()
         var lastRender = 0L
@@ -1419,10 +1441,11 @@ class MainActivity : Activity() {
         val thoughtHeader: TextView,
         val thoughtBody: TextView,
         val answer: TextView,
+        val regenButton: TextView,
     )
 
     /** AI reply card: collapsible thinking section on top, Markdown answer below. */
-    private fun addAiArea(): AiArea {
+    private fun addAiArea(onRegen: (() -> Unit)? = null): AiArea {
         val wrap = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(12), dp(10), dp(12), dp(10))
@@ -1469,12 +1492,26 @@ class MainActivity : Activity() {
         }
         wrap.addView(answer, matchWrap().apply { topMargin = dp(4) })
 
+        // 「重新生成」：对回答不满意时，丢掉这一轮（及其后）的回答重问一次
+        val regenButton = TextView(this).apply {
+            text = "↻ 重新生成"
+            textSize = 12.5f
+            setTextColor(C_PRIMARY)
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(0, dp(8), 0, 0)
+            isClickable = true
+            isFocusable = false
+            visibility = if (onRegen != null) View.VISIBLE else View.GONE
+            setOnClickListener { onRegen?.invoke() }
+        }
+        wrap.addView(regenButton, matchWrap())
+
         chatContainer.addView(wrap, matchWrap().apply {
             topMargin = dp(8)
             bottomMargin = dp(2)
         })
         scrollToBottom()
-        return AiArea(wrap, thoughtBox, thoughtHeader, thoughtBody, answer)
+        return AiArea(wrap, thoughtBox, thoughtHeader, thoughtBody, answer, regenButton)
     }
 
     private fun addUserBubble(text: String) {
