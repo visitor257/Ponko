@@ -230,24 +230,39 @@ class DrawPage(
         mainModel = main
         vaeModel = vae
 
-        // 崩溃标记：如果这几行间 App 挂了（native 崩溃），下次启动就能识别出来
-        val mark = File(root, ".loading")
-        runCatching { mark.writeText("${main.name}\n${System.currentTimeMillis()}") }
+        // 崩溃追踪：逐步把阶段写进文件。native 段错误会直接杀死进程，
+        // 但只要事先写进了磁盘，下次启动就能看到崩在哪一步。
+        val stageFile = File(root, ".loadstage")
+        fun stage(s: String) {
+            runCatching { stageFile.appendText("$s\n") }
+        }
 
-        // 先单独探一拍 native 库能不能加载（这步失败会抛 UnsatisfiedLinkError，能捕获）
+        runCatching { stageFile.writeText("") }
+        stage("0 选中模型：${main.name}（${main.length() / 1048576} MB）")
+        if (vae != null) stage("0 VAE：${vae.name}（${vae.length() / 1048576} MB）")
+        stage("1 设备：abi=${android.os.Build.SUPPORTED_ABIS.firstOrNull()} sdk=${android.os.Build.VERSION.SDK_INT} 厂商=${android.os.Build.MANUFACTURER} 机型=${android.os.Build.MODEL}")
+        stage("1 内存：maxHeap=${Runtime.getRuntime().maxMemory() / 1048576}MB freeDisk=${root.usableSpace / 1048576}MB")
+
+        // 分步探测：每步都先落盘，后执行
+        stage("2 准备 loadLibrary(omp)")
         try {
             System.loadLibrary("omp")
+            stage("3 loadLibrary(omp) OK")
         } catch (t: Throwable) {
-            runCatching { mark.delete() }
+            stage("3 loadLibrary(omp) 失败：${t.message ?: t.javaClass.simpleName}")
+            runCatching { stageFile.delete() }
             return "native 库 libomp.so 加载失败：${t.message ?: t.javaClass.simpleName}"
         }
+        stage("4 准备 loadLibrary(sdcpp)")
         try {
             System.loadLibrary("sdcpp")
+            stage("5 loadLibrary(sdcpp) OK")
         } catch (t: Throwable) {
-            runCatching { mark.delete() }
+            stage("5 loadLibrary(sdcpp) 失败：${t.message ?: t.javaClass.simpleName}")
+            runCatching { stageFile.delete() }
             return "native 库 libsdcpp.so 加载失败：${t.message ?: t.javaClass.simpleName}"
         }
-
+        stage("6 开始 StableDiffusion.load()")
         val loaded = withContext(Dispatchers.IO) {
             StableDiffusion.load(
                 context = c,
@@ -258,8 +273,8 @@ class DrawPage(
                 preferPerformanceMode = true,
             )
         }
+        stage("7 StableDiffusion.load() 返回 OK")
         sd = loaded
-        runCatching { mark.delete() }
 
         val summary = buildString {
             append("已加载：").append(main.name)
@@ -267,6 +282,8 @@ class DrawPage(
             append("（CPU）")
         }
         statusText.post { statusText.text = summary }
+        stage("8 完成")
+        runCatching { stageFile.delete() }
         onPipelineReady?.invoke()
         return null
     }

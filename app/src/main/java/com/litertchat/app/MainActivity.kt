@@ -162,6 +162,8 @@ class MainActivity : Activity() {
     private var drawModelStatus: TextView? = null
     /** 上次启动时发现「加载绘图模型」中途崩了（native 崩溃，Java 层捕不到） */
     private var pendingDrawCrash = false
+    /** 上次崩溃时已执行的阶段（来自 draw/.loadstage） */
+    private var pendingDrawStage: String? = null
     private lateinit var backendSpinner: Spinner
     private lateinit var loadButton: TextView
     private lateinit var thinkCheck: CheckBox
@@ -209,10 +211,12 @@ class MainActivity : Activity() {
             } catch (_: Throwable) {}
             prev?.uncaughtException(t, e)
         }
-        // 上次加载绘图模型中途崩了？标记文件还在 → 说明 native 崩（Java 层捕不到）
-        val mark = File(filesDir, "draw/.loading")
-        if (mark.exists()) {
-            mark.delete()
+        // 上次加载绘图模型中途崩了？阶段文件还在 → 说明 native 崩（Java 层捕不到），
+        // 但里面已经记录了崩到哪一步。
+        val st = File(filesDir, "draw/.loadstage")
+        if (st.exists()) {
+            pendingDrawStage = runCatching { st.readText() }.getOrNull()
+            runCatching { st.delete() }
             pendingDrawCrash = true
         }
     }
@@ -468,8 +472,8 @@ class MainActivity : Activity() {
         // 上次崩溃信息（自捕获，供排查）
         if (pendingDrawCrash) {
             card.addView(TextView(this).apply {
-                text = "⚠ 上次「加载绘图模型」中途崩溃了（native 层，无法自动取日志）。"
-                textSize = 11.5f
+                text = "⚠ 上次「加载绘图模型」中途崩溃了（native 层）。已执行阶段：\n" + (pendingDrawStage ?: "（无记录）")
+                textSize = 11f
                 setTextColor(C_ERR)
                 setPadding(0, dp(6), 0, 0)
             }, matchWrap())
