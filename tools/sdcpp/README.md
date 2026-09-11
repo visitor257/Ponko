@@ -61,8 +61,9 @@ $ninja = "C:\Android\cmake\3.31.6\bin\ninja.exe"
   -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-28 `
   -DCMAKE_BUILD_TYPE=Release `
   -DSD_BUILD_EXAMPLES=OFF -DSD_WEBP=OFF -DSD_WEBM=OFF -DSD_BUILD_SHARED_LIBS=ON `
-  -DCMAKE_CXX_FLAGS_RELEASE="-O2 -DNDEBUG" -DCMAKE_C_FLAGS_RELEASE="-O2 -DNDEBUG" `
-  -DCMAKE_CXX_FLAGS="-g0" -DCMAKE_C_FLAGS="-g0"
+  -DCMAKE_CXX_FLAGS_RELEASE="-O3 -DNDEBUG" -DCMAKE_C_FLAGS_RELEASE="-O3 -DNDEBUG" `
+  -DCMAKE_CXX_FLAGS="-g0 -march=armv8.2-a+dotprod+fp16" `
+  -DCMAKE_C_FLAGS="-g0 -march=armv8.2-a+dotprod+fp16"
 
 # 去掉 NDK toolchain 默认塞进来的 -g（8GB 机器上省内存）
 $nf = "$build\build.ninja"
@@ -92,6 +93,26 @@ Copy-Item "$build\bin\libstable-diffusion.so" app\src\main\jniLibs\arm64-v8a\
 Copy-Item libponko_sd.so                       app\src\main\jniLibs\arm64-v8a\
 Copy-Item "$ndk\toolchains\llvm\prebuilt\windows-x86_64\lib\clang\18\lib\linux\aarch64\libomp.so" app\src\main\jniLibs\arm64-v8a\
 ```
+
+## 性能相关的三个坑（都踩过，实测 125s → 116s → 明显更快）
+
+1. **`-O2` 覆盖了默认的 `-O3`**
+   CMake 拼出的 FLAGS 会变成 `-O3 -DNDEBUG -O2 -DNDEBUG`，**gcc/clang 最后一个 `-O` 生效** →
+   实际按 `-O2` 编。**别传 `-O2`**（或显式传 `-O3`）。
+
+2. **没有 `-march`**
+   NDK 默认只给基线 NEON，ggml 的 `#ifdef __ARM_FEATURE_DOTPROD` 不成立，
+   于是用不上 `SDOT`（int8 点积）。**Q8_0 全是 int8 矩阵乘**，缺 dotprod 明显慢。
+   加 `-march=armv8.2-a+dotprod+fp16`，可用下面命令验证：
+   ```powershell
+   llvm-objdump.exe -d libstable-diffusion.so | Select-String sdot   # 应该有几百处
+   ```
+   ⚠️ 代价：要求 **ARMv8.2-A**（2019 年后的中高端 ARM）。更老的设备会 SIGILL，
+   要让 `minSdk` 以下的老机器也能跑，就得改回基线并接受变慢。
+
+3. **FlashAttention 默认是关的**
+   `sd_ctx_params_init()` 把 `flash_attn` 和 `diffusion_flash_attn` **都**设为 false，
+   后者作用于 UNet（算力主体）。两个都要显式打开，且它只改内存访问模式、不改结果。
 
 ## 排错备忘
 
