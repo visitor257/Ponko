@@ -164,6 +164,10 @@ class MainActivity : Activity() {
     private var drawSavedContainer: LinearLayout? = null
     /** 当前选定的绘图主模型（绝对路径） */
     private var drawMainPath: String? = null
+    /** LoRA 状态文本（模型页） */
+    private var loraStatusTv: TextView? = null
+    /** 已安装 LoRA 列表容器（模型页） */
+    private var loraBox: LinearLayout? = null
     /** 上次启动时发现「加载绘图模型」中途崩了（native 崩溃，Java 层捕不到） */
     private var pendingDrawCrash = false
     /** 上次崩溃时已执行的阶段（来自 draw/.loadstage） */
@@ -589,6 +593,36 @@ class MainActivity : Activity() {
             },
             matchWrap().apply { topMargin = dp(8) }
         )
+
+        // ================= LoRA 加速 =================
+        card.addView(pageTitle("LoRA 加速"), matchWrap().apply { topMargin = dp(24) })
+        card.addView(
+            hintText("LCM-LoRA 是几十 MB 的「蒸馏补丁」，挂到主模型上可把 20 步压到 4~8 步（约 5 倍加速）。它不改动主模型文件。注意：LoRA 和「量化」是两回事（量化由模型文件本身决定，这里会显示当前模型的量化等级）。国外直连慢的话用 hf-mirror 镜像。"),
+            matchWrap().apply { topMargin = dp(4) }
+        )
+        val lStatus = TextView(this).apply {
+            text = "未安装"
+            textSize = 12f
+            setTextColor(C_SUBTEXT)
+        }
+        loraStatusTv = lStatus
+        card.addView(lStatus, matchWrap().apply { topMargin = dp(6) })
+
+        loraBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+        }
+        card.addView(loraBox, matchWrap().apply { topMargin = dp(6) })
+
+        card.addView(
+            actionButton("下载 LoRA（LCM-LoRA · 约 135MB）") { pickLoraSource() },
+            matchWrap().apply { topMargin = dp(8) }
+        )
+        card.addView(
+            actionButton("删除 LoRA") { confirmDeleteLora() },
+            matchWrap().apply { topMargin = dp(8) }
+        )
+        refreshLoraUi()
         refreshDrawModels()
 
         sv.addView(card, FrameLayout.LayoutParams(
@@ -1096,7 +1130,9 @@ class MainActivity : Activity() {
             val chip = TextView(this).apply {
                 val role = if (isMain) "当前主模型" else if (files.size > 1) "组件/备选" else ""
                 val suffix = if (role.isEmpty()) "" else "　[$role]"
-                text = "▶ ${f.name}$suffix　${fmtSize(f.length())}"
+                val q = dpg?.quantOf(f)
+                val qTag = if (q != null) "　[$q]" else ""
+                text = "▶ ${f.name}$suffix$qTag　${fmtSize(f.length())}"
                 textSize = 12.5f
                 setTextColor(if (isSel || isMain) C_PRIMARY else C_TEXT)
                 setPadding(dp(12), dp(8), dp(12), dp(8))
@@ -1135,6 +1171,99 @@ class MainActivity : Activity() {
             }
             refreshDrawModels()
         }
+    }
+
+    // ================= LoRA =================
+
+    /** 刷新模型页的 LoRA 状态与列表 */
+    private fun refreshLoraUi() {
+        val dpg = drawPage
+        loraStatusTv?.text = dpg?.loraSummary() ?: "未安装"
+        val box = loraBox ?: return
+        box.removeAllViews()
+        val all = dpg?.listLoras().orEmpty()
+        if (all.isEmpty()) {
+            box.visibility = View.GONE
+            return
+        }
+        box.visibility = View.VISIBLE
+        box.addView(TextView(this).apply {
+            text = "已安装的 LoRA（到「绘图」页勾选「LoRA 加速」启用）"
+            textSize = 12f
+            setTextColor(C_SUBTEXT)
+            setPadding(0, dp(4), 0, 0)
+        }, matchWrap())
+        for (f in all) {
+            box.addView(TextView(this).apply {
+                text = "• ${f.name}　${fmtSize(f.length())}"
+                textSize = 12.5f
+                setTextColor(C_TEXT)
+                setPadding(dp(4), dp(4), 0, 0)
+            }, matchWrap())
+        }
+    }
+
+    /** 选下载源：官方 / hf-mirror 镜像 */
+    private fun pickLoraSource() {
+        AlertDialog.Builder(this)
+            .setTitle("从哪个源下载 LCM-LoRA？")
+            .setItems(arrayOf("hf-mirror.com（国内镜像，推荐）", "huggingface.co（官方源）")) { _, which ->
+                startLoraDownload(useMirror = which == 0)
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun startLoraDownload(useMirror: Boolean) {
+        val dpg = drawPage ?: return
+        val src = if (useMirror) "hf-mirror.com" else "huggingface.co"
+        loraStatusTv?.text = "正在从 $src 下载…（约 135MB）"
+        setStatus("LoRA 下载中…", C_WARN)
+        var lastPct = -2
+        scope.launch {
+            val err = dpg.downloadLora(useMirror) { done, total ->
+                val pct = if (total > 0) ((done * 100) / total).toInt() else -1
+                if (pct != lastPct) {
+                    lastPct = pct
+                    runOnUiThread {
+                        loraStatusTv?.text = if (pct >= 0)
+                            "正在从 $src 下载… $pct%（${fmtSize(done)} / ${fmtSize(total)}）"
+                        else
+                            "正在从 $src 下载… ${fmtSize(done)}"
+                    }
+                }
+            }
+            runOnUiThread {
+                if (err == null) {
+                    toast("LoRA 下载完成 —— 到「绘图」页勾选「LoRA 加速」")
+                    setStatus("LoRA 已就绪", C_OK)
+                } else {
+                    toast(err)
+                    setStatus("LoRA 下载失败", C_ERR)
+                }
+                refreshLoraUi()
+            }
+        }
+    }
+
+    private fun confirmDeleteLora() {
+        val dpg = drawPage ?: return
+        val all = dpg.listLoras()
+        if (all.isEmpty()) {
+            toast("没有已安装的 LoRA")
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("删除 LoRA？")
+            .setMessage(all.joinToString("、") { it.name } + "\n删除后「绘图」页的 LoRA 加速会自动失效。")
+            .setPositiveButton("删除") { _, _ ->
+                var n = 0
+                all.forEach { if (dpg.deleteLora(it)) n++ }
+                toast("已删除 $n 个 LoRA")
+                refreshLoraUi()
+            }
+            .setNegativeButton("取消", null)
+            .show()
     }
 
     /** 长按删除一个已复制的绘图模型文件。 */

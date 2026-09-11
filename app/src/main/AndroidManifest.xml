@@ -11,6 +11,10 @@
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
 
+    <!-- 下载 LoRA 加速模型（HuggingFace 官方源 / hf-mirror 镜像） -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
     <application
         android:label="Ponko"
         android:icon="@mipmap/ic_launcher"

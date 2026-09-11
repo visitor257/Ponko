@@ -39,6 +39,47 @@ object GgufProbe {
     private const val MAX_KV = 4096
     private const val MAX_TENSORS_SCAN = 600
 
+    /** GGUF general.file_type → 可读量化名 */
+    private val FT_NAMES = mapOf(
+        0 to "F32", 1 to "F16", 2 to "Q4_0", 3 to "Q4_1", 7 to "Q8_0",
+        8 to "Q5_0", 9 to "Q5_1", 10 to "Q2_K", 11 to "Q3_K_S", 12 to "Q3_K_M",
+        13 to "Q3_K_L", 14 to "Q4_K_S", 15 to "Q4_K_M", 16 to "Q5_K_S",
+        17 to "Q5_K_M", 18 to "Q6_K", 19 to "IQ2_XXS", 30 to "BF16",
+    )
+
+    /** 读取 GGUF 量化等级（元数据键 general.file_type）；拿不到返回 null。 */
+    fun quantType(file: File): String? = try {
+        FileInputStream(file).use { fis ->
+            BufferedInputStream(fis, 1 shl 16).use { ins -> parseFileType(ins) }
+        }
+    } catch (_: Throwable) {
+        null
+    }
+
+    private fun parseFileType(ins: BufferedInputStream): String? {
+        val magic = readBytes(ins, 4) ?: return null
+        if (String(magic, Charsets.US_ASCII) != "GGUF") return null
+        readU32(ins) ?: return null
+        readU64(ins) ?: return null
+        val kvCount = readU64(ins) ?: return null
+        val kv = kvCount.coerceAtMost(MAX_KV.toLong()).toInt()
+        for (i in 0 until kv) {
+            val key = readString(ins) ?: return null
+            val vt = readU32(ins) ?: return null
+            if (key == "general.file_type") {
+                val v = when (vt) {
+                    4, 5 -> readU32(ins)?.toLong()
+                    10 -> readU64(ins)
+                    6 -> readU32(ins)?.toLong()   // 兼容故意写成 f32 的导出
+                    else -> null
+                }
+                return FT_NAMES[(v ?: return null).toInt()] ?: "type=${v}"
+            }
+            if (skipValue(ins, vt, captureString = false) == null) return null
+        }
+        return null
+    }
+
     /** 探测文件；只读元数据区，不加载张量数据。失败返回 UNKNOWN。 */
     fun probe(file: File): Kind {
         return try {
