@@ -266,13 +266,9 @@ class DrawPage(
         stage("6.1 isNativeLibraryLoaded = ${runCatching { StableDiffusion.isNativeLibraryLoaded() }.getOrElse { "异常:" + it.javaClass.simpleName }}")
         stage("6.2 checkBindings = ${runCatching { StableDiffusion.checkBindings() }.getOrElse { "异常:" + it.javaClass.simpleName }}")
         stage("6.3 isOpenClAvailable = ${runCatching { StableDiffusion.isOpenClAvailable() }.getOrElse { "异常:" + it.javaClass.simpleName }}")
-        stage("6.4 vulkanDeviceCount = ${runCatching { StableDiffusion.getVulkanDeviceCount() }.getOrElse { "异常:" + it.javaClass.simpleName }}")
-        stage("6.5 estimateModelMemory 开始读取 GGUF 头…")
-        val estMem = runCatching { StableDiffusion.estimateModelParamsMemoryBytes(main.absolutePath) }
-            .getOrElse { -1L }
-        stage("6.6 estimateModelMemory = ${if (estMem < 0) "调用失败" else (estMem / 1048576).toString() + " MB"}")
+        // 故意不调 getVulkanDeviceCount()：本机 Vulkan 驱动会让 native 崩（已实测）。
 
-        stage("7 开始 StableDiffusion.load()（保守参数：flashAttn=false, offloadToCpu=true, threads=4）")
+        stage("7 开始 StableDiffusion.load()（sequentialLoad=true 跳过 Vulkan 探测）")
         val loaded = withContext(Dispatchers.IO) {
             StableDiffusion.load(
                 context = c.applicationContext,
@@ -281,6 +277,7 @@ class DrawPage(
                 nThreads = 4,
                 offloadToCpu = true,        // 内存优先
                 flashAttn = false,          // 华为/Mali 上 FlashAttention 常出问题
+                sequentialLoad = true,      // 关键：显式指定 → 跳过 Vulkan 探测（否则 native 崩）
                 allowVulkan = false,        // 不用 Vulkan 后端，纯 CPU
                 forceVulkan = false,
                 preferPerformanceMode = false,
