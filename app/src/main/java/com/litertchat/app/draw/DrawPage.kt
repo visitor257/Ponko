@@ -61,6 +61,10 @@ class DrawPage(
 
         /** 下载后重命名成这个，prompt 里就用 `lora:lcm-lora-sdv1-5:1` 引用 */
         const val LORA_NAME = "lcm-lora-sdv1-5"
+
+        /** SharedPreferences 文件名与键（只存 UI 偏好） */
+        private const val PREFS_NAME = "ponko"
+        private const val KEY_USE_LORA = "useLora"
     }
 
     private val c: Context get() = act
@@ -78,8 +82,17 @@ class DrawPage(
     /** 运行方式：true = 尝试 GPU（Vulkan），false = 纯 CPU。由模型页的「运行方式」决定。 */
     var useGpu: Boolean = false
 
-    /** 是否启用 LoRA 加速（挂 LCM-LoRA，压低步数） */
-    var useLora: Boolean = false
+    /**
+     * 是否启用 LoRA 加速（挂 LCM-LoRA，压低步数）。
+     * 状态持久化到 SharedPreferences —— 否则每次启动 App 都要重新勾。
+     */
+    var useLora: Boolean = c.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .getBoolean(KEY_USE_LORA, false)
+        set(value) {
+            field = value
+            c.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit().putBoolean(KEY_USE_LORA, value).apply()
+        }
 
     /** 当前选中的 LoRA（null = 自动取目录里第一个） */
     private var loraFile: File? = null
