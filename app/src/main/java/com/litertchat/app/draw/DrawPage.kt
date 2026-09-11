@@ -77,6 +77,7 @@ class DrawPage(
     private lateinit var cfgEdit: EditText
     private lateinit var seedEdit: EditText
     private lateinit var genBtn: Button
+    private lateinit var cancelBtn: Button
     private lateinit var progressText: TextView
     private lateinit var resultImg: ImageView
 
@@ -125,6 +126,17 @@ class DrawPage(
             setOnClickListener { generateFromUi() }
         }
         root.addView(genBtn, matchWrap(top = 4))
+
+        cancelBtn = Button(c).apply {
+            text = "取消生成"
+            setTextColor(subText)
+            visibility = View.GONE
+            setOnClickListener {
+                cancel()
+                progressText.text = "已请求取消…"
+            }
+        }
+        root.addView(cancelBtn, matchWrap(top = 4))
 
         progressText = TextView(c).apply {
             textSize = 12f
@@ -355,8 +367,9 @@ class DrawPage(
         }
         genBtn.isEnabled = false
         progressText.visibility = View.VISIBLE
-        progressText.text = "正在生成…（纯 CPU，512×512 可能要几分钟）"
-        onStatus?.invoke("绘图生成中（纯 CPU，可能要几分钟）…", false)
+        progressText.text = "正在准备…（首次会先加载模型，1GB+ 可能要几分钟）"
+        cancelBtn.visibility = View.VISIBLE
+        onStatus?.invoke("绘图生成中…", false)
         val startedAt = System.currentTimeMillis()
         scope.launch {
             // 逐秒报“已耗时”，否则 llmedge 不报中间进度，看着像卡死
@@ -365,7 +378,9 @@ class DrawPage(
                     delay(1000)
                     val sec = (System.currentTimeMillis() - startedAt) / 1000
                     progressText.post {
-                        progressText.text = "正在生成… 已 ${sec} 秒（步数 $curStep/$totalStep）\n纯 CPU 推理，请耐心等，不要切后台"
+                        val phase = if (sec < 8) "正在加载模型…" else "正在去噪采样…"
+                        progressText.text = "$phase 已 ${sec} 秒\n" +
+                            "纯 CPU 推理很慢，请保持前台。若长时间没反应可点「取消」"
                     }
                 }
             }
@@ -386,10 +401,11 @@ class DrawPage(
             } catch (e: Throwable) {
                 ticker.cancel()
                 val sec = (System.currentTimeMillis() - startedAt) / 1000
-                progressText.post { progressText.text = "生成失败（${sec} 秒）：${e.message ?: e.javaClass.simpleName}" }
+                progressText.post { progressText.text = "生成失败（${sec} 秒）：${e.message ?: e.javaClass.simpleName}\n${"完整堆栈见「查看加载日志」"}" }
                 onStatus?.invoke("绘图失败：${e.message ?: e.javaClass.simpleName}", true)
             } finally {
                 genBtn.post { genBtn.isEnabled = true }
+                cancelBtn.post { cancelBtn.visibility = View.GONE }
             }
         }
         // 让编译器闭嘴（dpg 未使用）
