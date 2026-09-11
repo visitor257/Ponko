@@ -706,26 +706,32 @@ class DrawPage(
 
         // LoRA：走结构化参数（sd.cpp 原生接口，不再拼 prompt 里的 lora: 语法）
         val lora = if (useLora) activeLora() else null
+        // EditText 必须在主线程读，先取出来再进 IO
+        val negative = negEdit.text.toString()
 
         // 采样器/调度器：勾了 LoRA 就走 LCM（否则 LCM-LoRA 效果大打折扣），否则 Euler a
         val sampler = if (lora != null) SdCppEngine.Sampler.LCM else SdCppEngine.Sampler.EULER_A
         val scheduler = if (lora != null) SdCppEngine.Scheduler.LCM else SdCppEngine.Scheduler.DISCRETE
 
-        val bmp = SdCppEngine.render(
-            handle = h,
-            prompt = prompt,
-            negative = negEdit.text.toString(),
-            loraPath = lora?.absolutePath,
-            loraScale = 1.0f,
-            width = dim,
-            height = dim,
-            steps = steps,
-            cfg = cfg,
-            seed = useSeed,
-            sampler = sampler,
-            scheduler = scheduler,
-            cb = { cur, total -> onProgress(cur, total) },
-        ) ?: throw IllegalStateException("生成失败（sd.cpp 返回空）")
+        // 推理是同步阻塞的 native 调用（一张几百秒），绝不能跟调用方同线程——
+        // 调用方基本都在 Dispatchers.Main，否则整个 UI 会卡死到出图为止。
+        val bmp = withContext(Dispatchers.IO) {
+            SdCppEngine.render(
+                handle = h,
+                prompt = prompt,
+                negative = negative,
+                loraPath = lora?.absolutePath,
+                loraScale = 1.0f,
+                width = dim,
+                height = dim,
+                steps = steps,
+                cfg = cfg,
+                seed = useSeed,
+                sampler = sampler,
+                scheduler = scheduler,
+                cb = { cur, total -> onProgress(cur, total) },
+            )
+        } ?: throw IllegalStateException("生成失败（sd.cpp 返回空）")
         onProgress(steps, steps)
         return ImageData(bmp, useSeed)
     }
