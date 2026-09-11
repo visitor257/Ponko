@@ -279,6 +279,9 @@ class MainActivity : Activity() {
                 refreshDrawModels()
             }
         }
+        dpg.onStatus = { text, isError ->
+            runOnUiThread { setStatus(text, if (isError) C_ERR else C_WARN) }
+        }
         // 注意：不在启动时自动加载绘图模型——native 加载失败会直接崩掉启动流程。
         // 改为在「模型」页手动点「加载绘图模型」（见下方按钮）。
         tabDraw = ScrollView(this).apply {
@@ -530,6 +533,7 @@ class MainActivity : Activity() {
                             dpg.llmLoaded = false
                             updateThinkEnabled()
                             refreshDrawModels()
+                            setStatus("绘图模型已就绪", C_OK)
                             toast("绘图模型已加载：到对话页输入就是正面提示词")
                         } else {
                             setStatus("绘图模型加载失败", C_ERR)
@@ -550,6 +554,7 @@ class MainActivity : Activity() {
                     drawModelStatus?.text = "未加载"
                     drawMode = false
                     updateThinkEnabled()
+                    setStatus("未加载模型", C_IDLE)
                     toast("绘图模型已卸载")
                 }
             },
@@ -1122,6 +1127,7 @@ class MainActivity : Activity() {
                 drawMode = true
                 dpg.llmLoaded = false
                 updateThinkEnabled()
+                setStatus("绘图模型已就绪", C_OK)
                 toast("已加载：${f.name}")
             } else {
                 setStatus("绘图模型加载失败", C_ERR)

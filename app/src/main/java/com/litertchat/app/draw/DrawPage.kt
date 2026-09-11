@@ -56,6 +56,9 @@ class DrawPage(
     /** 外部（MainActivity）通知：当前已加载语言模型。用于“生成”按钮给出更准确的提示。 */
     var llmLoaded: Boolean = false
 
+    /** 状态回调：把绘图页的进度/结果同步到主界面顶栏。(文本, 是否出错) */
+    var onStatus: ((String, Boolean) -> Unit)? = null
+
     /** 运行方式：true = 尝试 GPU（Vulkan），false = 纯 CPU。由模型页的“运行方式”决定。 */
     var useGpu: Boolean = false
 
@@ -352,19 +355,38 @@ class DrawPage(
         genBtn.isEnabled = false
         progressText.visibility = View.VISIBLE
         progressText.text = "正在生成…（纯 CPU，512×512 可能要几分钟）"
+        onStatus?.invoke("绘图生成中（纯 CPU，可能要几分钟）…", false)
+        val startedAt = System.currentTimeMillis()
         scope.launch {
+            // 逐秒报“已耗时”，否则 llmedge 不报中间进度，看着像卡死
+            val ticker = launch {
+                while (true) {
+                    delay(1000)
+                    val sec = (System.currentTimeMillis() - startedAt) / 1000
+                    progressText.post {
+                        progressText.text = "正在生成… 已 ${sec} 秒（步数 $curStep/$totalStep）\n纯 CPU 推理，请耐心等，不要切后台"
+                    }
+                }
+            }
             try {
                 val img = generateImage(prompt) { cur, total ->
-                    progressText.post { progressText.text = "正在生成… $cur/$total" }
+                    curStep = cur
+                    totalStep = total
                 }
+                ticker.cancel()
                 val bmp = toBitmap(img)
                 resultImg.post {
                     resultImg.setImageBitmap(bmp)
                     resultImg.visibility = View.VISIBLE
                 }
-                progressText.post { progressText.text = "完成：${img.width}×${img.height}，seed=${img.seed}" }
+                val sec = (System.currentTimeMillis() - startedAt) / 1000
+                progressText.post { progressText.text = "完成：${img.width}×${img.height}，seed=${img.seed}，耗时 ${sec} 秒" }
+                onStatus?.invoke("绘图完成（${sec} 秒）", false)
             } catch (e: Throwable) {
-                progressText.post { progressText.text = "生成失败：${e.message ?: e.javaClass.simpleName}" }
+                ticker.cancel()
+                val sec = (System.currentTimeMillis() - startedAt) / 1000
+                progressText.post { progressText.text = "生成失败（${sec} 秒）：${e.message ?: e.javaClass.simpleName}" }
+                onStatus?.invoke("绘图失败：${e.message ?: e.javaClass.simpleName}", true)
             } finally {
                 genBtn.post { genBtn.isEnabled = true }
             }
@@ -372,6 +394,9 @@ class DrawPage(
         // 让编译器闭嘴（dpg 未使用）
         if (false) println(dpg)
     }
+
+    private var curStep = 0
+    private var totalStep = 0
 
     /** 供对话页复用的生成入口：把输入当正面提示词，其余参数取绘图页当前设置。 */
     suspend fun generateImage(
