@@ -268,10 +268,13 @@ class MainActivity : Activity() {
 
         // 四页内容：对话 / 模型 / 绘图 / 关于（底部菜单切换）
         tabChat = buildChatPage()
-        tabModels = buildModelsPage()
-        tabSettings = buildSettingsPage()
+        // 注意顺序：DrawPage 必须先建好并赋给 drawPage，再建「模型」页。
+        // 「模型」页构建时就地读取 drawPage 的状态（LoRA 列表 / 已复制绘图模型清单），
+        // 顺序反了会拿到 null，每次启动都显示成「未安装」。
         val dpg = DrawPage(this, scope, C_PRIMARY, C_TEXT, C_SUBTEXT)
         drawPage = dpg
+        tabModels = buildModelsPage()
+        tabSettings = buildSettingsPage()
         // 绘图模型就绪 → 进入绘图模式（对话页输入即正面提示词）
         dpg.onPipelineReady = {
             // 回调可能来自 IO 线程，UI 操作统一回主线程
