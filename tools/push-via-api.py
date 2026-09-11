@@ -6,8 +6,8 @@
 背景：某些网络环境下 github.com 的 git 端点（smart HTTP）连不上或极慢，
 但 api.github.com 正常。此脚本用 Git Data API 完成等价推送：
 
-  1. 取本地 HEAD 相对其父提交的变更文件清单
-  2. 逐个创建 blob（只传变化的文件）
+  1. 取本地 HEAD 的完整文件树，与远端最新树逐文件比对
+  2. 只上传内容不同的文件（含新增），并删除远端多出来的文件
   3. 以远端最新提交的 tree 为 base 创建新 tree
   4. 创建 commit（沿用本地的作者/时间/提交信息）
   5. 更新远端分支引用
@@ -100,21 +100,42 @@ def main():
               % (remote_head[:7], (parent or "-")[:7]))
     base_tree = api("GET", "/repos/%s/git/commits/%s" % (REPO, remote_head))["tree"]["sha"]
 
-    changed = [x for x in git("show", "--name-only", "--format=", head).split("\n") if x.strip()]
-    print("变更文件 %d 个" % len(changed))
+    # 关键：不能只推「HEAD 相对父提交的 diff」。
+    # 远端若落后多个提交（本机 git push 不通时很常见），只推最后一个提交的改动
+    # 会把中间所有提交静默丢掉（实际发生过：远端一度停在几十个提交之前）。
+    # 改为对比「本地 HEAD 的完整文件树」与「远端最新文件树」：
+    # 只上传真正不同的文件，并删除远端多出来的文件。
+    remote_tree = api("GET", "/repos/%s/git/trees/%s?recursive=1" % (REPO, remote_head))["tree"]
+    remote_files = {e["path"]: e["sha"] for e in remote_tree if e["type"] == "blob"}
+
+    local_files = {}
+    for line in git("ls-tree", "-r", "HEAD").splitlines():
+        if not line.strip():
+            continue
+        meta, path = line.split("\t", 1)
+        mode, _typ, sha = meta.split()
+        local_files[path] = (mode, sha)
 
     entries = []
-    for f in changed:
-        p = os.path.join(ROOT, f.replace("/", os.sep))
-        if not os.path.exists(p):
-            entries.append({"path": f, "mode": "100644", "type": "blob", "sha": None})
-            print("  删除", f)
+    for path, (mode, sha) in sorted(local_files.items()):
+        if remote_files.get(path) == sha:
             continue
+        p = os.path.join(ROOT, path.replace("/", os.sep))
         data = open(p, "rb").read()
         blob = api("POST", "/repos/%s/git/blobs" % REPO,
                    {"content": base64.b64encode(data).decode(), "encoding": "base64"})
-        entries.append({"path": f, "mode": "100644", "type": "blob", "sha": blob["sha"]})
-        print("  上传 %s (%dB)" % (f, len(data)))
+        entries.append({"path": path, "mode": mode, "type": "blob", "sha": blob["sha"]})
+        print("  更新 %s (%dB)" % (path, len(data)))
+
+    for path in sorted(remote_files):
+        if path not in local_files:
+            entries.append({"path": path, "mode": "100644", "type": "blob", "sha": None})
+            print("  删除 %s" % path)
+
+    print("需要变更 %d 个文件（本地共 %d 个）" % (len(entries), len(local_files)))
+    if not entries:
+        print("两边文件内容一致，无需提交。")
+        return 0
 
     tree = api("POST", "/repos/%s/git/trees" % REPO, {"base_tree": base_tree, "tree": entries})
     commit = api("POST", "/repos/%s/git/commits" % REPO, {
