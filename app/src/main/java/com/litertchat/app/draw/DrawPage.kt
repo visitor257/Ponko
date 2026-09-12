@@ -119,7 +119,9 @@ class DrawPage(
     private lateinit var loraCheck: CheckBox
     private lateinit var loraHint: TextView
     private lateinit var genBtn: Button
-    private lateinit var cancelBtn: Button
+
+    /** 是否正在生成（同一个按钮在「开始生成 / 中断生成」之间切换） */
+    private var generating = false
     private lateinit var progressText: TextView
     private lateinit var progressBar: ProgressBar
 
@@ -202,6 +204,31 @@ class DrawPage(
         promptCard.addView(negEdit, matchWrap(top = 4))
         paramPane.addView(promptCard)
 
+        // ---- 生成 / 中断（同一个按钮），放在提示词与参数之间，方便盯着进度 ----
+        genBtn = Button(c).apply {
+            text = "开始生成"
+            setBackgroundColor(primary)
+            setTextColor(Color.WHITE)
+            typeface = Typeface.DEFAULT_BOLD
+            setOnClickListener { if (generating) doCancel() else generateFromUi() }
+        }
+        paramPane.addView(genBtn, matchWrap(top = 2))
+
+        progressText = TextView(c).apply {
+            textSize = 12f
+            setTextColor(subText)
+            visibility = View.GONE
+            setPadding(0, dp(8), 0, 0)
+        }
+        paramPane.addView(progressText)
+
+        progressBar = ProgressBar(c, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            progress = 0
+            visibility = View.GONE
+        }
+        paramPane.addView(progressBar, matchWrap(top = 4))
+
         // ---- 参数 ----
         val paramCard = card()
         paramCard.addView(title("参数"))
@@ -260,42 +287,6 @@ class DrawPage(
         }
         paramCard.addView(loraHint)
         paramPane.addView(paramCard)
-
-        // ---- 生成 ----
-        genBtn = Button(c).apply {
-            text = "开始生成"
-            setBackgroundColor(primary)
-            setTextColor(Color.WHITE)
-            typeface = Typeface.DEFAULT_BOLD
-            setOnClickListener { generateFromUi() }
-        }
-        paramPane.addView(genBtn, matchWrap(top = 4))
-
-        cancelBtn = Button(c).apply {
-            text = "取消生成"
-            setTextColor(subText)
-            visibility = View.GONE
-            setOnClickListener {
-                cancel()
-                progressText.text = "正在中断…（当前采样步结束后生效）"
-            }
-        }
-        paramPane.addView(cancelBtn, matchWrap(top = 4))
-
-        progressText = TextView(c).apply {
-            textSize = 12f
-            setTextColor(subText)
-            visibility = View.GONE
-            setPadding(0, dp(8), 0, 0)
-        }
-        paramPane.addView(progressText)
-
-        progressBar = ProgressBar(c, null, android.R.attr.progressBarStyleHorizontal).apply {
-            max = 100
-            progress = 0
-            visibility = View.GONE
-        }
-        paramPane.addView(progressBar, matchWrap(top = 6))
 
         // ---- 结果面板 ----
         resultPane = LinearLayout(c).apply {
@@ -719,14 +710,13 @@ class DrawPage(
             Toast.makeText(c, "先写点提示词吧", Toast.LENGTH_SHORT).show()
             return
         }
-        genBtn.isEnabled = false
+        setGenerating(true)
         progressText.visibility = View.VISIBLE
         progressText.text = "正在准备…（首次会先加载模型，1GB+ 可能要几分钟）"
         curStep = 0
         totalStep = 0
         progressBar.progress = 0
         progressBar.visibility = View.VISIBLE
-        cancelBtn.visibility = View.VISIBLE
         onStatus?.invoke("绘图生成中…", false)
         val startedAt = System.currentTimeMillis()
         scope.launch {
@@ -772,8 +762,7 @@ class DrawPage(
                     onStatus?.invoke("绘图失败：${e.message ?: e.javaClass.simpleName}", true)
                 }
             } finally {
-                genBtn.post { genBtn.isEnabled = true }
-                cancelBtn.post { cancelBtn.visibility = View.GONE }
+                setGenerating(false)
                 progressBar.post { progressBar.visibility = View.GONE }
             }
         }
@@ -853,6 +842,22 @@ class DrawPage(
     }
 
     fun toBitmap(img: ImageData): Bitmap = img.bitmap
+
+    /** 点「中断生成」：先给个即时反馈，再请求 native 中断 */
+    private fun doCancel() {
+        cancel()
+        progressText.text = "正在中断…（当前采样步结束后生效）"
+    }
+
+    /** 统一切换按钮的「开始生成 / 中断生成」外观与行为 */
+    private fun setGenerating(g: Boolean) {
+        generating = g
+        genBtn.post {
+            genBtn.isEnabled = true
+            genBtn.text = if (g) "中断生成" else "开始生成"
+            genBtn.setBackgroundColor(if (g) 0xFFD9534F.toInt() else primary)
+        }
+    }
 
     fun cancel() {
         cancelRequested = true
