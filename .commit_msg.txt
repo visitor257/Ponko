@@ -1,6 +1,1 @@
-合规修正合并进 1.1.1：补齐第三方组件声明（撤回 1.1.2 版本号）
-
-- 版本号保持 1.1.1（versionCode 3）——合规声明属 1.1.1 范围内的补充，不另起版本
-- NOTICE / README / README.en.md / App「关于」页（中英）补齐第三方组件清单
-- 清理 tools/icon/out/preview/ 下的开发预览图
-- tools/gh-release.py：固定按本地 HEAD 打 tag
+文档：NOTICE 增加英文版（中英同文件，避免两份不同步）

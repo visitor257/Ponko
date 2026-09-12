@@ -1,6 +1,120 @@
 Ponko
 Copyright (c) 2026 visitor257
 
+==========================================================================
+  English
+==========================================================================
+
+--------------------------------------------------------------------------
+Source code
+--------------------------------------------------------------------------
+
+This project's source code is released under the MIT License.
+See the LICENSE file for the full text.
+
+--------------------------------------------------------------------------
+Artwork (NOT covered by the MIT License)
+--------------------------------------------------------------------------
+
+The following artwork is not covered by the MIT License:
+
+  - Application icon: app/src/main/res/mipmap-*, app/src/main/res/drawable-*
+  - Character portrait: app/src/main/res/drawable-nodpi/about_portrait.png
+  - Original drawing: tools/icon/source.png
+
+Copyright in the artwork listed above is owned by the author.
+All rights reserved.
+
+You may use the artwork for non-commercial purposes such as introducing,
+reviewing, or referencing this project, provided that you do not modify it
+and that you credit the source.
+
+You may not use the artwork for any commercial purpose without the author's
+prior written permission. To obtain a commercial license, please contact the
+author through the project repository.
+
+--------------------------------------------------------------------------
+Name
+--------------------------------------------------------------------------
+
+"Ponko" is the name of this project. Copyright in the name is owned by the
+author. The author does not claim trademark rights in the name.
+
+--------------------------------------------------------------------------
+Third-party components
+--------------------------------------------------------------------------
+
+This project includes or links against the following third-party open-source
+components. Copyright in each component is owned by its respective authors,
+and each is distributed under its own license. Full license texts are
+available in the corresponding source directories or license files.
+
+A. Bundled source code (distributed with this repository, under app/src/main/cpp/)
+
+  - stable-diffusion.cpp
+      License: MIT License
+      Copyright: Copyright (c) 2023 leejet
+      Source: https://github.com/leejet/stable-diffusion.cpp
+      License text: app/src/main/cpp/sd/LICENSE
+      Note: To reduce size, this project trims the parts of its source code
+            that are not used here (only the CLIP tokenizer vocabulary is
+            kept) and applies minor adaptations for the Android/CMake build.
+            The trimmed and adapted source is still distributed under the
+            MIT License.
+
+  - ggml
+      License: MIT License
+      Copyright: Copyright (c) 2023-2024 The ggml authors
+      Source: https://github.com/ggerganov/ggml
+      License text: app/src/main/cpp/sd/ggml/LICENSE
+
+  - Third-party files bundled with stable-diffusion.cpp (thirdparty/)
+      - stb_image.h / stb_image_write.h: Public Domain or MIT
+      - json.hpp (JSON for Modern C++): MIT License
+      - httplib.h (cpp-httplib): MIT License
+      - miniz.h: MIT License
+      - darts_clone: BSD 3-Clause License
+        License text: app/src/main/cpp/sd/thirdparty/LICENSE.darts_clone.txt
+
+B. Binary dependencies (fetched by Gradle from trusted repositories; not
+   distributed with this repository)
+
+  - LiteRT-LM (com.google.ai.edge.litertlm:litertlm-android)
+      License: Apache License 2.0     Copyright: Google LLC
+  - Android bindings for llama.cpp (net.ladenthin:llama-android)
+      License: MIT License            Copyright: Copyright (c) 2023-2024 Georgi Gerganov
+  - Markwon (io.noties.markwon:*)
+      License: Apache License 2.0     Copyright: Copyright (c) 2017 Noties
+  - Kotlin / kotlinx.coroutines (org.jetbrains.kotlinx:*)
+      License: Apache License 2.0     Copyright: Copyright (c) JetBrains s.r.o.
+  - AndroidX / Material components
+      License: Apache License 2.0     Copyright: Copyright (c) The Android Open Source Project
+
+C. NDK runtime libraries distributed with this repository
+   (app/src/main/jniLibs/arm64-v8a/)
+
+  - libomp.so (LLVM OpenMP runtime)
+  - libc++_shared.so (LLVM libc++ runtime)
+      License: Apache License 2.0 with LLVM Exceptions
+      Copyright: Copyright (c) The LLVM Project
+      Note: Taken from the Android NDK (android-ndk-r27). The build output of
+            stable-diffusion.cpp requires the OpenMP runtime. Distribution
+            follows the terms of the LLVM license.
+
+--------------------------------------------------------------------------
+Note
+--------------------------------------------------------------------------
+
+This project does not include any Stable Diffusion model weights.
+Drawing models (.gguf), chat models (.litertlm / .gguf) and LoRA files are
+obtained by the user and loaded at runtime; their licensing and terms of use
+are governed by their respective distributors.
+
+
+==========================================================================
+  中文
+==========================================================================
+
 --------------------------------------------------------------------------
 源代码
 --------------------------------------------------------------------------
