@@ -5,6 +5,8 @@ plugins {
 android {
     namespace = "com.litertchat.app"
     compileSdk = 36
+    // 自编 stable-diffusion.cpp 所用的 NDK（须与 jniLibs 里的 libomp.so 同源）
+    ndkVersion = "27.3.13750724"
 
     defaultConfig {
         applicationId = "com.litertchat.app"
@@ -26,6 +28,15 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+        }
+    }
+
+    // 自编 stable-diffusion.cpp：源码在 src/main/cpp（含内联 ggml），
+    // 每次 assembleRelease 由 NDK 现场编译，产物直接进 APK，不再手工往 jniLibs 拷贝。
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.31.6"
         }
     }
 
@@ -51,7 +62,7 @@ dependencies {
     implementation("io.noties.markwon:ext-tables:4.6.2")
     implementation("io.noties.markwon:ext-strikethrough:4.6.2")
     implementation("io.noties.markwon:linkify:4.6.2")
-    // 绘图（文生图）：自编的 stable-diffusion.cpp（arm64-v8a）。native 库直接放在
-    // app/src/main/jniLibs/arm64-v8a/：libstable-diffusion.so + libponko_sd.so(JNI 桥) + libomp.so
+    // 绘图（文生图）：自编的 stable-diffusion.cpp（arm64-v8a），源码在 src/main/cpp，
+    // 由 NDK/CMake 现场编译出 libstable-diffusion.so + libponko_sd.so（JNI 桥）。
     // 相比现成 AAR，这里能直接控制线程数 / 采样器 / 调度器 / LoRA / 量化类型 / 取消。
 }
