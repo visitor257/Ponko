@@ -185,6 +185,11 @@ class MainActivity : Activity() {
     /** 中断后 LiteRT 会话可能已不可用：标记下一条消息发送前静默重建。 */
     private var convNeedsRebuild = false
 
+    /** 创建 LiteRT 会话时是否注入了 <draw> 绘图命令提示。
+     *  加载/卸载绘图模型会改变这个能力，而 LiteRT 的 system 提示只在建会话时写入，
+     *  所以能力变化后必须重建会话，否则模型根本不知道自己能画图。 */
+    private var convDrawCapable = false
+
     /** GGUF（llama.cpp）后端实例；非空表示当前加载的是 .gguf 模型。 */
     private var llamaModel: LlamaModel? = null
     private var ggufIterator: LlamaIterator? = null
@@ -1452,6 +1457,7 @@ class MainActivity : Activity() {
                         llamaModel = null
                         conversation = conv
                         convThinking = thinking
+                        convDrawCapable = canDrawFromChat
                         setStatus("对话模型已加载（LiteRT · $backendName）", C_OK)
                     }
                 }
@@ -1672,6 +1678,7 @@ class MainActivity : Activity() {
             )
         }
         convThinking = thinking
+        convDrawCapable = canDrawFromChat
         if (!silent) {
             addSystemHint(
                 if (thinking) "🤔 已切换为思考模式（会话已按新模式重建，历史保留）"
@@ -1690,6 +1697,7 @@ class MainActivity : Activity() {
             val thinking = thinkCheck.isChecked
             conversation = eng.createConversation(configFor(current, thinking))
             convThinking = thinking
+            convDrawCapable = canDrawFromChat
         }
         chatContainer.removeAllViews()
         autoFollow = true
@@ -1980,13 +1988,15 @@ class MainActivity : Activity() {
         }
         var conv: Conversation? = null
         if (!isGgufRun) {
-            if (convNeedsRebuild) {
+            val needThinkingRebuild = convThinking != thinkCheck.isChecked
+            // 绘图能力开关变了（加载/卸载绘图模型）也要重建：
+            // system 里的 <draw> 提示只在建会话时写入，不重建则模型不知道能画图
+            val needCapRebuild = convDrawCapable != canDrawFromChat
+            if (convNeedsRebuild || needThinkingRebuild || needCapRebuild) {
                 // 上一轮被中断：cancelProcess() 之后会话可能已不可用，静默用历史重建
                 convNeedsRebuild = false
-                rebuildConversation(silent = true)
-            } else if (convThinking != thinkCheck.isChecked) {
-                // 思考开关变了 → 发送前重建会话，否则新设置不生效
-                rebuildConversation()
+                // 只有「思考开关变化」需要给用户可见提示，中断恢复/能力变化都静默重建
+                rebuildConversation(silent = !needThinkingRebuild)
             }
             conv = conversation ?: run { toast("会话不可用，请重新加载模型"); return }
         }
