@@ -9,16 +9,16 @@ import urllib.request
 REPO = "visitor257/Ponko"
 TOKFILE = r"C:\Users\Administrator\Desktop\git_repo_tok.txt"
 APK = r"C:\Users\Administrator\.qclaw\workspace-agent-e522fb09\LiteRT-Chat\app\build\outputs\apk\release\Ponko-release.apk"
-TAG = "v1.1.2"
-NAME = "Ponko v1.1.2"
+TAG = "v1.1.1"
+NAME = "Ponko v1.1.1"
 
-BODY = """Ponko v1.1.2 —— 本地 AI App（Android）：聊天 + 绘图
+BODY = """Ponko v1.1.1 —— 本地 AI App（Android）：聊天 + 绘图
 
 所有推理都在本机离线运行，不联网、无遥测，对话记录只保存在设备本地。
 请先阅读 [README](https://github.com/visitor257/Ponko#readme)。
 
-## 本次修正（v1.1.1 → v1.1.2）
-- **第三方声明补全**：NOTICE 与 App「关于」页补齐第三方组件清单（stable-diffusion.cpp、ggml、LiteRT-LM、llama.cpp、Markwon、Kotlin/AndroidX、LLVM 运行时），标注各自许可证与源码位置
+## v1.1.1 亮点（含 2026-09-13 补充）
+- **第三方声明补全**（2026-09-13 补充）：NOTICE / README / App「关于」页补齐第三方组件清单（stable-diffusion.cpp、ggml、LiteRT-LM、llama.cpp、Markwon、Kotlin/AndroidX、LLVM 运行时），标注许可证与源码位置
 - **合规说明**：注明 stable-diffusion.cpp（MIT）源码随项目分发，并说明为控制体积对其词表做了裁剪；不含任何模型权重文件
 - 英文界面「关于」页同步更新
 

@@ -142,7 +142,7 @@
 <string name="s_139">Clear the current chat?</string>
 <string name="s_140">Source code: MIT License\nArtwork (app icon, character art, original drawing): © the author, all rights reserved, not covered by MIT.\nThird-party components (each © its authors): LiteRT-LM (Apache-2.0), llama.cpp (MIT), stable-diffusion.cpp (MIT), ggml (MIT), Markwon (Apache-2.0), Kotlin/AndroidX (Apache-2.0). The sources of stable-diffusion.cpp and ggml are distributed with this project under app/src/main/cpp/; see the NOTICE file for the full list and licenses.</string>
 <string name="s_141">Tap the image to save it to your gallery</string>
-<string name="s_142">Version 1.1.2</string>
+<string name="s_142">Version 1.1.1</string>
 <string name="s_143">Generating (tap ■ to interrupt)…</string>
 <string name="s_144">Generating, please wait</string>
 <string name="s_145">Generation error</string>
