@@ -669,6 +669,7 @@ class MainActivity : Activity() {
         val card = card()
 
         card.addView(pageTitle("关于"))
+        card.addView(hintText("版本 1.1"))
         val portrait = ImageView(this).apply {
             setImageResource(R.drawable.about_portrait)
             adjustViewBounds = true
@@ -688,7 +689,7 @@ class MainActivity : Activity() {
         card.addView(hintText("visitor257"))
 
         card.addView(pageTitle("项目"), matchWrap().apply { topMargin = dp(16) })
-        card.addView(linkText("github.com/visitor257/Ponko（点这里打开）", "https://github.com/visitor257/Ponko"))
+        card.addView(linkText("打开 Ponko 的 GitHub 项目主页", "https://github.com/visitor257/Ponko"))
 
         sv.addView(card, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
