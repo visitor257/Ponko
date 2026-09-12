@@ -207,4 +207,64 @@
     <string name="s_204">🤔 已切换为思考模式（会话已按新模式重建，历史保留）</string>
     <string name="s_205">🤔 思考过程（点击展开）</string>
     <string name="s_206">🤔 思考过程（点击收起）</string>
+    <string name="v_001">%1$s 轮</string>
+    <string name="v_002">模型：%1$s（%2$s）</string>
+    <string name="v_003">模型文件已就绪：%1$s</string>
+    <string name="v_004">复制失败：%1$s</string>
+    <string name="v_005">已选用 %1$s（当前加载的是 %2$s，先点「卸载绘图模型」再加载）</string>
+    <string name="v_006">已选用 %1$s，点「加载绘图模型」开始</string>
+    <string name="v_007">正在从 %1$s 下载…</string>
+    <string name="v_008">正在从 %1$s 下载… %2$s%%（%3$s / %4$s）</string>
+    <string name="v_009">正在从 %1$s 下载… %2$s</string>
+    <string name="v_010">已删除 %1$s 个 LoRA</string>
+    <string name="v_011">%1$s\n大小：%2$s\n删除后需重新选择原文件夹才会恢复。</string>
+    <string name="v_012">已删除 %1$s</string>
+    <string name="v_013">模型：%1$s（%2$s）</string>
+    <string name="v_014">%1$s\n大小：%2$s\n删除后需重新选择原文件才会恢复。</string>
+    <string name="v_015">对话模型已加载（LiteRT · %1$s）</string>
+    <string name="v_016">加载失败：%1$s</string>
+    <string name="v_017">按历史重建会话失败，已清空上下文：%1$s</string>
+    <string name="v_018">该回答之后的 %1$s 轮对话已丢弃，正在重新生成</string>
+    <string name="v_019">第 %1$s/%2$s 步 · </string>
+    <string name="v_020">🎨 正在绘制…%1$s已 %2$s 秒</string>
+    <string name="v_021">绘图 %1$s/%2$s</string>
+    <string name="v_022">绘图失败：%1$s</string>
+    <string name="v_023">❌ 绘图失败：%1$s</string>
+    <string name="v_024">(出错) %1$s</string>
+    <string name="v_025">生成出错：%1$s</string>
+    <string name="v_026">已启用：%1$s（%2$s MB）</string>
+    <string name="v_027">已安装（未启用）：%1$s（%2$s MB）</string>
+    <string name="v_028">已启用 %1$s：按少步出图。若画面发灰/失真，把步数调到 4~8、CFG 调到 1.5~2</string>
+    <string name="v_029">已安装 %1$s，勾选后启用（约 5 倍加速）</string>
+    <string name="v_030">下载失败：HTTP %1$s（可换另一个源试试）</string>
+    <string name="v_031">下载失败：文件不完整（%1$s 字节）</string>
+    <string name="v_032">下载失败：%1$s</string>
+    <string name="v_033">正在复制 %1$s…</string>
+    <string name="v_034">正在复制 LoRA %1$s…</string>
+    <string name="v_035">%1$s 个模型文件</string>
+    <string name="v_036">%1$s 个 LoRA</string>
+    <string name="v_037">已复制 %1$s：%2$s</string>
+    <string name="v_038">导入失败：%1$s</string>
+    <string name="v_039">E 顶层异常：%1$s: %2$s\n</string>
+    <string name="v_040">加载失败：%1$s</string>
+    <string name="v_041">1 设备：abi=%1$s sdk=%2$s 厂商=%3$s 机型=%4$s</string>
+    <string name="v_042">1 内存：maxHeap=%1$sMB freeDisk=%2$sMB</string>
+    <string name="v_043">3 native 加载失败：%1$s</string>
+    <string name="v_044">native 库加载失败：%1$s</string>
+    <string name="v_045">4 创建 sd.cpp 上下文（CPU · %1$s 线程）</string>
+    <string name="v_046">5 创建失败：%1$s: %2$s</string>
+    <string name="v_047">加载失败：%1$s</string>
+    <string name="v_048">当前模型量化：%1$s（%2$s）</string>
+    <string name="v_049"> · 第 %1$s/%2$s 步</string>
+    <string name="v_050">%1$s%2$s · 已 %3$s 秒</string>
+    <string name="v_051">%1$s×%2$s · seed %3$s · 耗时 %4$s 秒</string>
+    <string name="v_052">完成：%1$s×%2$s，seed=%3$s，耗时 %4$s 秒</string>
+    <string name="v_053">绘图完成（%1$s 秒）</string>
+    <string name="v_054">已中断（%1$s 秒）</string>
+    <string name="v_055">绘图失败：%1$s</string>
+    <string name="v_056">0 选中模型：%1$s（%2$s MB，量化=%3$s）</string>
+    <string name="v_057">0 VAE：%1$s（%2$s MB）</string>
+    <string name="v_058">0 LoRA：%1$s（%2$s MB）</string>
+    <string name="v_059">生成失败（%1$s 秒）：%2$s</string>
+    <string name="v_060">完整堆栈见「查看加载日志」</string>
 </resources>

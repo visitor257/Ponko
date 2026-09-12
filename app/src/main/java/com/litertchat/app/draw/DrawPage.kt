@@ -419,8 +419,8 @@ class DrawPage(
     fun loraSummary(): String {
         val a = activeLora() ?: return c.getString(R.string.s_117)
         val size = "%.1f".format(a.length() / 1048576.0)
-        return if (useLora) "已启用：${a.nameWithoutExtension}（$size MB）"
-        else "已安装（未启用）：${a.nameWithoutExtension}（$size MB）"
+        return if (useLora) c.getString(R.string.v_026, (a.nameWithoutExtension), (size))
+        else c.getString(R.string.v_027, (a.nameWithoutExtension), (size))
     }
 
     fun deleteLora(f: File): Boolean = runCatching {
@@ -435,8 +435,8 @@ class DrawPage(
             val a = activeLora()
             loraHint.text = when {
                 a == null -> c.getString(R.string.s_118)
-                useLora -> "已启用 ${a.nameWithoutExtension}：按少步出图。若画面发灰/失真，把步数调到 4~8、CFG 调到 1.5~2"
-                else -> "已安装 ${a.nameWithoutExtension}，勾选后启用（约 5 倍加速）"
+                useLora -> c.getString(R.string.v_028, (a.nameWithoutExtension))
+                else -> c.getString(R.string.v_029, (a.nameWithoutExtension))
             }
         } catch (_: Throwable) {}
     }
@@ -473,7 +473,7 @@ class DrawPage(
             }
             conn.connect()
             val code = conn.responseCode
-            if (code !in 200..299) return@withContext "下载失败：HTTP $code（可换另一个源试试）"
+            if (code !in 200..299) return@withContext c.getString(R.string.v_030, (code))
             val total = conn.contentLengthLong
             conn.inputStream.use { ins ->
                 tmp.outputStream().use { outs ->
@@ -495,7 +495,7 @@ class DrawPage(
             }
             if (tmp.length() < minBytes) {
                 runCatching { tmp.delete() }
-                return@withContext "下载失败：文件不完整（${tmp.length()} 字节）"
+                return@withContext c.getString(R.string.v_031, (tmp.length()))
             }
             if (dest.exists()) dest.delete()
             if (!tmp.renameTo(dest)) {
@@ -506,7 +506,7 @@ class DrawPage(
             null
         } catch (e: Throwable) {
             runCatching { tmp.delete() }
-            "下载失败：${e.message ?: e.javaClass.simpleName}"
+            c.getString(R.string.v_032, (e.message ?: e.javaClass.simpleName))
         }
     }
 
@@ -561,7 +561,7 @@ class DrawPage(
 
                 var copied = 0
                 for ((name, uri) in ggufs) {
-                    onStage("正在复制 $name…")
+                    onStage(c.getString(R.string.v_033, (name)))
                     try {
                         c.contentResolver.openInputStream(uri)?.use { ins ->
                             File(root, name).outputStream().use { outs -> ins.copyTo(outs, 1 shl 20) }
@@ -575,7 +575,7 @@ class DrawPage(
                 var loraCopied = 0
                 val loraDest = loraDir()
                 for ((name, uri) in loras) {
-                    onStage("正在复制 LoRA $name…")
+                    onStage(c.getString(R.string.v_034, (name)))
                     try {
                         c.contentResolver.openInputStream(uri)?.use { ins ->
                             File(loraDest, name).outputStream().use { outs -> ins.copyTo(outs, 1 shl 20) }
@@ -591,19 +591,19 @@ class DrawPage(
                 // 只复制、不在导入时加载：native 加载可能崩（实测过），
                 // 留给用户在「模型」页手动点「加载绘图模型」，崩了也不会连累启动。
                 val parts = buildList {
-                    if (copied > 0) add("$copied 个模型文件")
-                    if (loraCopied > 0) add("$loraCopied 个 LoRA")
+                    if (copied > 0) add(c.getString(R.string.v_035, (copied)))
+                    if (loraCopied > 0) add(c.getString(R.string.v_036, (loraCopied)))
                 }.joinToString("、")
                 val names = ggufs.joinToString("、") { it.first }
                 statusText.post {
-                    statusText.text = "已复制 $parts：$names" +
+                    statusText.text = c.getString(R.string.v_037, (parts), (names)) +
                         (if (loraCopied > 0) c.getString(R.string.s_195) else "") +
                         c.getString(R.string.s_027)
                 }
                 // 约定：返回 null = 成功（调用方据此刷新列表并提示）；失败才返回错误文案
                 null
             } catch (e: Throwable) {
-                "导入失败：${e.message ?: e.javaClass.simpleName}"
+                c.getString(R.string.v_038, (e.message ?: e.javaClass.simpleName))
             }
         }
     }
@@ -615,10 +615,10 @@ class DrawPage(
         } catch (e: Throwable) {
             runCatching {
                 File(File(c.filesDir, DIR_NAME), ".loadstage")
-                    .appendText("E 顶层异常：${e.javaClass.name}: ${e.message}\n" +
+                    .appendText(c.getString(R.string.v_039, (e.javaClass.name), (e.message)) +
                         android.util.Log.getStackTraceString(e) + "\n")
             }
-            "加载失败：${e.message ?: e.javaClass.simpleName}"
+            c.getString(R.string.v_040, (e.message ?: e.javaClass.simpleName))
         }
     }
 
@@ -661,23 +661,23 @@ class DrawPage(
         }
 
         runCatching { stageFile.writeText("") }
-        stage("0 选中模型：${main.name}（${main.length() / 1048576} MB，量化=${GgufProbe.quantType(main) ?: "未知"}）")
-        if (vae != null) stage("0 VAE：${vae.name}（${vae.length() / 1048576} MB）")
-        activeLora()?.let { stage("0 LoRA：${it.name}（${it.length() / 1048576} MB）") }
-        stage("1 设备：abi=${android.os.Build.SUPPORTED_ABIS.firstOrNull()} sdk=${android.os.Build.VERSION.SDK_INT} 厂商=${android.os.Build.MANUFACTURER} 机型=${android.os.Build.MODEL}")
-        stage("1 内存：maxHeap=${Runtime.getRuntime().maxMemory() / 1048576}MB freeDisk=${root.usableSpace / 1048576}MB")
+        stage(c.getString(R.string.v_056, (main.name), (main.length() / 1048576), (GgufProbe.quantType(main) ?: c.getString(R.string.s_119))))
+        if (vae != null) stage(c.getString(R.string.v_057, (vae.name), (vae.length() / 1048576)))
+        activeLora()?.let { stage(c.getString(R.string.v_058, (it.name), (it.length() / 1048576))) }
+        stage(c.getString(R.string.v_041, (android.os.Build.SUPPORTED_ABIS.firstOrNull()), (android.os.Build.VERSION.SDK_INT), (android.os.Build.MANUFACTURER), (android.os.Build.MODEL)))
+        stage(c.getString(R.string.v_042, (Runtime.getRuntime().maxMemory() / 1048576), (root.usableSpace / 1048576)))
 
         // 分步探测：每步都先落盘，后执行
         stage(c.getString(R.string.s_009))
         try {
             SdCppEngine.info().let { stage("3 native OK：$it") }
         } catch (t: Throwable) {
-            stage("3 native 加载失败：${t.message ?: t.javaClass.simpleName}")
+            stage(c.getString(R.string.v_043, (t.message ?: t.javaClass.simpleName)))
             runCatching { stageFile.delete() }
-            return "native 库加载失败：${t.message ?: t.javaClass.simpleName}"
+            return c.getString(R.string.v_044, (t.message ?: t.javaClass.simpleName))
         }
 
-        stage("4 创建 sd.cpp 上下文（CPU · ${nThreads} 线程）")
+        stage(c.getString(R.string.v_045, (nThreads)))
         return try {
             if (sdHandle != 0L) runCatching { SdCppEngine.nativeFree(sdHandle) }
             sdHandle = 0L
@@ -713,9 +713,9 @@ class DrawPage(
             onPipelineReady?.invoke()
             null
         } catch (e: Throwable) {
-            stage("5 创建失败：${e.javaClass.name}: ${e.message}")
+            stage(c.getString(R.string.v_046, (e.javaClass.name), (e.message)))
             runCatching { stageFile.appendText(android.util.Log.getStackTraceString(e) + "\n") }
-            "加载失败：${e.message ?: e.javaClass.simpleName}"
+            c.getString(R.string.v_047, (e.message ?: e.javaClass.simpleName))
         }
     }
 
@@ -758,7 +758,7 @@ class DrawPage(
                 c.getString(R.string.s_103)
             } else {
                 val q = GgufProbe.quantType(m) ?: c.getString(R.string.s_119)
-                "当前模型量化：$q（${m.name}）"
+                c.getString(R.string.v_048, (q), (m.name))
             }
         } catch (_: Throwable) {}
     }
@@ -795,8 +795,8 @@ class DrawPage(
                     val sec = (System.currentTimeMillis() - startedAt) / 1000
                     progressText.post {
                         val phase = if (sec < 8) c.getString(R.string.s_127) else c.getString(R.string.s_129)
-                        val stepInfo = if (totalStep > 0) " · 第 $curStep/$totalStep 步" else ""
-                        progressText.text = "$phase$stepInfo · 已 ${sec} 秒"
+                        val stepInfo = if (totalStep > 0) c.getString(R.string.v_049, (curStep), (totalStep)) else ""
+                        progressText.text = c.getString(R.string.v_050, (phase), (stepInfo), (sec))
                         if (totalStep > 0) {
                             progressBar.progress = (curStep * 100 / totalStep).coerceIn(0, 100)
                         }
@@ -815,21 +815,21 @@ class DrawPage(
                     DrawHistory.add(img)          // 先进历史（内存）
                     lastImage = bmp
                     resultImg.setImageBitmap(bmp)
-                    resultInfo.text = "${img.width}×${img.height} · seed ${img.seed} · 耗时 ${sec} 秒"
+                    resultInfo.text = c.getString(R.string.v_051, (img.width), (img.height), (img.seed), (sec))
                     refreshHistory()
                     switchPane(toResult = true)   // 出图后自动跳到结果页
                 }
-                progressText.post { progressText.text = "完成：${img.width}×${img.height}，seed=${img.seed}，耗时 ${sec} 秒" }
-                onStatus?.invoke("绘图完成（${sec} 秒）", false)
+                progressText.post { progressText.text = c.getString(R.string.v_052, (img.width), (img.height), (img.seed), (sec)) }
+                onStatus?.invoke(c.getString(R.string.v_053, (sec)), false)
             } catch (e: Throwable) {
                 ticker.cancel()
                 val sec = (System.currentTimeMillis() - startedAt) / 1000
                 if (cancelRequested) {
-                    progressText.post { progressText.text = "已中断（${sec} 秒）" }
+                    progressText.post { progressText.text = c.getString(R.string.v_054, (sec)) }
                     onStatus?.invoke(c.getString(R.string.s_154), false)
                 } else {
-                    progressText.post { progressText.text = "生成失败（${sec} 秒）：${e.message ?: e.javaClass.simpleName}\n${"完整堆栈见「查看加载日志」"}" }
-                    onStatus?.invoke("绘图失败：${e.message ?: e.javaClass.simpleName}", true)
+                    progressText.post { progressText.text = c.getString(R.string.v_059, (sec), (e.message ?: e.javaClass.simpleName)) + "\n" + c.getString(R.string.v_060) }
+                    onStatus?.invoke(c.getString(R.string.v_055, (e.message ?: e.javaClass.simpleName)), true)
                 }
             } finally {
                 setGenerating(false)

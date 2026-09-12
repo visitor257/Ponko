@@ -868,7 +868,7 @@ class MainActivity : Activity() {
                 maxLines = 1
             }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
             row.addView(TextView(this).apply {
-                text = "${s.turns.size} 轮"
+                text = getString(R.string.v_001, (s.turns.size))
                 textSize = 11f
                 setTextColor(C_SUBTEXT)
                 setPadding(0, 0, dp(6), 0)
@@ -1090,15 +1090,15 @@ class MainActivity : Activity() {
                 }
                 withContext(Dispatchers.Main) {
                     modelPath = dest.absolutePath
-                    modelInfoText.text = "模型：${dest.name}（${fmtSize(dest.length())}）"
+                    modelInfoText.text = getString(R.string.v_002, (dest.name), (fmtSize(dest.length())))
                     setStatus(getString(R.string.s_093), C_WARN)
                     refreshSavedModels()
-                    toast("模型文件已就绪：${dest.name}")
+                    toast(getString(R.string.v_003, (dest.name)))
                 }
             } catch (e: Throwable) {
                 withContext(Dispatchers.Main) {
                     setStatus(getString(R.string.s_072), C_ERR)
-                    toast("复制失败：${e.message}")
+                    toast(getString(R.string.v_004, (e.message)))
                 }
             } finally {
                 withContext(Dispatchers.Main) { progressBar.visibility = View.GONE; setBusy(false) }
@@ -1269,9 +1269,9 @@ class MainActivity : Activity() {
         drawMainPath = f.absolutePath
         val cur = drawPage?.currentMainName()
         drawModelStatus?.text = if (cur != null && cur != f.name) {
-            "已选用 ${f.name}（当前加载的是 $cur，先点「卸载绘图模型」再加载）"
+            getString(R.string.v_005, (f.name), (cur))
         } else {
-            "已选用 ${f.name}，点「加载绘图模型」开始"
+            getString(R.string.v_006, (f.name))
         }
         refreshDrawToggle()
         refreshDrawModels()
@@ -1321,7 +1321,7 @@ class MainActivity : Activity() {
     private fun startLoraDownload(useMirror: Boolean) {
         val dpg = drawPage ?: return
         val src = if (useMirror) "hf-mirror.com" else "huggingface.co"
-        loraStatusTv?.text = "正在从 $src 下载…"
+        loraStatusTv?.text = getString(R.string.v_007, (src))
         setStatus(getString(R.string.s_018), C_WARN)
         var lastPct = -2
         scope.launch {
@@ -1331,9 +1331,9 @@ class MainActivity : Activity() {
                     lastPct = pct
                     runOnUiThread {
                         loraStatusTv?.text = if (pct >= 0)
-                            "正在从 $src 下载… $pct%（${fmtSize(done)} / ${fmtSize(total)}）"
+                            getString(R.string.v_008, (src), (pct), (fmtSize(done)), (fmtSize(total)))
                         else
-                            "正在从 $src 下载… ${fmtSize(done)}"
+                            getString(R.string.v_009, (src), (fmtSize(done)))
                     }
                 }
             }
@@ -1363,7 +1363,7 @@ class MainActivity : Activity() {
             .setPositiveButton(getString(R.string.s_050)) { _, _ ->
                 var n = 0
                 all.forEach { if (dpg.deleteLora(it)) n++ }
-                toast("已删除 $n 个 LoRA")
+                toast(getString(R.string.v_010, (n)))
                 refreshLoraUi()
             }
             .setNegativeButton(getString(R.string.s_066), null)
@@ -1379,11 +1379,11 @@ class MainActivity : Activity() {
         }
         AlertDialog.Builder(this)
             .setTitle(getString(R.string.s_056))
-            .setMessage("${f.name}\n大小：${fmtSize(f.length())}\n删除后需重新选择原文件夹才会恢复。")
+            .setMessage(getString(R.string.v_011, (f.name), (fmtSize(f.length()))))
             .setPositiveButton(getString(R.string.s_050)) { _, _ ->
                 val ok = dpg.deleteModel(f)
                 if (drawMainPath == f.absolutePath) drawMainPath = null
-                toast(if (ok) "已删除 ${f.name}" else getString(R.string.s_053))
+                toast(if (ok) getString(R.string.v_012, (f.name)) else getString(R.string.s_053))
                 drawModelStatus?.text = dpg.modelSummary()
                 refreshDrawModels()
             }
@@ -1401,7 +1401,7 @@ class MainActivity : Activity() {
             return
         }
         modelPath = f.absolutePath
-        modelInfoText.text = "模型：${f.name}（${fmtSize(f.length())}）"
+        modelInfoText.text = getString(R.string.v_013, (f.name), (fmtSize(f.length())))
         setStatus(getString(R.string.s_096), C_WARN)
         refreshSavedModels()
     }
@@ -1413,7 +1413,7 @@ class MainActivity : Activity() {
         }
         AlertDialog.Builder(this)
             .setTitle(getString(R.string.s_055))
-            .setMessage("${f.name}\n大小：${fmtSize(f.length())}\n删除后需重新选择原文件才会恢复。")
+            .setMessage(getString(R.string.v_014, (f.name), (fmtSize(f.length()))))
             .setPositiveButton(getString(R.string.s_050)) { _, _ ->
                 f.delete()
                 if (modelPath == f.absolutePath) {
@@ -1479,7 +1479,7 @@ class MainActivity : Activity() {
                         conversation = conv
                         convThinking = thinking
                         convDrawCapable = canDrawFromChat
-                        setStatus("对话模型已加载（LiteRT · $backendName）", C_OK)
+                        setStatus(getString(R.string.v_015, (backendName)), C_OK)
                     }
                 }
                 withContext(Dispatchers.Main) {
@@ -1495,7 +1495,7 @@ class MainActivity : Activity() {
             } catch (e: Throwable) {
                 withContext(Dispatchers.Main) {
                     setStatus(getString(R.string.s_058), C_ERR)
-                    toast("加载失败：${e.message}")
+                    toast(getString(R.string.v_016, (e.message)))
                 }
             } finally {
                 withContext(Dispatchers.Main) {
@@ -1691,7 +1691,7 @@ class MainActivity : Activity() {
         conversation = try {
             eng.createConversation(configFor(current, thinking))
         } catch (e: Throwable) {
-            toast("按历史重建会话失败，已清空上下文：${e.message}")
+            toast(getString(R.string.v_017, (e.message)))
             eng.createConversation(
                 ConversationConfig(
                     thinkingConfig = ThinkingConfig(enableThinking = thinking, thinkingTokenBudget = 2048)
@@ -1749,7 +1749,7 @@ class MainActivity : Activity() {
         val dropped = current.turns.size - idx - 1
         while (current.turns.size > idx) current.turns.removeAt(current.turns.size - 1)
         restoreSession(showHint = false)
-        if (dropped > 0) toast("该回答之后的 $dropped 轮对话已丢弃，正在重新生成")
+        if (dropped > 0) toast(getString(R.string.v_018, (dropped)))
         inputEdit.setText(text)
         doSend()
     }
@@ -1877,8 +1877,8 @@ class MainActivity : Activity() {
                 while (true) {
                     kotlinx.coroutines.delay(1000)
                     val sec = (System.currentTimeMillis() - drawStartedAt) / 1000
-                    val stepInfo = if (totalStep > 0) "第 $curStep/$totalStep 步 · " else ""
-                    markwonStream.setMarkdown(ai.answer, "🎨 正在绘制…${stepInfo}已 ${sec} 秒")
+                    val stepInfo = if (totalStep > 0) getString(R.string.v_019, (curStep), (totalStep)) else ""
+                    markwonStream.setMarkdown(ai.answer, getString(R.string.v_020, (stepInfo), (sec)))
                 }
             }
             try {
@@ -1886,7 +1886,7 @@ class MainActivity : Activity() {
                     curStep = cur
                     totalStep = total
                     runOnUiThread {
-                        if (cur == total || cur % 2 == 0) setStatus("绘图 $cur/$total", C_WARN)
+                        if (cur == total || cur % 2 == 0) setStatus(getString(R.string.v_021, (cur), (total)), C_WARN)
                     }
                 }
                 ticker.cancel()
@@ -1911,8 +1911,8 @@ class MainActivity : Activity() {
                 throw e
             } catch (e: Throwable) {
                 ticker.cancel()
-                turn.answer = "绘图失败：${e.message}"
-                markwonStream.setMarkdown(ai.answer, "❌ 绘图失败：${e.message}")
+                turn.answer = getString(R.string.v_022, (e.message))
+                markwonStream.setMarkdown(ai.answer, getString(R.string.v_023, (e.message)))
                 setStatus(getString(R.string.s_152), C_ERR)
             } finally {
                 ticker.cancel()
@@ -2189,10 +2189,10 @@ class MainActivity : Activity() {
                 cancelled = true
                 throw e
             } catch (e: Throwable) {
-                ai.answer.text = "(出错) ${e.message}"
+                ai.answer.text = getString(R.string.v_024, (e.message))
                 ai.answer.setTextColor(C_ERR)
                 setStatus(getString(R.string.s_145), C_ERR)
-                toast("生成出错：${e.message}")
+                toast(getString(R.string.v_025, (e.message)))
             } finally {
                 ai.regenButton.visibility = View.VISIBLE
                 // 语言模型可能输出了 <draw>…</draw>：先把正文里的标记换掉再存历史

@@ -207,4 +207,64 @@
 <string name="s_204">🤔 Switched to thinking mode (session rebuilt, history kept)</string>
 <string name="s_205">🤔 Reasoning (tap to expand)</string>
 <string name="s_206">🤔 Reasoning (tap to collapse)</string>
+    <string name="v_001">%1$d turns</string>
+    <string name="v_002">Model: %1$s (%2$s)</string>
+    <string name="v_003">Model file ready: %1$s</string>
+    <string name="v_004">Copy failed: %1$s</string>
+    <string name="v_005">%1$s selected (currently loaded: %2$s — unload it first)</string>
+    <string name="v_006">%1$s selected. Tap \"Load draw model\" to start</string>
+    <string name="v_007">Downloading from %1$s…</string>
+    <string name="v_008">Downloading from %1$s… %2$s%% (%3$s / %4$s)</string>
+    <string name="v_009">Downloading from %1$s… %2$s</string>
+    <string name="v_010">Deleted %1$d LoRA</string>
+    <string name="v_011">%1$s\nSize: %2$s\nIt only comes back after re-selecting the original folder.</string>
+    <string name="v_012">Deleted %1$s</string>
+    <string name="v_013">Model: %1$s (%2$s)</string>
+    <string name="v_014">%1$s\nSize: %2$s\nIt only comes back after re-selecting the original file.</string>
+    <string name="v_015">Chat model loaded (LiteRT · %1$s)</string>
+    <string name="v_016">Load failed: %1$s</string>
+    <string name="v_017">Failed to rebuild session from history; context cleared: %1$s</string>
+    <string name="v_018">%1$d later turns were discarded, regenerating</string>
+    <string name="v_019">Step %1$d/%2$d · </string>
+    <string name="v_020">🎨 Drawing… %1$s%2$s s</string>
+    <string name="v_021">Drawing %1$d/%2$d</string>
+    <string name="v_022">Drawing failed: %1$s</string>
+    <string name="v_023">❌ Drawing failed: %1$s</string>
+    <string name="v_024">(error) %1$s</string>
+    <string name="v_025">Generation error: %1$s</string>
+    <string name="v_026">Enabled: %1$s (%2$s MB)</string>
+    <string name="v_027">Installed (disabled): %1$s (%2$s MB)</string>
+    <string name="v_028">%1$s enabled: few-step generation. If the image looks washed out, set steps to 4-8 and CFG to 1.5-2</string>
+    <string name="v_029">%1$s installed. Tick the box to enable (~5x faster)</string>
+    <string name="v_030">Download failed: HTTP %1$s (try the other source)</string>
+    <string name="v_031">Download failed: incomplete file (%1$s bytes)</string>
+    <string name="v_032">Download failed: %1$s</string>
+    <string name="v_033">Copying %1$s…</string>
+    <string name="v_034">Copying LoRA %1$s…</string>
+    <string name="v_035">%1$d model files</string>
+    <string name="v_036">%1$d LoRA</string>
+    <string name="v_037">Imported %1$s: %2$s</string>
+    <string name="v_038">Import failed: %1$s</string>
+    <string name="v_039">E top-level exception: %1$s: %2$s\n</string>
+    <string name="v_040">Load failed: %1$s</string>
+    <string name="v_041">1 device: abi=%1$s sdk=%2$s vendor=%3$s model=%4$s</string>
+    <string name="v_042">1 memory: maxHeap=%1$sMB freeDisk=%2$sMB</string>
+    <string name="v_043">3 native load failed: %1$s</string>
+    <string name="v_044">Native library load failed: %1$s</string>
+    <string name="v_045">4 creating sd.cpp context (CPU · %1$s threads)</string>
+    <string name="v_046">5 create failed: %1$s: %2$s</string>
+    <string name="v_047">Load failed: %1$s</string>
+    <string name="v_048">Current model quantization: %1$s (%2$s)</string>
+    <string name="v_049"> · step %1$d/%2$d</string>
+    <string name="v_050">%1$s%2$s · %3$s s</string>
+    <string name="v_051">%1$s×%2$s · seed %3$s · %4$s s</string>
+    <string name="v_052">Done: %1$s×%2$s, seed=%3$s, %4$s s</string>
+    <string name="v_053">Drawing done (%1$s s)</string>
+    <string name="v_054">Interrupted (%1$s s)</string>
+    <string name="v_055">Drawing failed: %1$s</string>
+    <string name="v_056">0 model: %1$s (%2$s MB, quant=%3$s)</string>
+    <string name="v_057">0 VAE: %1$s (%2$s MB)</string>
+    <string name="v_058">0 LoRA: %1$s (%2$s MB)</string>
+    <string name="v_059">Generation failed (%1$s s): %2$s</string>
+    <string name="v_060">See \"Load log\" for the full stack trace</string>
 </resources>
