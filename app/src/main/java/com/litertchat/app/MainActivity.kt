@@ -506,7 +506,7 @@ class MainActivity : Activity() {
         row.addView(backendSpinner, wrapWrap().apply { leftMargin = dp(6) })
         card.addView(row, matchWrap().apply { topMargin = dp(10) })
         card.addView(
-            hintText("对话与绘图共用。GPU 更快，但部分机型驱动不稳（尤其华为 Vulkan）；加载失败就改回 CPU。"),
+            hintText("对话与绘图共用。GPU 更快，但部分机型驱动不稳；加载失败就改回 CPU。"),
             matchWrap().apply { topMargin = dp(4) }
         )
 
@@ -621,7 +621,7 @@ class MainActivity : Activity() {
         val loraCard = sectionCard()
         loraCard.addView(pageTitle("LoRA 加速"))
         loraCard.addView(
-            hintText("LCM-LoRA 是几十 MB 的「蒸馏补丁」，挂到主模型上可把 20 步压到 4~8 步（约 5 倍加速），不改动主模型文件。LoRA 与「量化」是两回事（量化由模型文件本身决定，列表里会标出等级）。国外直连慢就用 hf-mirror 镜像。"),
+            hintText("LCM-LoRA 是几十 MB 的「蒸馏补丁」，挂到主模型上可把 20 步压到 4~8 步（约 5 倍加速），不改动主模型文件。"),
             matchWrap().apply { topMargin = dp(4) }
         )
         val lStatus = TextView(this).apply {
@@ -639,7 +639,7 @@ class MainActivity : Activity() {
         loraCard.addView(loraBox, matchWrap().apply { topMargin = dp(6) })
 
         loraCard.addView(
-            actionButton("下载 LoRA（LCM-LoRA · 约 135MB）") { pickLoraSource() },
+            actionButton("下载 LoRA（LCM-LoRA）") { pickLoraSource() },
             matchWrap().apply { topMargin = dp(8) }
         )
         loraCard.addView(
@@ -684,6 +684,12 @@ class MainActivity : Activity() {
         card.addView(pageTitle("许可"), matchWrap().apply { topMargin = dp(16) })
         card.addView(hintText("源代码：MIT License\n美术资源（应用图标、角色立绘、原始画稿）：版权归作者所有，保留所有权利，不适用 MIT 许可。\n第三方组件：LiteRT-LM（Apache-2.0）、llama.cpp（MIT）、Markwon（Apache-2.0）"))
 
+        card.addView(pageTitle("作者"), matchWrap().apply { topMargin = dp(16) })
+        card.addView(hintText("visitor257"))
+
+        card.addView(pageTitle("项目"), matchWrap().apply { topMargin = dp(16) })
+        card.addView(linkText("github.com/visitor257/Ponko（点这里打开）", "https://github.com/visitor257/Ponko"))
+
         sv.addView(card, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
         return sv
@@ -718,6 +724,18 @@ class MainActivity : Activity() {
         setLineSpacing(dp(2).toFloat(), 1f)
         setPadding(0, dp(5), 0, 0)
     }
+
+    /** 关于页的可点击链接（点开系统浏览器） */
+    private fun linkText(label: String, url: String): TextView =
+        hintText(label).apply {
+            isClickable = true
+            setTextColor(C_PRIMARY)
+            setOnClickListener {
+                runCatching {
+                    startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)))
+                }.onFailure { toast("没有可用的浏览器") }
+            }
+        }
 
     // ---- 底部导航 ----
 
@@ -813,7 +831,7 @@ class MainActivity : Activity() {
             LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
 
         drawerPanel.addView(TextView(this).apply {
-            text = "完全离线 · 记录只存在本机"
+            text = "Ponko"
             textSize = 11f
             setTextColor(C_SUBTEXT)
             gravity = Gravity.CENTER
@@ -1291,7 +1309,7 @@ class MainActivity : Activity() {
     private fun pickLoraSource() {
         AlertDialog.Builder(this)
             .setTitle("从哪个源下载 LCM-LoRA？")
-            .setItems(arrayOf("hf-mirror.com（国内镜像，推荐）", "huggingface.co（官方源）")) { _, which ->
+            .setItems(arrayOf("hf-mirror.com（国内镜像）", "huggingface.co（官方源）")) { _, which ->
                 startLoraDownload(useMirror = which == 0)
             }
             .setNegativeButton("取消", null)
@@ -1301,7 +1319,7 @@ class MainActivity : Activity() {
     private fun startLoraDownload(useMirror: Boolean) {
         val dpg = drawPage ?: return
         val src = if (useMirror) "hf-mirror.com" else "huggingface.co"
-        loraStatusTv?.text = "正在从 $src 下载…（约 135MB）"
+        loraStatusTv?.text = "正在从 $src 下载…"
         setStatus("LoRA 下载中…", C_WARN)
         var lastPct = -2
         scope.launch {

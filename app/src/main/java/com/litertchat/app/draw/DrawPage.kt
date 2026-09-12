@@ -432,7 +432,7 @@ class DrawPage(
         try {
             val a = activeLora()
             loraHint.text = when {
-                a == null -> "未安装 LoRA —— 到「模型」页的「LoRA 加速」里下载（约 135MB）"
+                a == null -> "未安装 LoRA —— 到「模型」页的「LoRA 加速」里下载"
                 useLora -> "已启用 ${a.nameWithoutExtension}：按少步出图。若画面发灰/失真，把步数调到 4~8、CFG 调到 1.5~2"
                 else -> "已安装 ${a.nameWithoutExtension}，勾选后启用（约 5 倍加速）"
             }
@@ -756,7 +756,7 @@ class DrawPage(
                 "当前模型量化：未导入模型　·　量化等级写死在模型文件里，App 只负责读出来显示"
             } else {
                 val q = GgufProbe.quantType(m) ?: "未知"
-                "当前模型量化：$q（${m.name}）　·　Q4_0 每步比 Q8_0 快，质量略降"
+                "当前模型量化：$q（${m.name}）"
             }
         } catch (_: Throwable) {}
     }
