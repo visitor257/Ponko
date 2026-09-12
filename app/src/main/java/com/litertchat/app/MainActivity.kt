@@ -1128,9 +1128,20 @@ class MainActivity : Activity() {
         }
     }
 
-    /** 按「绘图模型是否已加载」更新二合一按钮的文案。 */
+    /** 按「绘图模型是否已加载」更新二合一按钮的文案与配色。
+     *  与对话模型保持一致：加载=蓝色实心；已加载=浅灰描边（避免误以为还是主操作）。 */
     private fun refreshDrawToggle() {
-        drawToggleBtn?.text = if (drawPage?.isReady() == true) "卸载绘图模型" else "加载绘图模型"
+        val b = drawToggleBtn ?: return
+        if (drawPage?.isReady() == true) {
+            b.text = "卸载绘图模型"
+            b.background = rounded(Color.rgb(246, 247, 250), 12,
+                strokeDp = 1, strokeColor = Color.rgb(219, 224, 234))
+            b.setTextColor(C_TEXT)
+        } else {
+            b.text = "加载绘图模型"
+            b.background = rounded(C_PRIMARY, 12)
+            b.setTextColor(Color.WHITE)
+        }
     }
 
     /** 列出私有目录里已复制的绘图模型（点击选用并加载 · 长按删除）。 */
@@ -1146,7 +1157,7 @@ class MainActivity : Activity() {
         }
         box.visibility = View.VISIBLE
         box.addView(TextView(this).apply {
-            text = "已复制的绘图模型（点击选用并加载 · 长按删除）"
+            text = "已复制的绘图模型（点击选用 · 长按删除）"
             textSize = 12f
             setTextColor(C_SUBTEXT)
             setPadding(0, dp(4), 0, 0)
@@ -1169,37 +1180,23 @@ class MainActivity : Activity() {
                     strokeDp = if (isSel || isMain) 1 else 0, strokeColor = C_PRIMARY)
                 isClickable = true
             }
-            chip.setOnClickListener { selectAndLoadDrawModel(f) }
+            chip.setOnClickListener { selectDrawModel(f) }
             chip.setOnLongClickListener { confirmDeleteDrawModel(f); true }
             box.addView(chip, matchWrap().apply { topMargin = dp(4) })
         }
     }
 
-    /** 点击某个绘图模型 → 记为主模型并加载。 */
-    private fun selectAndLoadDrawModel(f: File) {
-        val dpg = drawPage
-        if (dpg == null) {
-            toast("绘图页未初始化")
-            return
-        }
+    /** 点击某个绘图模型 → 只标记为选用，不加载（与对话模型一致，需再点「加载绘图模型」）。 */
+    private fun selectDrawModel(f: File) {
         drawMainPath = f.absolutePath
-        dpg.useGpu = (backendSpinner.selectedItem.toString() == "GPU")
-        scope.launch {
-            drawModelStatus?.text = "正在加载：${f.name}（首次需几十秒）…"
-            val err = dpg.loadExisting(f)
-            drawModelStatus?.text = if (err == null) dpg.modelSummary() else err
-            if (err == null) {
-                drawMode = true
-                dpg.llmLoaded = false
-                updateThinkEnabled()
-                setStatus("绘图模型已就绪", C_OK)
-                toast("已加载：${f.name}")
-            } else {
-                setStatus("绘图模型加载失败", C_ERR)
-                toast(err)
-            }
-            refreshDrawModels()
+        val cur = drawPage?.currentMainName()
+        drawModelStatus?.text = if (cur != null && cur != f.name) {
+            "已选用 ${f.name}（当前加载的是 $cur，先点「卸载绘图模型」再加载）"
+        } else {
+            "已选用 ${f.name}，点「加载绘图模型」开始"
         }
+        refreshDrawToggle()
+        refreshDrawModels()
     }
 
     // ================= LoRA =================
