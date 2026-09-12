@@ -63,6 +63,16 @@ class DrawPage(
         /** SharedPreferences 文件名与键（只存 UI 偏好） */
         private const val PREFS_NAME = "ponko"
         private const val KEY_USE_LORA = "useLora"
+
+        // 绘图参数持久化（提示词按用户要求不保存，每次重来）
+        private const val KEY_W = "drawW"
+        private const val KEY_H = "drawH"
+        private const val KEY_STEPS = "drawSteps"
+        private const val KEY_CFG = "drawCfg"
+        private const val KEY_SEED = "drawSeed"
+        private const val KEY_LORA_SCALE = "drawLoraScale"
+        private const val KEY_SAMPLER = "drawSampler"
+        private const val KEY_SCHEDULER = "drawScheduler"
     }
 
     private val c: Context get() = act
@@ -233,9 +243,9 @@ class DrawPage(
         val paramCard = card()
         paramCard.addView(title("参数"))
 
-        // 尺寸：宽 × 高，自由填（sd.cpp 要求 64 的倍数）
-        widthEdit = smallNumber("512")
-        heightEdit = smallNumber("512")
+        // 尺寸：宽 × 高，自由填（sd.cpp 要求 64 的倍数）——从上次的值恢复
+        widthEdit = smallNumber(loadParam(KEY_W, "512"))
+        heightEdit = smallNumber(loadParam(KEY_H, "512"))
         paramCard.addView(whRow("图片尺寸（宽 × 高）",
             "可自由填，但必须是 64 的倍数（会自动向下取整）。512×512 是 SD1.5 原生分辨率；256 出图快很多，适合先验证"))
 
@@ -246,12 +256,22 @@ class DrawPage(
         schedulerSpinner = choiceSpinner(
             listOf("自动（勾 LoRA 时用 LCM，否则 Discrete）") + SdCppEngine.Scheduler.entries.map { it.label }
         )
+        samplerSpinner.setSelection(loadInt(KEY_SAMPLER, 0).coerceIn(0, samplerSpinner.adapter.count - 1), false)
+        schedulerSpinner.setSelection(loadInt(KEY_SCHEDULER, 0).coerceIn(0, schedulerSpinner.adapter.count - 1), false)
+        // 先恢复再挂监听，免得 setSelection 把默认值又写回去
+        samplerSpinner.onItemSelectedListener = persistSpinner(KEY_SAMPLER)
+        schedulerSpinner.onItemSelectedListener = persistSpinner(KEY_SCHEDULER)
         paramCard.addView(paramRow("采样器", samplerSpinner, "Euler a 通用最稳；LCM / TCD 才是配 LoRA 少步加速的；DPM++ 2M 细节更好但更慢"))
         paramCard.addView(paramRow("调度器", schedulerSpinner, "Discrete 是标准选择；Karras 常配 DPM++ 系；LCM 配 LCM 采样器"))
 
-        stepsEdit = smallNumber("20")
-        cfgEdit = smallNumber("7.0")
-        seedEdit = smallNumber("-1")
+        stepsEdit = smallNumber(loadParam(KEY_STEPS, "20"))
+        cfgEdit = smallNumber(loadParam(KEY_CFG, "7.0"))
+        seedEdit = smallNumber(loadParam(KEY_SEED, "-1"))
+        bindParam(widthEdit, KEY_W)
+        bindParam(heightEdit, KEY_H)
+        bindParam(stepsEdit, KEY_STEPS)
+        bindParam(cfgEdit, KEY_CFG)
+        bindParam(seedEdit, KEY_SEED)
         paramCard.addView(paramRow("采样步数", stepsEdit, "越大越精细，也越慢（标准 20 步；用 LoRA 加速时 4~8 步即可）"))
         paramCard.addView(paramRow("CFG 引导", cfgEdit, "贴合提示词的程度，标准 7 左右；LCM-LoRA 建议 1.5~2"))
         paramCard.addView(paramRow("随机种子", seedEdit, "-1 = 每次随机；固定值可复现同一张图"))
@@ -278,7 +298,8 @@ class DrawPage(
             }
         }
         paramCard.addView(loraCheck)
-        loraScaleEdit = smallNumber("1.0")
+        loraScaleEdit = smallNumber(loadParam(KEY_LORA_SCALE, "1.0"))
+        bindParam(loraScaleEdit, KEY_LORA_SCALE)
         paramCard.addView(paramRow("LoRA 权重", loraScaleEdit, "一般 1.0；画风太浓可降到 0.6~0.8，加强可到 1.2（0 = 不挂）"))
         loraHint = TextView(c).apply {
             textSize = 11f
@@ -996,6 +1017,36 @@ class DrawPage(
 
     private fun choiceSpinner(items: List<String>) = android.widget.Spinner(c).apply {
         adapter = android.widget.ArrayAdapter(c, android.R.layout.simple_spinner_dropdown_item, items)
+    }
+
+    // ---- 参数持久化（提示词不保存，每次重来） ----
+
+    private fun prefs() = c.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    private fun loadParam(key: String, def: String): String = prefs().getString(key, def) ?: def
+
+    private fun loadInt(key: String, def: Int): Int = prefs().getInt(key, def)
+
+    /**
+     * 参数改动即时落盘。只在输入框真正获得焦点时保存，
+     * 避免 build() 初始化时把恢复出来的值又写一遍。
+     */
+    private fun bindParam(edit: EditText, key: String) {
+        edit.addTextChangedListener(object : android.text.TextWatcher {
+            override fun afterTextChanged(s: android.text.Editable?) {
+                if (edit.hasFocus()) prefs().edit().putString(key, s?.toString() ?: "").apply()
+            }
+            override fun beforeTextChanged(s: CharSequence?, st: Int, b: Int, cnt: Int) {}
+            override fun onTextChanged(s: CharSequence?, st: Int, b: Int, cnt: Int) {}
+        })
+    }
+
+    /** Spinner 选择落盘 */
+    private fun persistSpinner(key: String) = object : android.widget.AdapterView.OnItemSelectedListener {
+        override fun onItemSelected(p: android.widget.AdapterView<*>?, v: View?, pos: Int, id: Long) {
+            prefs().edit().putInt(key, pos).apply()
+        }
+        override fun onNothingSelected(p: android.widget.AdapterView<*>?) {}
     }
 
     /** 结果图保存用的文件名 */
