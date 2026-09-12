@@ -8,21 +8,18 @@ import urllib.request
 REPO = "visitor257/Ponko"
 TOKFILE = r"C:\Users\Administrator\Desktop\git_repo_tok.txt"
 APK = r"C:\Users\Administrator\.qclaw\workspace-agent-e522fb09\LiteRT-Chat\app\build\outputs\apk\release\Ponko-release.apk"
-TAG = "v1.1.1"
-NAME = "Ponko v1.1.1"
+TAG = "v1.1.2"
+NAME = "Ponko v1.1.2"
 
-BODY = """Ponko v1.1.1 —— 本地 AI App（Android）：聊天 + 绘图
+BODY = """Ponko v1.1.2 —— 本地 AI App（Android）：聊天 + 绘图
 
 所有推理都在本机离线运行，不联网、无遥测，对话记录只保存在设备本地。
 请先阅读 [README](https://github.com/visitor257/Ponko#readme)。
 
-## 本次新增（v1.1 → v1.1.1）
-- **中英双语**：全部界面文案资源化，跟随系统语言自动切换（中文 / English）
-- **绘图提速**：打开 FlashAttention、线程数调优、改用 `-O3 -march=armv8.2-a+dotprod+fp16` 编译，256×256 实测从 125 秒降到 56 秒
-- **绘图页改版**：顶部「参数 / 结果」双视图；结果页一键保存到相册；生成按钮与进度条前移；「开始 / 中断」合并为一个按钮
-- **生成历史**：结果页保留最近 30 张（内存内，关闭即清空）
-- **参数记忆**：绘图参数重启后保留（修复了此前偶尔不生效的问题）
-- **构建方式**：sd.cpp 源码入仓，改由 Gradle / CMake 现场编译（对使用无影响）
+## 本次修正（v1.1.1 → v1.1.2）
+- **第三方声明补全**：NOTICE 与 App「关于」页补齐第三方组件清单（stable-diffusion.cpp、ggml、LiteRT-LM、llama.cpp、Markwon、Kotlin/AndroidX、LLVM 运行时），标注各自许可证与源码位置
+- **合规说明**：注明 stable-diffusion.cpp（MIT）源码随项目分发，并说明为控制体积对其词表做了裁剪；不含任何模型权重文件
+- 英文界面「关于」页同步更新
 
 ## 对话功能
 - 双后端：LiteRT-LM（`.litertlm`）+ llama.cpp（`.gguf`）
@@ -40,11 +37,11 @@ BODY = """Ponko v1.1.1 —— 本地 AI App（Android）：聊天 + 绘图
 
 ## 安装
 - 仅支持 **arm64-v8a**（64 位 ARM 真机），**minSdk 28**（Android 9 及以上）
-- v1.1（versionCode 2）可直接覆盖安装；更早的 debug 版或 v1.0 请先卸载（签名不同）
+- v1.1.1（versionCode 3）可直接覆盖安装；更早的 debug 版或 v1.0 请先卸载（签名不同）
 - 模型文件需自备：对话模型（`.litertlm` / `.gguf`）与绘图模型（SD1.5 GGUF）分别在 App 内「模型」页导入
 
 ## 许可
-代码 MIT；美术资源（图标、立绘）版权归作者所有，详见仓库 NOTICE。
+代码 MIT；美术资源（图标、立绘）版权归作者所有。本项目包含的第三方组件（stable-diffusion.cpp、ggml、LiteRT-LM、llama.cpp、Markwon 等）按各自许可证分发，详见仓库 NOTICE。
 """
 
 

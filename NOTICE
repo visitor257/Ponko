@@ -30,3 +30,65 @@ Copyright (c) 2026 visitor257
 --------------------------------------------------------------------------
 
 「Ponko」为本项目名称，版权归作者所有。作者不就此名称主张商标权。
+
+--------------------------------------------------------------------------
+第三方组件
+--------------------------------------------------------------------------
+
+本项目包含或链接以下第三方开源组件。各组件的著作权归其各自作者所有，
+按各自许可证分发。完整许可证文本见对应的源码目录或许可证文件。
+
+A. 内置源码（随本仓库分发，源码位于 app/src/main/cpp/）
+
+  - stable-diffusion.cpp
+      许可证：MIT License
+      著作权：Copyright (c) 2023 leejet
+      来源：https://github.com/leejet/stable-diffusion.cpp
+      许可证文本：app/src/main/cpp/sd/LICENSE
+      说明：为减小体积，本项目对其源码做了裁剪，剔除了本项目未使用的
+            分词器词表（仅保留 CLIP）；同时按 Android/CMake 构建需要做了
+            少量适配。裁剪与适配后的源码仍按 MIT 许可分发。
+
+  - ggml
+      许可证：MIT License
+      著作权：Copyright (c) 2023-2024 The ggml authors
+      来源：https://github.com/ggerganov/ggml
+      许可证文本：app/src/main/cpp/sd/ggml/LICENSE
+
+  - stable-diffusion.cpp 附带的第三方文件（thirdparty/）
+      - stb_image.h / stb_image_write.h：公有领域（Public Domain）或 MIT
+      - json.hpp（JSON for Modern C++）：MIT License
+      - httplib.h（cpp-httplib）：MIT License
+      - miniz.h：MIT License
+      - darts_clone：BSD 3-Clause License
+        许可证文本：app/src/main/cpp/sd/thirdparty/LICENSE.darts_clone.txt
+
+B. 二进制依赖（由 Gradle 从可信仓库拉取，不随本仓库分发）
+
+  - LiteRT-LM（com.google.ai.edge.litertlm:litertlm-android）
+      许可证：Apache License 2.0      著作权：Google LLC
+  - llama.cpp 的 Android 绑定（net.ladenthin:llama-android）
+      许可证：MIT License             著作权：Copyright (c) 2023-2024 Georgi Gerganov
+  - Markwon（io.noties.markwon:*）
+      许可证：Apache License 2.0      著作权：Copyright (c) 2017 Noties
+  - Kotlin / kotlinx.coroutines（org.jetbrains.kotlinx:*）
+      许可证：Apache License 2.0      著作权：Copyright (c) JetBrains s.r.o.
+  - AndroidX / Material 组件
+      许可证：Apache License 2.0      著作权：Copyright (c) The Android Open Source Project
+
+C. 随仓库分发的 NDK 运行时库（app/src/main/jniLibs/arm64-v8a/）
+
+  - libomp.so（LLVM OpenMP 运行时）
+  - libc++_shared.so（LLVM libc++ 运行时）
+      许可证：Apache License 2.0 with LLVM Exceptions
+      著作权：Copyright (c) The LLVM Project
+      说明：来自 Android NDK（android-ndk-r27），stable-diffusion.cpp 的
+            编译产物依赖 OpenMP 运行时。分发遵循 LLVM 许可证条款。
+
+--------------------------------------------------------------------------
+说明
+--------------------------------------------------------------------------
+
+本项目不包含任何 Stable Diffusion 模型权重文件。绘图模型（.gguf）、
+对话模型（.litertlm / .gguf）与 LoRA 均由使用者自行获取并在运行时载入，
+其许可与使用条款以各自发布方为准。

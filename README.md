@@ -82,6 +82,22 @@ powershell -File tools/build-release.ps1
 
 - **代码**：[MIT](LICENSE)
 - **美术资源**（应用图标、角色立绘、原始画稿）：版权归作者所有，保留所有权利，**不在 MIT 许可范围内** —— 详见 [NOTICE](NOTICE)
+- **第三方组件**：按各自许可证分发，完整清单见 [NOTICE](NOTICE)
+
+## 第三方组件
+
+| 组件 | 许可证 | 分发方式 |
+| --- | --- | --- |
+| [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) | MIT | 源码随仓库分发（`app/src/main/cpp/sd/`） |
+| [ggml](https://github.com/ggerganov/ggml) | MIT | 源码随仓库分发（`app/src/main/cpp/sd/ggml/`） |
+| [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM) | Apache-2.0 | Gradle 依赖 |
+| [llama.cpp](https://github.com/ggerganov/llama.cpp)（经 java-llama.cpp 绑定） | MIT | Gradle 依赖 |
+| [Markwon](https://github.com/noties/Markwon) | Apache-2.0 | Gradle 依赖 |
+| Kotlin / kotlinx.coroutines / AndroidX | Apache-2.0 | Gradle 依赖 |
+| LLVM libc++ / libomp（来自 Android NDK） | Apache-2.0 with LLVM Exceptions | `app/src/main/jniLibs/` |
+
+> stable-diffusion.cpp 源码为随仓库分发的副本，为减小体积剔除了本项目用不到的分词器词表（仅保留 CLIP）。
+> 本项目**不含任何模型权重文件**；绘图模型（SD1.5 GGUF）、对话模型（`.litertlm` / `.gguf`）与 LoRA 均由使用者自行获取。
 
 ## 致谢
 

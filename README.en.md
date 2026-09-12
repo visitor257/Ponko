@@ -83,6 +83,22 @@ powershell -File tools/build-release.ps1
 
 - **Code**: [MIT](LICENSE)
 - **Artwork** (app icon, character portrait, original drawing): © the author, all rights reserved, **not covered by the MIT license** — see [NOTICE](NOTICE)
+- **Third-party components**: distributed under their own licenses — see [NOTICE](NOTICE) for the full list
+
+## Third-party components
+
+| Component | License | Distributed as |
+| --- | --- | --- |
+| [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) | MIT | source in this repo (`app/src/main/cpp/sd/`) |
+| [ggml](https://github.com/ggerganov/ggml) | MIT | source in this repo (`app/src/main/cpp/sd/ggml/`) |
+| [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM) | Apache-2.0 | Gradle dependency |
+| [llama.cpp](https://github.com/ggerganov/llama.cpp) (via java-llama.cpp binding) | MIT | Gradle dependency |
+| [Markwon](https://github.com/noties/Markwon) | Apache-2.0 | Gradle dependency |
+| Kotlin / kotlinx.coroutines / AndroidX | Apache-2.0 | Gradle dependency |
+| LLVM libc++ / libomp (from the Android NDK) | Apache-2.0 with LLVM Exceptions | `app/src/main/jniLibs/` |
+
+> The bundled stable-diffusion.cpp source has unused tokenizer vocabularies trimmed (CLIP only) to keep the repo small.
+> This project contains **no model weights**; the drawing model (SD1.5 GGUF), chat models (`.litertlm` / `.gguf`) and LoRA are supplied by the user.
 
 ## Credits
 
