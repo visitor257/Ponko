@@ -1,5 +1,7 @@
 package com.litertchat.app.draw
 
+import com.litertchat.app.R
+
 import android.app.Activity
 import android.content.Context
 import android.graphics.Bitmap
@@ -26,8 +28,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
-/** 用户主动中断生成时抛出（与真正的失败区分开）。 */
-class GenerationCancelledException : RuntimeException("已中断")
+/** 用户主动中断生成时抛出（与真正的失败区分开）。消息不面向用户，用固定英文。 */
+class GenerationCancelledException : RuntimeException("Generation cancelled")
 
 /**
  * 绘图页（文生图）。
@@ -181,8 +183,8 @@ class DrawPage(
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { bottomMargin = dp(10) }
         }
-        tabParams = tabItem("⚙️ 参数")
-        tabResult = tabItem("🖼️ 结果")
+        tabParams = tabItem(c.getString(R.string.s_034))
+        tabResult = tabItem(c.getString(R.string.s_203))
         tabParams.setOnClickListener { switchPane(toResult = false) }
         tabResult.setOnClickListener { switchPane(toResult = true) }
         tabBar.addView(tabParams, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
@@ -195,8 +197,8 @@ class DrawPage(
 
         // ---- 模型状态（模型统一在「模型」页选择并加载） ----
         val modelCard = card()
-        modelCard.addView(title("绘图模型（stable-diffusion.cpp · GGUF）"))
-        statusText = body("未加载 —— 请到「模型」页的「绘图模型」里选择模型文件夹")
+        modelCard.addView(title(c.getString(R.string.s_164)))
+        statusText = body(c.getString(R.string.s_115))
         modelCard.addView(statusText)
         quantText = TextView(c).apply {
             textSize = 11.5f
@@ -208,17 +210,17 @@ class DrawPage(
 
         // ---- 提示词 ----
         val promptCard = card()
-        promptCard.addView(title("提示词"))
-        promptEdit = labeledEdit("一个可爱的动漫女孩，细节丰富", singleLine = false, minLines = 3)
+        promptCard.addView(title(c.getString(R.string.s_108)))
+        promptEdit = labeledEdit(c.getString(R.string.s_036), singleLine = false, minLines = 3)
         promptCard.addView(promptEdit, matchWrap(top = 6))
-        promptCard.addView(smallLabel("负向提示词（不想出现的内容）"))
+        promptCard.addView(smallLabel(c.getString(R.string.s_177)))
         negEdit = labeledEdit("lowres, bad anatomy, bad hands, text, error, worst quality", singleLine = false, minLines = 2)
         promptCard.addView(negEdit, matchWrap(top = 4))
         paramPane.addView(promptCard)
 
         // ---- 生成 / 中断（同一个按钮），放在提示词与参数之间，方便盯着进度 ----
         genBtn = Button(c).apply {
-            text = "开始生成"
+            text = c.getString(R.string.s_098)
             setBackgroundColor(primary)
             setTextColor(Color.WHITE)
             typeface = Typeface.DEFAULT_BOLD
@@ -243,28 +245,28 @@ class DrawPage(
 
         // ---- 参数 ----
         val paramCard = card()
-        paramCard.addView(title("参数"))
+        paramCard.addView(title(c.getString(R.string.s_065)))
 
         // 尺寸：宽 × 高，自由填（sd.cpp 要求 64 的倍数）——从上次的值恢复
         widthEdit = smallNumber(loadParam(KEY_W, "512"))
         heightEdit = smallNumber(loadParam(KEY_H, "512"))
-        paramCard.addView(whRow("图片尺寸（宽 × 高）",
-            "可自由填，但必须是 64 的倍数（会自动向下取整）。512×512 是 SD1.5 原生分辨率；256 出图快很多，适合先验证"))
+        paramCard.addView(whRow(c.getString(R.string.s_070),
+            c.getString(R.string.s_068)))
 
         // 采样器 / 调度器
         samplerSpinner = choiceSpinner(
-            listOf("自动（勾 LoRA 时用 LCM，否则 Euler a）") + SdCppEngine.Sampler.entries.map { it.label }
+            listOf(c.getString(R.string.s_169)) + SdCppEngine.Sampler.entries.map { it.label }
         )
         schedulerSpinner = choiceSpinner(
-            listOf("自动（勾 LoRA 时用 LCM，否则 Discrete）") + SdCppEngine.Scheduler.entries.map { it.label }
+            listOf(c.getString(R.string.s_168)) + SdCppEngine.Scheduler.entries.map { it.label }
         )
         samplerSpinner.setSelection(loadInt(KEY_SAMPLER, 0).coerceIn(0, samplerSpinner.adapter.count - 1), false)
         schedulerSpinner.setSelection(loadInt(KEY_SCHEDULER, 0).coerceIn(0, schedulerSpinner.adapter.count - 1), false)
         // 先恢复再挂监听，免得 setSelection 把默认值又写回去
         samplerSpinner.onItemSelectedListener = persistSpinner(KEY_SAMPLER)
         schedulerSpinner.onItemSelectedListener = persistSpinner(KEY_SCHEDULER)
-        paramCard.addView(paramRow("采样器", samplerSpinner, "Euler a 通用最稳；LCM / TCD 才是配 LoRA 少步加速的；DPM++ 2M 细节更好但更慢"))
-        paramCard.addView(paramRow("调度器", schedulerSpinner, "Discrete 是标准选择；Karras 常配 DPM++ 系；LCM 配 LCM 采样器"))
+        paramCard.addView(paramRow(c.getString(R.string.s_191), samplerSpinner, c.getString(R.string.s_015)))
+        paramCard.addView(paramRow(c.getString(R.string.s_176), schedulerSpinner, c.getString(R.string.s_014)))
 
         stepsEdit = smallNumber(loadParam(KEY_STEPS, "20"))
         cfgEdit = smallNumber(loadParam(KEY_CFG, "7.0"))
@@ -274,13 +276,13 @@ class DrawPage(
         bindParam(stepsEdit, KEY_STEPS)
         bindParam(cfgEdit, KEY_CFG)
         bindParam(seedEdit, KEY_SEED)
-        paramCard.addView(paramRow("采样步数", stepsEdit, "越大越精细，也越慢（标准 20 步；用 LoRA 加速时 4~8 步即可）"))
-        paramCard.addView(paramRow("CFG 引导", cfgEdit, "贴合提示词的程度，标准 7 左右；LCM-LoRA 建议 1.5~2"))
-        paramCard.addView(paramRow("随机种子", seedEdit, "-1 = 每次随机；固定值可复现同一张图"))
+        paramCard.addView(paramRow(c.getString(R.string.s_192), stepsEdit, c.getString(R.string.s_179)))
+        paramCard.addView(paramRow(c.getString(R.string.s_013), cfgEdit, c.getString(R.string.s_178)))
+        paramCard.addView(paramRow(c.getString(R.string.s_193), seedEdit, c.getString(R.string.s_008)))
 
         // ---- LoRA 加速开关 ----
         loraCheck = CheckBox(c).apply {
-            text = "LoRA 加速（LCM-LoRA · 少步出图）"
+            text = c.getString(R.string.s_022)
             textSize = 13f
             setTextColor(textColor)
             isChecked = useLora
@@ -290,7 +292,7 @@ class DrawPage(
                 if (checked) {
                     // 打开就顺手把参数带到 LCM 的推荐档位（用户仍可手动改回去）
                     if (activeLora() == null) {
-                        toast("还没装 LoRA —— 请到「模型」页的「LoRA 加速」里下载")
+                        toast(c.getString(R.string.s_186))
                     } else {
                         stepsEdit.setText("6")
                         cfgEdit.setText("1.8")
@@ -302,7 +304,7 @@ class DrawPage(
         paramCard.addView(loraCheck)
         loraScaleEdit = smallNumber(loadParam(KEY_LORA_SCALE, "1.0"))
         bindParam(loraScaleEdit, KEY_LORA_SCALE)
-        paramCard.addView(paramRow("LoRA 权重", loraScaleEdit, "一般 1.0；画风太浓可降到 0.6~0.8，加强可到 1.2（0 = 不挂）"))
+        paramCard.addView(paramRow(c.getString(R.string.s_024), loraScaleEdit, c.getString(R.string.s_037)))
         loraHint = TextView(c).apply {
             textSize = 11f
             setTextColor(subText)
@@ -319,7 +321,7 @@ class DrawPage(
         root.addView(resultPane, matchWrap())
 
         val resultCard = card()
-        resultCard.addView(title("生成结果"))
+        resultCard.addView(title(c.getString(R.string.s_148)))
         resultImg = ImageView(c).apply {
             adjustViewBounds = true
             setPadding(dp(4), dp(10), dp(4), dp(8))
@@ -328,17 +330,17 @@ class DrawPage(
         resultInfo = TextView(c).apply {
             textSize = 12f
             setTextColor(subText)
-            text = "还没有生成图片 —— 到「参数」页写完提示词后点「开始生成」"
+            text = c.getString(R.string.s_184)
         }
         resultCard.addView(resultInfo)
         saveBtn = Button(c).apply {
-            text = "保存到相册"
+            text = c.getString(R.string.s_045)
             setBackgroundColor(primary)
             setTextColor(Color.WHITE)
             typeface = Typeface.DEFAULT_BOLD
             setOnClickListener {
                 val b = lastImage
-                if (b == null) toast("还没有生成图片") else onSaveImage?.invoke(b, saveName())
+                if (b == null) toast(c.getString(R.string.s_183)) else onSaveImage?.invoke(b, saveName())
             }
         }
         resultCard.addView(saveBtn, matchWrap(top = 10))
@@ -346,15 +348,15 @@ class DrawPage(
 
         // ---- 生成历史（只活在内存里，App 进程结束即清空） ----
         val histCard = card()
-        histCard.addView(title("生成历史"))
+        histCard.addView(title(c.getString(R.string.s_146)))
         histCard.addView(TextView(c).apply {
-            text = "只留在内存里 —— 关掉 App 就清空。点缩略图切换大图，长按删除。"
+            text = c.getString(R.string.s_067)
             textSize = 11f
             setTextColor(subText)
             setPadding(0, dp(4), 0, 0)
         })
         histEmpty = TextView(c).apply {
-            text = "还没有历史"
+            text = c.getString(R.string.s_182)
             textSize = 12f
             setTextColor(subText)
             setPadding(0, dp(10), 0, 0)
@@ -367,17 +369,17 @@ class DrawPage(
         }
         histCard.addView(hsv, matchWrap(top = 8))
         val clearHistBtn = Button(c).apply {
-            text = "清空历史"
+            text = c.getString(R.string.s_138)
             textSize = 12f
             setTextColor(subText)
             setOnClickListener {
                 if (DrawHistory.size() == 0) {
-                    toast("历史已经是空的")
+                    toast(c.getString(R.string.s_064))
                 } else {
                     android.app.AlertDialog.Builder(act)
-                        .setMessage("清空全部生成历史？（已保存到相册的不受影响）")
-                        .setPositiveButton("清空") { _, _ -> DrawHistory.clear(); refreshHistory() }
-                        .setNegativeButton("取消", null)
+                        .setMessage(c.getString(R.string.s_137))
+                        .setPositiveButton(c.getString(R.string.s_136)) { _, _ -> DrawHistory.clear(); refreshHistory() }
+                        .setNegativeButton(c.getString(R.string.s_066), null)
                         .show()
                 }
             }
@@ -415,7 +417,7 @@ class DrawPage(
 
     /** 供「模型」页展示的 LoRA 状态 */
     fun loraSummary(): String {
-        val a = activeLora() ?: return "未安装"
+        val a = activeLora() ?: return c.getString(R.string.s_117)
         val size = "%.1f".format(a.length() / 1048576.0)
         return if (useLora) "已启用：${a.nameWithoutExtension}（$size MB）"
         else "已安装（未启用）：${a.nameWithoutExtension}（$size MB）"
@@ -432,7 +434,7 @@ class DrawPage(
         try {
             val a = activeLora()
             loraHint.text = when {
-                a == null -> "未安装 LoRA —— 到「模型」页的「LoRA 加速」里下载"
+                a == null -> c.getString(R.string.s_118)
                 useLora -> "已启用 ${a.nameWithoutExtension}：按少步出图。若画面发灰/失真，把步数调到 4~8、CFG 调到 1.5~2"
                 else -> "已安装 ${a.nameWithoutExtension}，勾选后启用（约 5 倍加速）"
             }
@@ -514,7 +516,7 @@ class DrawPage(
     suspend fun prepareFromTree(treeUri: Uri, onStage: (String) -> Unit): String? {
         return withContext(Dispatchers.IO) {
             try {
-                onStage("正在扫描所选文件夹…")
+                onStage(c.getString(R.string.s_132))
                 val root = File(c.filesDir, DIR_NAME).apply { mkdirs() }
                 val ggufs = ArrayList<Pair<String, Uri>>()   // 主模型
                 val loras = ArrayList<Pair<String, Uri>>()   // LoRA
@@ -554,7 +556,7 @@ class DrawPage(
                 walk(android.provider.DocumentsContract.getTreeDocumentId(treeUri), 0)
 
                 if (ggufs.isEmpty() && loras.isEmpty()) {
-                    return@withContext "所选文件夹里没找到绘图模型（.gguf）或 LoRA（.safetensors）"
+                    return@withContext c.getString(R.string.s_106)
                 }
 
                 var copied = 0
@@ -584,7 +586,7 @@ class DrawPage(
                 }
                 if (loraCopied > 0) refreshLoraHint()
 
-                if (copied == 0 && loraCopied == 0) return@withContext "复制失败（0 个文件）"
+                if (copied == 0 && loraCopied == 0) return@withContext c.getString(R.string.s_073)
 
                 // 只复制、不在导入时加载：native 加载可能崩（实测过），
                 // 留给用户在「模型」页手动点「加载绘图模型」，崩了也不会连累启动。
@@ -595,8 +597,8 @@ class DrawPage(
                 val names = ggufs.joinToString("、") { it.first }
                 statusText.post {
                     statusText.text = "已复制 $parts：$names" +
-                        (if (loraCopied > 0) "（含 LoRA）" else "") +
-                        "\n点「模型」页的「加载绘图模型」开始"
+                        (if (loraCopied > 0) c.getString(R.string.s_195) else "") +
+                        c.getString(R.string.s_027)
                 }
                 // 约定：返回 null = 成功（调用方据此刷新列表并提示）；失败才返回错误文案
                 null
@@ -639,8 +641,8 @@ class DrawPage(
         val root = File(c.filesDir, DIR_NAME)
         val ggufs = root.listFiles { f -> f.isFile && f.name.endsWith(".gguf", true) }?.toList().orEmpty()
         if (ggufs.isEmpty()) {
-            statusText.post { statusText.text = "未加载 —— 私有目录里没有绘图模型" }
-            return "未加载 —— 私有目录里没有绘图模型"
+            statusText.post { statusText.text = c.getString(R.string.s_114) }
+            return c.getString(R.string.s_114)
         }
 
         // 主模型：优先用指定的，否则取体积最大的 gguf
@@ -666,7 +668,7 @@ class DrawPage(
         stage("1 内存：maxHeap=${Runtime.getRuntime().maxMemory() / 1048576}MB freeDisk=${root.usableSpace / 1048576}MB")
 
         // 分步探测：每步都先落盘，后执行
-        stage("2 加载 native 库（libponko_sd.so）")
+        stage(c.getString(R.string.s_009))
         try {
             SdCppEngine.info().let { stage("3 native OK：$it") }
         } catch (t: Throwable) {
@@ -687,23 +689,23 @@ class DrawPage(
                 flashAttn = flashAttn,
             )
             if (h == 0L) {
-                stage("5 创建失败：new_sd_ctx 返回 0")
-                runCatching { stage("4 参数：" + SdCppEngine.lastParams().replace("\n", "  |  ")) }
+                stage(c.getString(R.string.s_012))
+                runCatching { stage(c.getString(R.string.s_010) + SdCppEngine.lastParams().replace("\n", "  |  ")) }
                 runCatching { stageFile.delete() }
-                return "加载失败：无法创建推理上下文（模型格式可能不受支持）"
+                return c.getString(R.string.s_059)
             }
             sdHandle = h
-            stage("5 上下文创建 OK")
+            stage(c.getString(R.string.s_011))
             runCatching {
-                stage("4 参数：" + SdCppEngine.lastParams().replace("\n", "  |  "))
+                stage(c.getString(R.string.s_010) + SdCppEngine.lastParams().replace("\n", "  |  "))
             }
 
             val q = GgufProbe.quantType(main)
             val summary = buildString {
-                append("已就绪：").append(main.name)
+                append(c.getString(R.string.s_094)).append(main.name)
                 if (q != null) append("（").append(q).append("）")
                 if (vae != null) append("  +  ").append(vae.name)
-                append(" · CPU · ").append(nThreads).append(" 线程 · ").append(if (flashAttn) "FA" else "无FA").append(" · sd.cpp")
+                append(" · CPU · ").append(nThreads).append(c.getString(R.string.s_001)).append(if (flashAttn) "FA" else c.getString(R.string.s_110)).append(" · sd.cpp")
             }
             statusText.post { statusText.text = summary }
             statusText.post { refreshQuantText() }
@@ -721,7 +723,7 @@ class DrawPage(
         if (sdHandle != 0L) runCatching { SdCppEngine.nativeFree(sdHandle) }
         sdHandle = 0L
         try {
-            statusText.text = "未加载 —— 请到「模型」页的「绘图模型」里选择模型文件夹"
+            statusText.text = c.getString(R.string.s_115)
         } catch (_: Throwable) {}
         refreshQuantText()
     }
@@ -734,12 +736,12 @@ class DrawPage(
     fun modelSummary(): String = when {
         sdHandle != 0L -> {
             val q = mainModel?.let { GgufProbe.quantType(it) }
-            "已就绪：" + (mainModel?.name ?: "绘图模型") +
+            c.getString(R.string.s_094) + (mainModel?.name ?: c.getString(R.string.s_155)) +
                 (if (q != null) "（$q）" else "") +
-                " · CPU · " + nThreads + " 线程 · sd.cpp"
+                " · CPU · " + nThreads + c.getString(R.string.s_002)
         }
-        hasModel() -> "已复制模型，点「加载绘图模型」开始"
-        else -> "未加载 —— 请到「模型」页的「绘图模型」里选择模型文件夹"
+        hasModel() -> c.getString(R.string.s_088)
+        else -> c.getString(R.string.s_115)
     }
 
     fun refreshStatus() {
@@ -753,9 +755,9 @@ class DrawPage(
         try {
             val m = mainModel ?: listModels().maxByOrNull { it.length() }
             quantText.text = if (m == null) {
-                "当前模型量化：未导入模型　·　量化等级写死在模型文件里，App 只负责读出来显示"
+                c.getString(R.string.s_103)
             } else {
-                val q = GgufProbe.quantType(m) ?: "未知"
+                val q = GgufProbe.quantType(m) ?: c.getString(R.string.s_119)
                 "当前模型量化：$q（${m.name}）"
             }
         } catch (_: Throwable) {}
@@ -766,24 +768,24 @@ class DrawPage(
     private fun generateFromUi() {
         persistAll()   // 生成前先把参数落盘，保证「改完就生成」也被记住
         if (!isReady()) {
-            val msg = if (llmLoaded) "当前加载的是语言模型，不能绘图。请到「模型」页加载绘图模型（.gguf）。"
-            else "请先到「模型」页的「绘图模型」里选择并加载模型"
+            val msg = if (llmLoaded) c.getString(R.string.s_100)
+            else c.getString(R.string.s_173)
             Toast.makeText(c, msg, Toast.LENGTH_LONG).show()
             return
         }
         val prompt = promptEdit.text.toString().trim()
         if (prompt.isEmpty()) {
-            Toast.makeText(c, "先写点提示词吧", Toast.LENGTH_SHORT).show()
+            Toast.makeText(c, c.getString(R.string.s_047), Toast.LENGTH_SHORT).show()
             return
         }
         setGenerating(true)
         progressText.visibility = View.VISIBLE
-        progressText.text = "正在准备…（首次会先加载模型，1GB+ 可能要几分钟）"
+        progressText.text = c.getString(R.string.s_126)
         curStep = 0
         totalStep = 0
         progressBar.progress = 0
         progressBar.visibility = View.VISIBLE
-        onStatus?.invoke("绘图生成中…", false)
+        onStatus?.invoke(c.getString(R.string.s_165), false)
         val startedAt = System.currentTimeMillis()
         scope.launch {
             // 逐秒报“已耗时”，否则底层不报中间进度，看着像卡死
@@ -792,7 +794,7 @@ class DrawPage(
                     delay(1000)
                     val sec = (System.currentTimeMillis() - startedAt) / 1000
                     progressText.post {
-                        val phase = if (sec < 8) "正在加载模型…" else "正在去噪采样…"
+                        val phase = if (sec < 8) c.getString(R.string.s_127) else c.getString(R.string.s_129)
                         val stepInfo = if (totalStep > 0) " · 第 $curStep/$totalStep 步" else ""
                         progressText.text = "$phase$stepInfo · 已 ${sec} 秒"
                         if (totalStep > 0) {
@@ -824,7 +826,7 @@ class DrawPage(
                 val sec = (System.currentTimeMillis() - startedAt) / 1000
                 if (cancelRequested) {
                     progressText.post { progressText.text = "已中断（${sec} 秒）" }
-                    onStatus?.invoke("绘图已中断", false)
+                    onStatus?.invoke(c.getString(R.string.s_154), false)
                 } else {
                     progressText.post { progressText.text = "生成失败（${sec} 秒）：${e.message ?: e.javaClass.simpleName}\n${"完整堆栈见「查看加载日志」"}" }
                     onStatus?.invoke("绘图失败：${e.message ?: e.javaClass.simpleName}", true)
@@ -858,8 +860,8 @@ class DrawPage(
         cancelRequested = false
 
         val h = sdHandle
-        if (h == 0L) throw IllegalStateException("绘图模型未加载")
-        if (mainModel == null) throw IllegalStateException("未选择绘图模型")
+        if (h == 0L) throw IllegalStateException(c.getString(R.string.s_163))
+        if (mainModel == null) throw IllegalStateException(c.getString(R.string.s_121))
 
         // LoRA：走结构化参数（sd.cpp 原生接口，不再拼 prompt 里的 lora: 语法）
         val lora = if (useLora) activeLora() else null
@@ -890,7 +892,7 @@ class DrawPage(
                 scheduler = scheduler,
                 cb = { cur, total -> onProgress(cur, total) },
             )
-        } ?: throw IllegalStateException("生成失败（sd.cpp 返回空）")
+        } ?: throw IllegalStateException(c.getString(R.string.s_147))
         onProgress(steps, steps)
         return ImageData(bmp, useSeed)
     }
@@ -914,7 +916,7 @@ class DrawPage(
     /** 点「中断生成」：先给个即时反馈，再请求 native 中断 */
     private fun doCancel() {
         cancel()
-        progressText.text = "正在中断…（当前采样步结束后生效）"
+        progressText.text = c.getString(R.string.s_125)
     }
 
     /** 统一切换按钮的「开始生成 / 中断生成」外观与行为 */
@@ -922,7 +924,7 @@ class DrawPage(
         generating = g
         genBtn.post {
             genBtn.isEnabled = true
-            genBtn.text = if (g) "中断生成" else "开始生成"
+            genBtn.text = if (g) c.getString(R.string.s_040) else c.getString(R.string.s_098)
             genBtn.setBackgroundColor(if (g) 0xFFD9534F.toInt() else primary)
         }
     }
@@ -1145,9 +1147,9 @@ class DrawPage(
                 setOnClickListener { showHistoryImage(img) }
                 setOnLongClickListener {
                     android.app.AlertDialog.Builder(act)
-                        .setMessage("删除这一张历史？（已保存到相册的不受影响）")
-                        .setPositiveButton("删除") { _, _ -> DrawHistory.remove(img); refreshHistory() }
-                        .setNegativeButton("取消", null)
+                        .setMessage(c.getString(R.string.s_057))
+                        .setPositiveButton(c.getString(R.string.s_050)) { _, _ -> DrawHistory.remove(img); refreshHistory() }
+                        .setNegativeButton(c.getString(R.string.s_066), null)
                         .show()
                     true
                 }

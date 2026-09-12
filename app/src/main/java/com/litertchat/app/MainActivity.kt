@@ -136,7 +136,7 @@ class MainActivity : Activity() {
         drawCmdRegex.find(answerBuf)?.let { m ->
             val prompt = m.groupValues[1].trim()
             // 去掉原始标记，换一行说明，避免把 <draw> 写进对话历史
-            answerBuf.replace(m.range.first, m.range.last + 1, "（🖼 已交由绘图模型出图）")
+            answerBuf.replace(m.range.first, m.range.last + 1, getString(R.string.s_200))
             turn.answer = answerBuf.toString()
             markwonFull.setMarkdown(ai.answer, answerBuf.toString())
             return prompt.ifEmpty { null }
@@ -144,7 +144,7 @@ class MainActivity : Activity() {
         // 2) 思考过程里的命令（思考模式）
         drawCmdRegex.find(thoughtBuf)?.let { m ->
             val prompt = m.groupValues[1].trim()
-            thoughtBuf.replace(m.range.first, m.range.last + 1, "（🖼 决定调用绘图模型出图）")
+            thoughtBuf.replace(m.range.first, m.range.last + 1, getString(R.string.s_199))
             turn.thought = thoughtBuf.toString()
             ai.thoughtBody.text = thoughtBuf.toString()
             return prompt.ifEmpty { null }
@@ -462,7 +462,7 @@ class MainActivity : Activity() {
         statusDot = View(this).apply { background = rounded(Color.WHITE, 99) }
         statusRow.addView(statusDot, LinearLayout.LayoutParams(dp(7), dp(7)).apply { rightMargin = dp(5) })
         statusTv = TextView(this).apply {
-            text = "未加载模型"
+            text = getString(R.string.s_116)
             textSize = 11.5f
             setTextColor(Color.parseColor("#DCE5FF"))
         }
@@ -486,13 +486,13 @@ class MainActivity : Activity() {
 
         // ================= 运行方式（对话 / 绘图共用） =================
         val card = sectionCard()
-        card.addView(pageTitle("运行方式"))
+        card.addView(pageTitle(getString(R.string.s_181)))
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
         row.addView(TextView(this).apply {
-            text = "后端"
+            text = getString(R.string.s_069)
             textSize = 13f
             setTextColor(C_TEXT)
         }, wrapWrap())
@@ -507,23 +507,23 @@ class MainActivity : Activity() {
         row.addView(backendSpinner, wrapWrap().apply { leftMargin = dp(6) })
         card.addView(row, matchWrap().apply { topMargin = dp(10) })
         card.addView(
-            hintText("对话与绘图共用。GPU 更快，但部分机型驱动不稳；加载失败就改回 CPU。"),
+            hintText(getString(R.string.s_075)),
             matchWrap().apply { topMargin = dp(4) }
         )
 
         // ================= 对话模型 =================
         val chatCard = sectionCard()
-        chatCard.addView(pageTitle("对话模型"))
-        chatCard.addView(hintText("本地语言模型：.litertlm（LiteRT-LM）或 .gguf（llama.cpp）。选文件后会复制到 App 私有目录，之后可直接点列表选用。"))
+        chatCard.addView(pageTitle(getString(R.string.s_076)))
+        chatCard.addView(hintText(getString(R.string.s_122)))
 
         modelInfoText = TextView(this).apply {
-            text = "未选择对话模型文件"
+            text = getString(R.string.s_120)
             textSize = 12f
             setTextColor(C_SUBTEXT)
         }
         chatCard.addView(modelInfoText, matchWrap().apply { topMargin = dp(6) })
 
-        chatCard.addView(actionButton("选择对话模型文件（.litertlm / .gguf）") { pickModelFile() },
+        chatCard.addView(actionButton(getString(R.string.s_189)) { pickModelFile() },
             matchWrap().apply { topMargin = dp(8) })
 
         savedContainer = LinearLayout(this).apply {
@@ -532,7 +532,7 @@ class MainActivity : Activity() {
         }
         chatCard.addView(savedContainer, matchWrap().apply { topMargin = dp(6) })
 
-        loadButton = actionButton("加载对话模型") { toggleLoad() }
+        loadButton = actionButton(getString(R.string.s_060)) { toggleLoad() }
         chatCard.addView(loadButton, matchWrap().apply { topMargin = dp(8) })
 
         progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
@@ -545,13 +545,13 @@ class MainActivity : Activity() {
 
         // ================= 绘图模型 =================
         val drawCard = sectionCard()
-        drawCard.addView(pageTitle("绘图模型"))
+        drawCard.addView(pageTitle(getString(R.string.s_155)))
         drawCard.addView(
-            hintText("stable-diffusion.cpp 的 GGUF 绘图模型（Anything V5 / SD1.5 等）。文件夹里放 .gguf 即可；加载后在「对话」页输入就是正面提示词。"),
+            hintText(getString(R.string.s_030)),
             matchWrap().apply { topMargin = dp(4) }
         )
         val dStatus = TextView(this).apply {
-            text = "未加载"
+            text = getString(R.string.s_113)
             textSize = 12f
             setTextColor(C_SUBTEXT)
         }
@@ -560,7 +560,7 @@ class MainActivity : Activity() {
         // 上次崩溃信息（自捕获，供排查）
         if (pendingDrawCrash) {
             drawCard.addView(TextView(this).apply {
-                text = "⚠ 上次「加载绘图模型」中途崩溃了（native 层）。已执行阶段：\n" + (pendingDrawStage ?: "（无记录）")
+                text = getString(R.string.s_035) + (pendingDrawStage ?: getString(R.string.s_197))
                 textSize = 11f
                 setTextColor(C_ERR)
                 setPadding(0, dp(6), 0, 0)
@@ -568,7 +568,7 @@ class MainActivity : Activity() {
         }
         takeCrashLog()?.let { log ->
             drawCard.addView(TextView(this).apply {
-                text = "上次崩溃日志：\n" + log.takeLast(1200)
+                text = getString(R.string.s_038) + log.takeLast(1200)
                 textSize = 10.5f
                 setTextColor(C_ERR)
                 setPadding(0, dp(6), 0, 0)
@@ -576,7 +576,7 @@ class MainActivity : Activity() {
         }
 
         drawCard.addView(
-            actionButton("选择绘图模型文件夹") { pickDrawModelTree() },
+            actionButton(getString(R.string.s_190)) { pickDrawModelTree() },
             matchWrap().apply { topMargin = dp(8) }
         )
 
@@ -586,12 +586,12 @@ class MainActivity : Activity() {
         }
         drawCard.addView(drawSavedContainer, matchWrap().apply { topMargin = dp(6) })
         // 加载 / 卸载合成一个按钮：未加载时点击 = 加载，已加载时点击 = 卸载
-        drawToggleBtn = actionButton("加载绘图模型") { onDrawToggleClick() }
+        drawToggleBtn = actionButton(getString(R.string.s_061)) { onDrawToggleClick() }
         drawCard.addView(drawToggleBtn, matchWrap().apply { topMargin = dp(8) })
         drawCard.addView(
-            smallButton("查看加载日志") {
+            smallButton(getString(R.string.s_123)) {
                 val f = File(filesDir, "draw/.loadstage")
-                val log = if (f.exists()) runCatching { f.readText() }.getOrDefault("（读取失败）") else "（无日志）"
+                val log = if (f.exists()) runCatching { f.readText() }.getOrDefault(getString(R.string.s_198)) else getString(R.string.s_196)
                 val body = log.takeLast(8000)
                 val tv = TextView(this).apply {
                     text = body
@@ -601,18 +601,18 @@ class MainActivity : Activity() {
                 }
                 val sc = ScrollView(this).apply { addView(tv) }
                 AlertDialog.Builder(this)
-                    .setTitle("绘图模型加载日志")
+                    .setTitle(getString(R.string.s_157))
                     .setView(sc)
-                    .setPositiveButton("复制") { _, _ ->
+                    .setPositiveButton(getString(R.string.s_071)) { _, _ ->
                         val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
                         cm.setPrimaryClip(android.content.ClipData.newPlainText("ponko-draw-log", body))
-                        toast("已复制到剪贴板")
+                        toast(getString(R.string.s_087))
                     }
-                    .setNeutralButton("清空") { _, _ ->
+                    .setNeutralButton(getString(R.string.s_136)) { _, _ ->
                         runCatching { f.delete() }
-                        toast("日志已清空")
+                        toast(getString(R.string.s_112))
                     }
-                    .setNegativeButton("关闭", null)
+                    .setNegativeButton(getString(R.string.s_049), null)
                     .show()
             },
             matchWrap().apply { topMargin = dp(10) }
@@ -620,13 +620,13 @@ class MainActivity : Activity() {
 
         // ================= LoRA 加速 =================
         val loraCard = sectionCard()
-        loraCard.addView(pageTitle("LoRA 加速"))
+        loraCard.addView(pageTitle(getString(R.string.s_021)))
         loraCard.addView(
-            hintText("LCM-LoRA 是几十 MB 的「蒸馏补丁」，挂到主模型上可把 20 步压到 4~8 步（约 5 倍加速），不改动主模型文件。"),
+            hintText(getString(R.string.s_017)),
             matchWrap().apply { topMargin = dp(4) }
         )
         val lStatus = TextView(this).apply {
-            text = "未安装"
+            text = getString(R.string.s_117)
             textSize = 12f
             setTextColor(C_SUBTEXT)
         }
@@ -640,11 +640,11 @@ class MainActivity : Activity() {
         loraCard.addView(loraBox, matchWrap().apply { topMargin = dp(6) })
 
         loraCard.addView(
-            actionButton("下载 LoRA（LCM-LoRA）") { pickLoraSource() },
+            actionButton(getString(R.string.s_039)) { pickLoraSource() },
             matchWrap().apply { topMargin = dp(8) }
         )
         loraCard.addView(
-            smallButton("删除 LoRA") { confirmDeleteLora() },
+            smallButton(getString(R.string.s_051)) { confirmDeleteLora() },
             matchWrap().apply { topMargin = dp(10) }
         )
 
@@ -669,8 +669,8 @@ class MainActivity : Activity() {
         }
         val card = card()
 
-        card.addView(pageTitle("关于"))
-        card.addView(hintText("版本 1.1.1"))
+        card.addView(pageTitle(getString(R.string.s_048)))
+        card.addView(hintText(getString(R.string.s_142)))
         val portrait = ImageView(this).apply {
             setImageResource(R.drawable.about_portrait)
             adjustViewBounds = true
@@ -678,19 +678,19 @@ class MainActivity : Activity() {
             setPadding(0, dp(10), 0, 0)
         }
         card.addView(portrait, matchWrap())
-        card.addView(hintText("Ponko · 名字来自日语「ポンコツ」（破铜烂铁）——脑子不中用，但可以随时换成最好的模型。\n模型与推理全部在本机离线运行，对话记录只保存在设备本地。"))
+        card.addView(hintText(getString(R.string.s_025)))
 
-        card.addView(pageTitle("思考模式"), matchWrap().apply { topMargin = dp(16) })
-        card.addView(hintText("开启后模型先输出推理过程再回答（更慢）。切换开关会在下一条消息生效（LiteRT 会话自动按新模式重建，历史保留）。GGUF 模型通过推理预算/模板参数控制，不支持的模型可能仍会思考。"))
+        card.addView(pageTitle(getString(R.string.s_104)), matchWrap().apply { topMargin = dp(16) })
+        card.addView(hintText(getString(R.string.s_097)))
 
-        card.addView(pageTitle("许可"), matchWrap().apply { topMargin = dp(16) })
-        card.addView(hintText("源代码：MIT License\n美术资源（应用图标、角色立绘、原始画稿）：版权归作者所有，保留所有权利，不适用 MIT 许可。\n第三方组件：LiteRT-LM（Apache-2.0）、llama.cpp（MIT）、Markwon（Apache-2.0）"))
+        card.addView(pageTitle(getString(R.string.s_171)), matchWrap().apply { topMargin = dp(16) })
+        card.addView(hintText(getString(R.string.s_140)))
 
-        card.addView(pageTitle("作者"), matchWrap().apply { topMargin = dp(16) })
+        card.addView(pageTitle(getString(R.string.s_043)), matchWrap().apply { topMargin = dp(16) })
         card.addView(hintText("visitor257"))
 
-        card.addView(pageTitle("项目"), matchWrap().apply { topMargin = dp(16) })
-        card.addView(linkText("打开 Ponko 的 GitHub 项目主页", "https://github.com/visitor257/Ponko"))
+        card.addView(pageTitle(getString(R.string.s_194)), matchWrap().apply { topMargin = dp(16) })
+        card.addView(linkText(getString(R.string.s_107), "https://github.com/visitor257/Ponko"))
 
         sv.addView(card, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
@@ -735,7 +735,7 @@ class MainActivity : Activity() {
             setOnClickListener {
                 runCatching {
                     startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)))
-                }.onFailure { toast("没有可用的浏览器") }
+                }.onFailure { toast(getString(R.string.s_134)) }
             }
         }
 
@@ -748,10 +748,10 @@ class MainActivity : Activity() {
             elevation = dp(6).toFloat()
         }
         val items = listOf(
-            Triple("💬", "对话", 0),
-            Triple("🧠", "模型", 1),
-            Triple("🎨", "绘图", 2),
-            Triple("ℹ️", "关于", 3),
+            Triple("💬", getString(R.string.s_074), 0),
+            Triple("🧠", getString(R.string.s_124), 1),
+            Triple("🎨", getString(R.string.s_150), 2),
+            Triple("ℹ️", getString(R.string.s_048), 3),
         )
         for ((icon, label, idx) in items) {
             val item = LinearLayout(this).apply {
@@ -814,7 +814,7 @@ class MainActivity : Activity() {
             visibility = View.GONE
         }
         drawerPanel.addView(TextView(this).apply {
-            text = "对话"
+            text = getString(R.string.s_074)
             textSize = 16f
             setTextColor(Color.WHITE)
             typeface = Typeface.DEFAULT_BOLD
@@ -849,7 +849,7 @@ class MainActivity : Activity() {
 
     private fun refreshDrawer() {
         drawerBody.removeAllViews()
-        drawerBody.addView(actionButton("＋ 新建对话") { closeDrawer(); newSession() },
+        drawerBody.addView(actionButton(getString(R.string.s_201)) { closeDrawer(); newSession() },
             matchWrap().apply { setMargins(dp(12), dp(4), dp(12), dp(10)) })
 
         for (s in sessions.sortedByDescending { it.id }) {
@@ -919,7 +919,7 @@ class MainActivity : Activity() {
         }
 
         thinkCheck = CheckBox(this).apply {
-            text = "思考模式（先推理再回答，需模型支持）"
+            text = getString(R.string.s_105)
             textSize = 12.5f
             setTextColor(C_TEXT)
             isChecked = true
@@ -933,7 +933,7 @@ class MainActivity : Activity() {
         }
 
         inputEdit = EditText(this).apply {
-            hint = "输入消息…"
+            hint = getString(R.string.s_180)
             textSize = 15f
             setTextColor(C_TEXT)
             setHintTextColor(C_SUBTEXT)
@@ -1036,7 +1036,7 @@ class MainActivity : Activity() {
             val uri = data?.data ?: return
             val dpg = drawPage ?: return
             setBusy(true)
-            setStatus("正在导入绘图模型…", C_WARN)
+            setStatus(getString(R.string.s_131), C_WARN)
             scope.launch {
                 val err = dpg.prepareFromTree(uri) { stage -> drawModelStatus?.text = stage }
                 setBusy(false)
@@ -1044,12 +1044,12 @@ class MainActivity : Activity() {
                     // 导入成功：把最新复制的那个默认标为选用
                     dpg.listModels().firstOrNull()?.let { drawMainPath = it.absolutePath }
                     drawModelStatus?.text = dpg.modelSummary()
-                    setStatus("绘图模型已复制", C_OK)
-                    toast("已复制，请点「加载绘图模型」")
+                    setStatus(getString(R.string.s_161), C_OK)
+                    toast(getString(R.string.s_091))
                     refreshDrawModels()
                 } else {
                     drawModelStatus?.text = err
-                    setStatus("绘图模型导入失败", C_ERR)
+                    setStatus(getString(R.string.s_158), C_ERR)
                     toast(err)
                 }
             }
@@ -1059,7 +1059,7 @@ class MainActivity : Activity() {
     /** Models can't be loaded from a content:// URI, so copy them to a real file first. */
     private fun copyModelToPrivate(uri: Uri) {
         setBusy(true)
-        setStatus("正在复制模型文件…", C_WARN)
+        setStatus(getString(R.string.s_130), C_WARN)
         progressBar.visibility = View.VISIBLE
         progressBar.progress = 0
         scope.launch(Dispatchers.IO) {
@@ -1069,7 +1069,7 @@ class MainActivity : Activity() {
                 val dest = File(dir, name)
                 if (!dest.exists()) {
                     val input = contentResolver.openInputStream(uri)
-                        ?: throw IllegalStateException("无法打开所选文件")
+                        ?: throw IllegalStateException(getString(R.string.s_111))
                     val total = contentResolver.openAssetFileDescriptor(uri, "r")?.length ?: -1L
                     input.use { ins ->
                         dest.outputStream().use { outs ->
@@ -1091,13 +1091,13 @@ class MainActivity : Activity() {
                 withContext(Dispatchers.Main) {
                     modelPath = dest.absolutePath
                     modelInfoText.text = "模型：${dest.name}（${fmtSize(dest.length())}）"
-                    setStatus("已就绪，可加载模型", C_WARN)
+                    setStatus(getString(R.string.s_093), C_WARN)
                     refreshSavedModels()
                     toast("模型文件已就绪：${dest.name}")
                 }
             } catch (e: Throwable) {
                 withContext(Dispatchers.Main) {
-                    setStatus("复制失败", C_ERR)
+                    setStatus(getString(R.string.s_072), C_ERR)
                     toast("复制失败：${e.message}")
                 }
             } finally {
@@ -1125,7 +1125,7 @@ class MainActivity : Activity() {
         }
         savedContainer.visibility = View.VISIBLE
         savedContainer.addView(TextView(this).apply {
-            text = "已复制的模型（点击选用 · 长按删除）"
+            text = getString(R.string.s_089)
             textSize = 12f
             setTextColor(C_SUBTEXT)
         }, matchWrap())
@@ -1138,7 +1138,7 @@ class MainActivity : Activity() {
             else null
             val isImageModel = kind == GgufProbe.Kind.IMAGE
             val tag = when {
-                isImageModel -> "绘图·到「绘图模型」加载"
+                isImageModel -> getString(R.string.s_151)
                 isGguf -> "GGUF"
                 else -> "LiteRT"
             }
@@ -1153,7 +1153,7 @@ class MainActivity : Activity() {
             }
             chip.setOnClickListener {
                 if (isImageModel) {
-                    toast("这是绘图模型（扩散模型），不能当对话模型用。请到「模型」页的「绘图模型」区块选择文件夹加载它。")
+                    toast(getString(R.string.s_188))
                 } else {
                     selectSavedModel(f)
                 }
@@ -1169,24 +1169,24 @@ class MainActivity : Activity() {
     private fun onDrawToggleClick() {
         val dpg = drawPage
         if (dpg == null) {
-            toast("绘图页未初始化")
+            toast(getString(R.string.s_167))
             return
         }
         if (dpg.isReady()) {
             dpg.unloadModel()
             updateThinkEnabled()
             drawModelStatus?.text = dpg.modelSummary()
-            setStatus("未加载模型", C_IDLE)
-            toast("绘图模型已卸载")
+            setStatus(getString(R.string.s_116), C_IDLE)
+            toast(getString(R.string.s_160))
             refreshDrawToggle()
             return
         }
         if (!dpg.hasModel()) {
-            toast("还没有绘图模型，先点上面「选择绘图模型文件夹」")
+            toast(getString(R.string.s_185))
             return
         }
         scope.launch {
-            drawModelStatus?.text = "正在加载绘图模型（首次需几十秒）…"
+            drawModelStatus?.text = getString(R.string.s_128)
             val picked = drawMainPath?.let { File(it) }
             dpg.useGpu = (backendSpinner.selectedItem.toString() == "GPU")
             val err = dpg.loadExisting(picked)
@@ -1196,10 +1196,10 @@ class MainActivity : Activity() {
                 dpg.llmLoaded = false
                 updateThinkEnabled()
                 refreshDrawModels()
-                setStatus("绘图模型已就绪", C_OK)
-                toast("绘图模型已加载：到对话页输入就是正面提示词")
+                setStatus(getString(R.string.s_162), C_OK)
+                toast(getString(R.string.s_159))
             } else {
-                setStatus("绘图模型加载失败", C_ERR)
+                setStatus(getString(R.string.s_156), C_ERR)
                 toast(err)
             }
             refreshDrawToggle()
@@ -1211,12 +1211,12 @@ class MainActivity : Activity() {
     private fun refreshDrawToggle() {
         val b = drawToggleBtn ?: return
         if (drawPage?.isReady() == true) {
-            b.text = "卸载绘图模型"
+            b.text = getString(R.string.s_063)
             b.background = rounded(Color.rgb(246, 247, 250), 12,
                 strokeDp = 1, strokeColor = Color.rgb(219, 224, 234))
             b.setTextColor(C_TEXT)
         } else {
-            b.text = "加载绘图模型"
+            b.text = getString(R.string.s_061)
             b.background = rounded(C_PRIMARY, 12)
             b.setTextColor(Color.WHITE)
         }
@@ -1235,7 +1235,7 @@ class MainActivity : Activity() {
         }
         box.visibility = View.VISIBLE
         box.addView(TextView(this).apply {
-            text = "已复制的绘图模型（点击选用 · 长按删除）"
+            text = getString(R.string.s_090)
             textSize = 12f
             setTextColor(C_SUBTEXT)
             setPadding(0, dp(4), 0, 0)
@@ -1246,7 +1246,7 @@ class MainActivity : Activity() {
             val isMain = active != null && f.name == active
             val isSel = f.absolutePath == drawMainPath
             val chip = TextView(this).apply {
-                val role = if (isMain) "当前主模型" else if (files.size > 1) "组件/备选" else ""
+                val role = if (isMain) getString(R.string.s_099) else if (files.size > 1) getString(R.string.s_149) else ""
                 val suffix = if (role.isEmpty()) "" else "　[$role]"
                 val q = dpg?.quantOf(f)
                 val qTag = if (q != null) "　[$q]" else ""
@@ -1282,7 +1282,7 @@ class MainActivity : Activity() {
     /** 刷新模型页的 LoRA 状态与列表 */
     private fun refreshLoraUi() {
         val dpg = drawPage
-        loraStatusTv?.text = dpg?.loraSummary() ?: "未安装"
+        loraStatusTv?.text = dpg?.loraSummary() ?: getString(R.string.s_117)
         val box = loraBox ?: return
         box.removeAllViews()
         val all = dpg?.listLoras().orEmpty()
@@ -1292,7 +1292,7 @@ class MainActivity : Activity() {
         }
         box.visibility = View.VISIBLE
         box.addView(TextView(this).apply {
-            text = "已安装的 LoRA（到「绘图」页勾选「LoRA 加速」启用）"
+            text = getString(R.string.s_092)
             textSize = 12f
             setTextColor(C_SUBTEXT)
             setPadding(0, dp(4), 0, 0)
@@ -1310,11 +1310,11 @@ class MainActivity : Activity() {
     /** 选下载源：官方 / hf-mirror 镜像 */
     private fun pickLoraSource() {
         AlertDialog.Builder(this)
-            .setTitle("从哪个源下载 LCM-LoRA？")
-            .setItems(arrayOf("hf-mirror.com（国内镜像）", "huggingface.co（官方源）")) { _, which ->
+            .setTitle(getString(R.string.s_041))
+            .setItems(arrayOf(getString(R.string.s_028), getString(R.string.s_029))) { _, which ->
                 startLoraDownload(useMirror = which == 0)
             }
-            .setNegativeButton("取消", null)
+            .setNegativeButton(getString(R.string.s_066), null)
             .show()
     }
 
@@ -1322,7 +1322,7 @@ class MainActivity : Activity() {
         val dpg = drawPage ?: return
         val src = if (useMirror) "hf-mirror.com" else "huggingface.co"
         loraStatusTv?.text = "正在从 $src 下载…"
-        setStatus("LoRA 下载中…", C_WARN)
+        setStatus(getString(R.string.s_018), C_WARN)
         var lastPct = -2
         scope.launch {
             val err = dpg.downloadLora(useMirror) { done, total ->
@@ -1339,11 +1339,11 @@ class MainActivity : Activity() {
             }
             runOnUiThread {
                 if (err == null) {
-                    toast("LoRA 下载完成 —— 到「绘图」页勾选「LoRA 加速」")
-                    setStatus("LoRA 已就绪", C_OK)
+                    toast(getString(R.string.s_020))
+                    setStatus(getString(R.string.s_023), C_OK)
                 } else {
                     toast(err)
-                    setStatus("LoRA 下载失败", C_ERR)
+                    setStatus(getString(R.string.s_019), C_ERR)
                 }
                 refreshLoraUi()
             }
@@ -1354,19 +1354,19 @@ class MainActivity : Activity() {
         val dpg = drawPage ?: return
         val all = dpg.listLoras()
         if (all.isEmpty()) {
-            toast("没有已安装的 LoRA")
+            toast(getString(R.string.s_135))
             return
         }
         AlertDialog.Builder(this)
-            .setTitle("删除 LoRA？")
-            .setMessage(all.joinToString("、") { it.name } + "\n删除后「绘图」页的 LoRA 加速会自动失效。")
-            .setPositiveButton("删除") { _, _ ->
+            .setTitle(getString(R.string.s_052))
+            .setMessage(all.joinToString("、") { it.name } + getString(R.string.s_026))
+            .setPositiveButton(getString(R.string.s_050)) { _, _ ->
                 var n = 0
                 all.forEach { if (dpg.deleteLora(it)) n++ }
                 toast("已删除 $n 个 LoRA")
                 refreshLoraUi()
             }
-            .setNegativeButton("取消", null)
+            .setNegativeButton(getString(R.string.s_066), null)
             .show()
     }
 
@@ -1374,56 +1374,56 @@ class MainActivity : Activity() {
     private fun confirmDeleteDrawModel(f: File) {
         val dpg = drawPage ?: return
         if (dpg.currentMainName() == f.name && dpg.isReady()) {
-            toast("该模型正在使用，请先卸载再删除")
+            toast(getString(R.string.s_172))
             return
         }
         AlertDialog.Builder(this)
-            .setTitle("删除已复制的绘图模型？")
+            .setTitle(getString(R.string.s_056))
             .setMessage("${f.name}\n大小：${fmtSize(f.length())}\n删除后需重新选择原文件夹才会恢复。")
-            .setPositiveButton("删除") { _, _ ->
+            .setPositiveButton(getString(R.string.s_050)) { _, _ ->
                 val ok = dpg.deleteModel(f)
                 if (drawMainPath == f.absolutePath) drawMainPath = null
-                toast(if (ok) "已删除 ${f.name}" else "删除失败")
+                toast(if (ok) "已删除 ${f.name}" else getString(R.string.s_053))
                 drawModelStatus?.text = dpg.modelSummary()
                 refreshDrawModels()
             }
-            .setNegativeButton("取消", null)
+            .setNegativeButton(getString(R.string.s_066), null)
             .show()
     }
 
     private fun selectSavedModel(f: File) {
         if (busy) {
-            toast("当前有任务进行中，请稍候")
+            toast(getString(R.string.s_102))
             return
         }
         if (busy) {
-            toast("当前有任务进行中，请稍候")
+            toast(getString(R.string.s_102))
             return
         }
         modelPath = f.absolutePath
         modelInfoText.text = "模型：${f.name}（${fmtSize(f.length())}）"
-        setStatus("已选用，点「加载对话模型」开始", C_WARN)
+        setStatus(getString(R.string.s_096), C_WARN)
         refreshSavedModels()
     }
 
     private fun confirmDeleteModel(f: File) {
         if (f.absolutePath == modelPath && (engine != null || llamaModel != null)) {
-            toast("该模型正在使用，请先卸载再删除")
+            toast(getString(R.string.s_172))
             return
         }
         AlertDialog.Builder(this)
-            .setTitle("删除已复制的模型？")
+            .setTitle(getString(R.string.s_055))
             .setMessage("${f.name}\n大小：${fmtSize(f.length())}\n删除后需重新选择原文件才会恢复。")
-            .setPositiveButton("删除") { _, _ ->
+            .setPositiveButton(getString(R.string.s_050)) { _, _ ->
                 f.delete()
                 if (modelPath == f.absolutePath) {
                     modelPath = null
-                    modelInfoText.text = "未选择对话模型文件"
+                    modelInfoText.text = getString(R.string.s_120)
                 }
                 refreshSavedModels()
-                toast("已删除")
+                toast(getString(R.string.s_086))
             }
-            .setNegativeButton("取消", null)
+            .setNegativeButton(getString(R.string.s_066), null)
             .show()
     }
 
@@ -1432,12 +1432,12 @@ class MainActivity : Activity() {
             unloadModel()
             return
         }
-        val path = modelPath ?: run { toast("请先选择对话模型文件"); return }
+        val path = modelPath ?: run { toast(getString(R.string.s_175)); return }
         val isGguf = path.endsWith(".gguf", ignoreCase = true)
         val backendName = backendSpinner.selectedItem.toString()
         val thinking = thinkCheck.isChecked
         setBusy(true)
-        setStatus("正在加载模型…", C_WARN)
+        setStatus(getString(R.string.s_127), C_WARN)
         progressBar.visibility = View.VISIBLE
         progressBar.isIndeterminate = true
         scope.launch(Dispatchers.IO) {
@@ -1460,8 +1460,8 @@ class MainActivity : Activity() {
                         engine = null
                         conversation = null
                         convThinking = null
-                        setStatus("对话模型已加载（llama.cpp · CPU · KV 复用）", C_OK)
-                        if (backendName == "GPU") toast("GGUF 目前走 CPU（该运行库未含 GPU 后端）")
+                        setStatus(getString(R.string.s_078), C_OK)
+                        if (backendName == "GPU") toast(getString(R.string.s_016))
                     }
                 } else {
                     val backend: Backend = if (backendName == "GPU") Backend.GPU() else Backend.CPU()
@@ -1483,18 +1483,18 @@ class MainActivity : Activity() {
                     }
                 }
                 withContext(Dispatchers.Main) {
-                    loadButton.text = "卸载模型"
+                    loadButton.text = getString(R.string.s_062)
                     loadButton.background = rounded(Color.rgb(246, 247, 250), 12,
                         strokeDp = 1, strokeColor = Color.rgb(219, 224, 234))
                     loadButton.setTextColor(C_TEXT)
                     // 加载语言模型 → 对话页回到聊天（drawMode 由「有无语言模型」自动决定）
                     drawPage?.llmLoaded = true
                     updateThinkEnabled()
-                    addSystemHint("对话模型加载完成。绘图模型也已加载时，直接说「画一张…」就会调它出图；否则请到「绘图」页。")
+                    addSystemHint(getString(R.string.s_077))
                 }
             } catch (e: Throwable) {
                 withContext(Dispatchers.Main) {
-                    setStatus("加载失败", C_ERR)
+                    setStatus(getString(R.string.s_058), C_ERR)
                     toast("加载失败：${e.message}")
                 }
             } finally {
@@ -1515,11 +1515,11 @@ class MainActivity : Activity() {
         conversation = null
         convThinking = null
         drawPage?.llmLoaded = false
-        loadButton.text = "加载对话模型"
+        loadButton.text = getString(R.string.s_060)
         loadButton.background = rounded(C_PRIMARY, 12)
         loadButton.setTextColor(Color.WHITE)
-        setStatus("对话模型已卸载", C_IDLE)
-        addSystemHint("对话模型已卸载。")
+        setStatus(getString(R.string.s_079), C_IDLE)
+        addSystemHint(getString(R.string.s_080))
         // 语言模型卸载后，若绘图模型还在，对话页会自动变回出图模式
         updateThinkEnabled()
     }
@@ -1545,7 +1545,7 @@ class MainActivity : Activity() {
             // cancelProcess() 之后 LiteRT 的 Conversation 可能已不可用：
             // 标记下一条消息发送前用历史静默重建，否则中断后再也发不出内容。
             if (conversation != null) convNeedsRebuild = true
-            toast("已中断生成")
+            toast(getString(R.string.s_083))
         } else {
             doSend()
         }
@@ -1569,19 +1569,19 @@ class MainActivity : Activity() {
 
     /** 新建一个对话（旧对话保留在列表中）。 */
     private fun newSession() {
-        if (busy) { toast("生成中，请稍候"); return }
+        if (busy) { toast(getString(R.string.s_144)); return }
         saveSessions()
-        val s = ChatSession(System.currentTimeMillis(), "新对话")
+        val s = ChatSession(System.currentTimeMillis(), getString(R.string.s_109))
         sessions += s
         current = s
         restoreSession()
         saveSessions()
-        toast("已新建对话（旧对话已保留）")
+        toast(getString(R.string.s_095))
     }
 
     private fun switchTo(s: ChatSession) {
         if (s === current) return
-        if (busy) { toast("生成中，请稍候"); return }
+        if (busy) { toast(getString(R.string.s_144)); return }
         saveSessions()
         current = s
         restoreSession()
@@ -1591,32 +1591,32 @@ class MainActivity : Activity() {
     private fun confirmDeleteSession(s: ChatSession) {
         if (sessions.size <= 1) {
             AlertDialog.Builder(this)
-                .setTitle("清空当前对话？")
-                .setMessage("这是最后一个对话，删除后会清空它的内容。")
-                .setPositiveButton("清空") { _, _ ->
+                .setTitle(getString(R.string.s_139))
+                .setMessage(getString(R.string.s_187))
+                .setPositiveButton(getString(R.string.s_136)) { _, _ ->
                     s.turns.clear()
-                    s.title = "新对话"
+                    s.title = getString(R.string.s_109)
                     restoreSession()
                     saveSessions()
                     if (drawerOpen) refreshDrawer()
-                    toast("当前对话已清空")
+                    toast(getString(R.string.s_101))
                 }
-                .setNegativeButton("取消", null)
+                .setNegativeButton(getString(R.string.s_066), null)
                 .show()
             return
         }
         AlertDialog.Builder(this)
-            .setTitle("删除对话？")
+            .setTitle(getString(R.string.s_054))
             .setMessage(s.title)
-            .setPositiveButton("删除") { _, _ ->
+            .setPositiveButton(getString(R.string.s_050)) { _, _ ->
                 val wasCurrent = s === current
                 sessions.remove(s)
                 if (wasCurrent) { current = sessions.last(); restoreSession() }
                 saveSessions()
                 if (drawerOpen) refreshDrawer()
-                toast("已删除")
+                toast(getString(R.string.s_086))
             }
-            .setNegativeButton("取消", null)
+            .setNegativeButton(getString(R.string.s_066), null)
             .show()
     }
 
@@ -1702,8 +1702,8 @@ class MainActivity : Activity() {
         convDrawCapable = canDrawFromChat
         if (!silent) {
             addSystemHint(
-                if (thinking) "🤔 已切换为思考模式（会话已按新模式重建，历史保留）"
-                else "已切换为普通模式（会话已按新模式重建，历史保留）"
+                if (thinking) getString(R.string.s_204)
+                else getString(R.string.s_085)
             )
         }
     }
@@ -1725,8 +1725,8 @@ class MainActivity : Activity() {
         jumpButton.visibility = View.GONE
         if (current.turns.isEmpty()) {
             if (showHint) {
-                addSystemHint("① 点「模型」页 —「对话模型」—「选择对话模型文件」选 .litertlm / .gguf（已复制过的可直接点列表选用）\n" +
-                    "② 点「加载对话模型」开始（首次初始化需几秒~几十秒）")
+                addSystemHint(getString(R.string.s_032) +
+                    getString(R.string.s_033))
             }
         } else {
             for (t in current.turns) renderTurn(t)
@@ -1740,7 +1740,7 @@ class MainActivity : Activity() {
      */
     private fun regenerate(turn: QaTurn) {
         if (busy) {
-            toast("生成中，请稍候")
+            toast(getString(R.string.s_144))
             return
         }
         val idx = current.turns.indexOf(turn)
@@ -1771,17 +1771,17 @@ class MainActivity : Activity() {
         val imgName = t.image
         if (imgName != null) {
             val bmp = readChatImage(imgName)
-            if (bmp != null) attachImageBubble(ai, bmp, imgName) else ai.answer.text = "(图片已丢失)"
+            if (bmp != null) attachImageBubble(ai, bmp, imgName) else ai.answer.text = getString(R.string.s_003)
         }
         if (t.thought.isNotEmpty()) {
             ai.thoughtBox.visibility = View.VISIBLE
             ai.thoughtBody.text = t.thought
-            ai.thoughtHeader.text = "🤔 思考过程（点击展开）"
+            ai.thoughtHeader.text = getString(R.string.s_205)
         }
         if (t.answer.isNotEmpty()) {
             markwonFull.setMarkdown(ai.answer, t.answer)
         } else {
-            ai.answer.text = "(无内容)"
+            ai.answer.text = getString(R.string.s_005)
             ai.answer.setTextColor(C_SUBTEXT)
         }
     }
@@ -1827,7 +1827,7 @@ class MainActivity : Activity() {
                         val o = arr.getJSONObject(i)
                         val s = ChatSession(
                             o.optLong("id", System.currentTimeMillis() + i),
-                            o.optString("title", "新对话"),
+                            o.optString("title", getString(R.string.s_109)),
                         )
                         val ts = o.optJSONArray("turns")
                         if (ts != null) {
@@ -1844,28 +1844,28 @@ class MainActivity : Activity() {
                 }
             }
         } catch (_: Throwable) {}
-        if (sessions.isEmpty()) sessions += ChatSession(System.currentTimeMillis(), "新对话")
+        if (sessions.isEmpty()) sessions += ChatSession(System.currentTimeMillis(), getString(R.string.s_109))
         current = sessions.getOrElse(idx) { sessions.first() }
     }
 
     // ================= 绘图模式（对话页直接出图） =================
 
     private fun doDrawFromChat(prompt: String, dpg: DrawPage) {
-        if (busy) { toast("正在生成中，请稍候"); return }
+        if (busy) { toast(getString(R.string.s_133)); return }
         val turn = QaTurn(prompt)
         current.turns += turn
-        if (current.title == "新对话") current.title = prompt.take(18)
+        if (current.title == getString(R.string.s_109)) current.title = prompt.take(18)
 
         inputEdit.setText("")
         addUserBubble(prompt)
         jumpToBottom()
         setBusy(true)
         setStoppingUi(true)
-        setStatus("绘图生成中（点 ■ 可中断）…", C_WARN)
+        setStatus(getString(R.string.s_166), C_WARN)
 
         val ai = addAiArea()
         ai.regenButton.visibility = View.GONE
-        markwonStream.setMarkdown(ai.answer, "🎨 正在生成图片…")
+        markwonStream.setMarkdown(ai.answer, getString(R.string.s_202))
 
         genJob = scope.launch {
             // 气泡里每秒刷新一次进度（sd.cpp 每步回调 + 本地计时），
@@ -1897,23 +1897,23 @@ class MainActivity : Activity() {
                 turn.answer = "🎨 seed=${img.seed}"
                 markwonStream.setMarkdown(ai.answer, "")
                 attachImageBubble(ai, bmp, name)
-                setStatus("绘图完成", C_OK)
+                setStatus(getString(R.string.s_153), C_OK)
             } catch (e: com.litertchat.app.draw.GenerationCancelledException) {
                 ticker.cancel()
-                turn.answer = "(已中断)"
-                markwonStream.setMarkdown(ai.answer, "(已中断)")
-                setStatus("已中断", C_IDLE)
+                turn.answer = getString(R.string.s_004)
+                markwonStream.setMarkdown(ai.answer, getString(R.string.s_004))
+                setStatus(getString(R.string.s_082), C_IDLE)
             } catch (e: CancellationException) {
                 ticker.cancel()
-                turn.answer = "(已中断)"
-                markwonStream.setMarkdown(ai.answer, "(已中断)")
-                setStatus("已中断", C_IDLE)
+                turn.answer = getString(R.string.s_004)
+                markwonStream.setMarkdown(ai.answer, getString(R.string.s_004))
+                setStatus(getString(R.string.s_082), C_IDLE)
                 throw e
             } catch (e: Throwable) {
                 ticker.cancel()
                 turn.answer = "绘图失败：${e.message}"
                 markwonStream.setMarkdown(ai.answer, "❌ 绘图失败：${e.message}")
-                setStatus("绘图失败", C_ERR)
+                setStatus(getString(R.string.s_152), C_ERR)
             } finally {
                 ticker.cancel()
                 ai.regenButton.visibility = View.VISIBLE
@@ -1950,15 +1950,15 @@ class MainActivity : Activity() {
             setPadding(0, dp(6), 0, 0)
             setOnClickListener {
                 AlertDialog.Builder(this@MainActivity)
-                    .setMessage("要保存这张图片到相册吗？（Pictures/Ponko）")
-                    .setPositiveButton("保存") { _, _ -> saveImageToGallery(bmp, name) }
-                    .setNegativeButton("取消", null)
+                    .setMessage(getString(R.string.s_170))
+                    .setPositiveButton(getString(R.string.s_044)) { _, _ -> saveImageToGallery(bmp, name) }
+                    .setNegativeButton(getString(R.string.s_066), null)
                     .show()
             }
         }
         ai.root.addView(iv, matchWrap())
         ai.root.addView(TextView(this).apply {
-            text = "点击图片可保存到相册"
+            text = getString(R.string.s_141)
             textSize = 11f
             setTextColor(C_SUBTEXT)
             setPadding(0, dp(4), 0, 0)
@@ -1992,7 +1992,7 @@ class MainActivity : Activity() {
                     false
                 }
             }
-            toast(if (ok) "已保存到相册（Pictures/Ponko）" else "保存失败：请检查存储权限")
+            toast(if (ok) getString(R.string.s_084) else getString(R.string.s_046))
         }
     }
 
@@ -2008,9 +2008,9 @@ class MainActivity : Activity() {
         }
 
         val isGgufRun = llamaModel != null
-        if (conversation == null && !isGgufRun) { toast("请先加载模型"); return }
+        if (conversation == null && !isGgufRun) { toast(getString(R.string.s_174)); return }
         if (busy) {
-            toast("正在生成中，请稍候")
+            toast(getString(R.string.s_133))
             return
         }
         var conv: Conversation? = null
@@ -2025,19 +2025,19 @@ class MainActivity : Activity() {
                 // 只有「思考开关变化」需要给用户可见提示，中断恢复/能力变化都静默重建
                 rebuildConversation(silent = !needThinkingRebuild)
             }
-            conv = conversation ?: run { toast("会话不可用，请重新加载模型"); return }
+            conv = conversation ?: run { toast(getString(R.string.s_042)); return }
         }
 
         val turn = QaTurn(text)
         current.turns += turn
-        if (current.title == "新对话") current.title = text.take(18)
+        if (current.title == getString(R.string.s_109)) current.title = text.take(18)
 
         inputEdit.setText("")
         addUserBubble(text)
         jumpToBottom()
         setBusy(true)
         setStoppingUi(true)
-        setStatus("生成中（点 ■ 可中断）…", C_WARN)
+        setStatus(getString(R.string.s_143), C_WARN)
 
         val ai = addAiArea { regenerate(turn) }
         ai.regenButton.visibility = View.GONE   // 生成结束后再显示，避免与「停止」混淆
@@ -2065,7 +2065,7 @@ class MainActivity : Activity() {
             val hadFocus = inputEdit.hasFocus()
             ai.thoughtBody.text = thoughtBuf.toString()
             ai.thoughtHeader.text = if (ai.thoughtBody.visibility == View.VISIBLE)
-                "🤔 思考过程（点击收起）" else "🤔 思考过程（点击展开）"
+                getString(R.string.s_206) else getString(R.string.s_205)
             if (hadFocus && !inputEdit.hasFocus()) inputEdit.requestFocus()
         }
 
@@ -2125,16 +2125,16 @@ class MainActivity : Activity() {
                     splitter.finish()
                     renderThought(true)
                     if (answerBuf.isEmpty() && thoughtBuf.isNotEmpty()) {
-                        ai.answer.text = "(模型只返回了思考过程，没有正文回答)"
+                        ai.answer.text = getString(R.string.s_006)
                         ai.answer.setTextColor(C_SUBTEXT)
                     } else if (answerBuf.isEmpty()) {
-                        ai.answer.text = "(模型没有返回内容)"
+                        ai.answer.text = getString(R.string.s_007)
                         ai.answer.setTextColor(C_SUBTEXT)
                     } else {
                         markwonFull.setMarkdown(ai.answer, answerBuf.toString())
                     }
                     saveSessions()
-                    setStatus("就绪", C_OK)
+                    setStatus(getString(R.string.s_081), C_OK)
                     return@launch
                 }
                 // Flow emits INCREMENTAL chunks (not snapshots): accumulate.
@@ -2173,10 +2173,10 @@ class MainActivity : Activity() {
                 }
 
                 if (answerBuf.isEmpty() && thoughtBuf.isNotEmpty()) {
-                    ai.answer.text = "(模型只返回了思考过程，没有正文回答)"
+                    ai.answer.text = getString(R.string.s_006)
                     ai.answer.setTextColor(C_SUBTEXT)
                 } else if (answerBuf.isEmpty()) {
-                    ai.answer.text = "(模型没有返回内容)"
+                    ai.answer.text = getString(R.string.s_007)
                     ai.answer.setTextColor(C_SUBTEXT)
                 } else {
                     // 生成结束：用完整渲染器一次性渲染（含表格）
@@ -2184,14 +2184,14 @@ class MainActivity : Activity() {
                 }
                 saveSessions()
                 renderThought(true)
-                setStatus("就绪", C_OK)
+                setStatus(getString(R.string.s_081), C_OK)
             } catch (e: CancellationException) {
                 cancelled = true
                 throw e
             } catch (e: Throwable) {
                 ai.answer.text = "(出错) ${e.message}"
                 ai.answer.setTextColor(C_ERR)
-                setStatus("生成出错", C_ERR)
+                setStatus(getString(R.string.s_145), C_ERR)
                 toast("生成出错：${e.message}")
             } finally {
                 ai.regenButton.visibility = View.VISIBLE
@@ -2204,10 +2204,10 @@ class MainActivity : Activity() {
                     if (answerBuf.isNotEmpty()) {
                         markwonFull.setMarkdown(ai.answer, answerBuf.toString())
                     } else if (thoughtBuf.isEmpty()) {
-                        ai.answer.text = "(已中断)"
+                        ai.answer.text = getString(R.string.s_004)
                         ai.answer.setTextColor(C_SUBTEXT)
                     }
-                    setStatus("已中断", C_IDLE)
+                    setStatus(getString(R.string.s_082), C_IDLE)
                 } else if (drawReq != null) {
                     // 交给绘图模型出图（必须等 busy 复位后再启动，否则会被当成「正在生成中」拦住）
                     val dpg = drawPage
@@ -2264,7 +2264,7 @@ class MainActivity : Activity() {
             visibility = View.GONE
         }
         val thoughtHeader = TextView(this).apply {
-            text = "🤔 思考过程（点击展开）"
+            text = getString(R.string.s_205)
             textSize = 12.5f
             setTextColor(C_THOUGHT_TEXT)
             typeface = Typeface.DEFAULT_BOLD
@@ -2279,7 +2279,7 @@ class MainActivity : Activity() {
         thoughtHeader.setOnClickListener {
             val show = thoughtBody.visibility != View.VISIBLE
             thoughtBody.visibility = if (show) View.VISIBLE else View.GONE
-            thoughtHeader.text = if (show) "🤔 思考过程（点击收起）" else "🤔 思考过程（点击展开）"
+            thoughtHeader.text = if (show) getString(R.string.s_206) else getString(R.string.s_205)
             if (show) scrollToBottom()
         }
         thoughtBox.addView(thoughtHeader, matchWrap())
@@ -2298,7 +2298,7 @@ class MainActivity : Activity() {
 
         // 「重新生成」：对回答不满意时，丢掉这一轮（及其后）的回答重问一次
         val regenButton = TextView(this).apply {
-            text = "↻ 重新生成"
+            text = getString(R.string.s_031)
             textSize = 12.5f
             setTextColor(C_PRIMARY)
             typeface = Typeface.DEFAULT_BOLD
