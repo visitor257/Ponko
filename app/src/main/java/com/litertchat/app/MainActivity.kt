@@ -347,6 +347,7 @@ class MainActivity : Activity() {
                 refreshDrawModels()
             }
         }
+        dpg.onSaveImage = { bmp, name -> saveImageToGallery(bmp, name) }
         dpg.onStatus = { text, isError ->
             runOnUiThread { setStatus(text, if (isError) C_ERR else C_WARN) }
         }
@@ -1919,7 +1920,7 @@ class MainActivity : Activity() {
         null
     }
 
-    /** 在 AI 气泡里插入图片，点图可存到相册 */
+    /** 在 AI 气泡里插入图片；点图弹确认框再存相册（以前点一下就存，容易误触） */
     private fun attachImageBubble(ai: AiArea, bmp: Bitmap, name: String) {
         val iv = ImageView(this).apply {
             setImageBitmap(bmp)
@@ -1927,11 +1928,17 @@ class MainActivity : Activity() {
             isClickable = true
             isFocusable = false
             setPadding(0, dp(6), 0, 0)
-            setOnClickListener { saveImageToGallery(bmp, name) }
+            setOnClickListener {
+                AlertDialog.Builder(this@MainActivity)
+                    .setMessage("要保存这张图片到相册吗？（Pictures/Ponko）")
+                    .setPositiveButton("保存") { _, _ -> saveImageToGallery(bmp, name) }
+                    .setNegativeButton("取消", null)
+                    .show()
+            }
         }
         ai.root.addView(iv, matchWrap())
         ai.root.addView(TextView(this).apply {
-            text = "点图片可保存到相册"
+            text = "点击图片可保存到相册"
             textSize = 11f
             setTextColor(C_SUBTEXT)
             setPadding(0, dp(4), 0, 0)

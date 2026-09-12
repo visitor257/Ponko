@@ -116,14 +116,40 @@ class DrawPage(
     private lateinit var stepsEdit: EditText
     private lateinit var cfgEdit: EditText
     private lateinit var seedEdit: EditText
-    private lateinit var sizeSpinner: android.widget.Spinner
     private lateinit var loraCheck: CheckBox
     private lateinit var loraHint: TextView
     private lateinit var genBtn: Button
     private lateinit var cancelBtn: Button
     private lateinit var progressText: TextView
     private lateinit var progressBar: ProgressBar
+
+    // 宽 / 高（可自由填，sd.cpp 要求 64 的倍数）
+    private lateinit var widthEdit: EditText
+    private lateinit var heightEdit: EditText
+
+    // 采样器 / 调度器（第 0 项 = 自动）
+    private lateinit var samplerSpinner: android.widget.Spinner
+    private lateinit var schedulerSpinner: android.widget.Spinner
+
+    /** LoRA 权重 */
+    private lateinit var loraScaleEdit: EditText
+
+    // 顶部菜单：参数 / 结果
+    private lateinit var tabParams: TextView
+    private lateinit var tabResult: TextView
+    private lateinit var paramPane: LinearLayout
+    private lateinit var resultPane: LinearLayout
+
+    // 结果面板
     private lateinit var resultImg: ImageView
+    private lateinit var resultInfo: TextView
+    private lateinit var saveBtn: Button
+
+    /** 最近一次生成的图（结果页「保存到相册」用） */
+    private var lastImage: Bitmap? = null
+
+    /** 保存图片到相册：MainActivity 注入实现（复用它的 MediaStore 逻辑）。参数：图 + 文件名 */
+    var onSaveImage: ((Bitmap, String) -> Unit)? = null
 
     fun build(): View {
         val root = LinearLayout(c).apply {
@@ -131,6 +157,27 @@ class DrawPage(
             setPadding(dp(16), dp(12), dp(16), dp(12))
             setBackgroundColor(0xFFF5F6F8.toInt())
         }
+
+        // ---- 顶部菜单：参数 / 结果 ----
+        val tabBar = LinearLayout(c).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setBackgroundColor(Color.WHITE)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(10) }
+        }
+        tabParams = tabItem("⚙️ 参数")
+        tabResult = tabItem("🖼️ 结果")
+        tabParams.setOnClickListener { switchPane(toResult = false) }
+        tabResult.setOnClickListener { switchPane(toResult = true) }
+        tabBar.addView(tabParams, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        tabBar.addView(tabResult, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        root.addView(tabBar)
+
+        // ---- 参数面板 ----
+        paramPane = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
+        root.addView(paramPane, matchWrap())
 
         // ---- 模型状态（模型统一在「模型」页选择并加载） ----
         val modelCard = card()
@@ -143,7 +190,7 @@ class DrawPage(
             setPadding(0, dp(6), 0, 0)
         }
         modelCard.addView(quantText)
-        root.addView(modelCard)
+        paramPane.addView(modelCard)
 
         // ---- 提示词 ----
         val promptCard = card()
@@ -153,21 +200,31 @@ class DrawPage(
         promptCard.addView(smallLabel("负向提示词（不想出现的内容）"))
         negEdit = labeledEdit("lowres, bad anatomy, bad hands, text, error, worst quality", singleLine = false, minLines = 2)
         promptCard.addView(negEdit, matchWrap(top = 4))
-        root.addView(promptCard)
+        paramPane.addView(promptCard)
 
         // ---- 参数 ----
         val paramCard = card()
         paramCard.addView(title("参数"))
+
+        // 尺寸：宽 × 高，自由填（sd.cpp 要求 64 的倍数）
+        widthEdit = smallNumber("512")
+        heightEdit = smallNumber("512")
+        paramCard.addView(whRow("图片尺寸（宽 × 高）",
+            "可自由填，但必须是 64 的倍数（会自动向下取整）。512×512 是 SD1.5 原生分辨率；256 出图快很多，适合先验证"))
+
+        // 采样器 / 调度器
+        samplerSpinner = choiceSpinner(
+            listOf("自动（勾 LoRA 时用 LCM，否则 Euler a）") + SdCppEngine.Sampler.entries.map { it.label }
+        )
+        schedulerSpinner = choiceSpinner(
+            listOf("自动（勾 LoRA 时用 LCM，否则 Discrete）") + SdCppEngine.Scheduler.entries.map { it.label }
+        )
+        paramCard.addView(paramRow("采样器", samplerSpinner, "Euler a 通用最稳；LCM / TCD 才是配 LoRA 少步加速的；DPM++ 2M 细节更好但更慢"))
+        paramCard.addView(paramRow("调度器", schedulerSpinner, "Discrete 是标准选择；Karras 常配 DPM++ 系；LCM 配 LCM 采样器"))
+
         stepsEdit = smallNumber("20")
         cfgEdit = smallNumber("7.0")
         seedEdit = smallNumber("-1")
-        sizeSpinner = android.widget.Spinner(c).apply {
-            adapter = android.widget.ArrayAdapter(
-                c, android.R.layout.simple_spinner_dropdown_item,
-                listOf("512×512（标准）", "384×384", "256×256（快速验证）")
-            )
-        }
-        paramCard.addView(paramRow("图片尺寸", sizeSpinner, "SD1.5 训练分辨率是 512；256 出图快很多，适合先验证能不能跑通"))
         paramCard.addView(paramRow("采样步数", stepsEdit, "越大越精细，也越慢（标准 20 步；用 LoRA 加速时 4~8 步即可）"))
         paramCard.addView(paramRow("CFG 引导", cfgEdit, "贴合提示词的程度，标准 7 左右；LCM-LoRA 建议 1.5~2"))
         paramCard.addView(paramRow("随机种子", seedEdit, "-1 = 每次随机；固定值可复现同一张图"))
@@ -194,13 +251,15 @@ class DrawPage(
             }
         }
         paramCard.addView(loraCheck)
+        loraScaleEdit = smallNumber("1.0")
+        paramCard.addView(paramRow("LoRA 权重", loraScaleEdit, "一般 1.0；画风太浓可降到 0.6~0.8，加强可到 1.2（0 = 不挂）"))
         loraHint = TextView(c).apply {
             textSize = 11f
             setTextColor(subText)
             setPadding(0, dp(2), 0, 0)
         }
         paramCard.addView(loraHint)
-        root.addView(paramCard)
+        paramPane.addView(paramCard)
 
         // ---- 生成 ----
         genBtn = Button(c).apply {
@@ -210,7 +269,7 @@ class DrawPage(
             typeface = Typeface.DEFAULT_BOLD
             setOnClickListener { generateFromUi() }
         }
-        root.addView(genBtn, matchWrap(top = 4))
+        paramPane.addView(genBtn, matchWrap(top = 4))
 
         cancelBtn = Button(c).apply {
             text = "取消生成"
@@ -221,7 +280,7 @@ class DrawPage(
                 progressText.text = "正在中断…（当前采样步结束后生效）"
             }
         }
-        root.addView(cancelBtn, matchWrap(top = 4))
+        paramPane.addView(cancelBtn, matchWrap(top = 4))
 
         progressText = TextView(c).apply {
             textSize = 12f
@@ -229,24 +288,51 @@ class DrawPage(
             visibility = View.GONE
             setPadding(0, dp(8), 0, 0)
         }
-        root.addView(progressText)
+        paramPane.addView(progressText)
 
         progressBar = ProgressBar(c, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
             progress = 0
             visibility = View.GONE
         }
-        root.addView(progressBar, matchWrap(top = 6))
+        paramPane.addView(progressBar, matchWrap(top = 6))
 
+        // ---- 结果面板 ----
+        resultPane = LinearLayout(c).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+        }
+        root.addView(resultPane, matchWrap())
+
+        val resultCard = card()
+        resultCard.addView(title("生成结果"))
         resultImg = ImageView(c).apply {
             adjustViewBounds = true
-            visibility = View.GONE
-            setPadding(0, dp(10), 0, 0)
+            setPadding(dp(4), dp(10), dp(4), dp(8))
         }
-        root.addView(resultImg)
+        resultCard.addView(resultImg, matchWrap())
+        resultInfo = TextView(c).apply {
+            textSize = 12f
+            setTextColor(subText)
+            text = "还没有生成图片 —— 到「参数」页写完提示词后点「开始生成」"
+        }
+        resultCard.addView(resultInfo)
+        saveBtn = Button(c).apply {
+            text = "保存到相册"
+            setBackgroundColor(primary)
+            setTextColor(Color.WHITE)
+            typeface = Typeface.DEFAULT_BOLD
+            setOnClickListener {
+                val b = lastImage
+                if (b == null) toast("还没有生成图片") else onSaveImage?.invoke(b, saveName())
+            }
+        }
+        resultCard.addView(saveBtn, matchWrap(top = 10))
+        resultPane.addView(resultCard)
 
         refreshLoraHint()
         refreshQuantText()
+        switchPane(toResult = false)
         return root
     }
 
@@ -666,11 +752,13 @@ class DrawPage(
                 }
                 ticker.cancel()
                 val bmp = toBitmap(img)
-                resultImg.post {
-                    resultImg.setImageBitmap(bmp)
-                    resultImg.visibility = View.VISIBLE
-                }
                 val sec = (System.currentTimeMillis() - startedAt) / 1000
+                resultImg.post {
+                    lastImage = bmp
+                    resultImg.setImageBitmap(bmp)
+                    resultInfo.text = "${img.width}×${img.height} · seed ${img.seed} · 耗时 ${sec} 秒"
+                    switchPane(toResult = true)   // 出图后自动跳到结果页
+                }
                 progressText.post { progressText.text = "完成：${img.width}×${img.height}，seed=${img.seed}，耗时 ${sec} 秒" }
                 onStatus?.invoke("绘图完成（${sec} 秒）", false)
             } catch (e: Throwable) {
@@ -706,14 +794,9 @@ class DrawPage(
         val cfg = cfgEdit.text.toString().toFloatOrNull()?.coerceIn(1f, 30f) ?: 7.0f
         val seed = seedEdit.text.toString().toLongOrNull() ?: -1L
         val useSeed = if (seed < 0) System.currentTimeMillis() else seed
-        val dim = run {
-            val s = sizeSpinner.selectedItem?.toString() ?: ""
-            when {
-                s.startsWith("256") -> 256
-                s.startsWith("384") -> 384
-                else -> 512
-            }
-        }
+        // 宽高：sd.cpp 要求 64 的倍数，向下取整；夹到 64~2048 防止手滑
+        val w = (widthEdit.text.toString().toIntOrNull() ?: 512).let { (it / 64) * 64 }.coerceIn(64, 2048)
+        val hgt = (heightEdit.text.toString().toIntOrNull() ?: 512).let { (it / 64) * 64 }.coerceIn(64, 2048)
         onProgress(0, steps)
         cancelRequested = false
 
@@ -726,9 +809,11 @@ class DrawPage(
         // EditText 必须在主线程读，先取出来再进 IO
         val negative = negEdit.text.toString()
 
-        // 采样器/调度器：勾了 LoRA 就走 LCM（否则 LCM-LoRA 效果大打折扣），否则 Euler a
-        val sampler = if (lora != null) SdCppEngine.Sampler.LCM else SdCppEngine.Sampler.EULER_A
-        val scheduler = if (lora != null) SdCppEngine.Scheduler.LCM else SdCppEngine.Scheduler.DISCRETE
+        // 采样器/调度器：默认「自动」——勾了 LoRA 就走 LCM（否则 LCM-LoRA 效果大打折扣），否则 Euler a + Discrete
+        val sampler = pickSampler(lora != null)
+        val scheduler = pickScheduler(lora != null)
+        // LoRA 权重：0 = 不挂，1.0 是标准
+        val loraScale = loraScaleEdit.text.toString().toFloatOrNull()?.coerceIn(0f, 2f) ?: 1.0f
 
         // 推理是同步阻塞的 native 调用（一张几百秒），绝不能跟调用方同线程——
         // 调用方基本都在 Dispatchers.Main，否则整个 UI 会卡死到出图为止。
@@ -738,9 +823,9 @@ class DrawPage(
                 prompt = prompt,
                 negative = negative,
                 loraPath = lora?.absolutePath,
-                loraScale = 1.0f,
-                width = dim,
-                height = dim,
+                loraScale = loraScale,
+                width = w,
+                height = hgt,
                 steps = steps,
                 cfg = cfg,
                 seed = useSeed,
@@ -751,6 +836,20 @@ class DrawPage(
         } ?: throw IllegalStateException("生成失败（sd.cpp 返回空）")
         onProgress(steps, steps)
         return ImageData(bmp, useSeed)
+    }
+
+    /** 采样器选择：索引 0 = 自动；其余按 SdCppEngine.Sampler 顺序 */
+    private fun pickSampler(hasLora: Boolean): SdCppEngine.Sampler {
+        val idx = samplerSpinner.selectedItemPosition
+        if (idx <= 0) return if (hasLora) SdCppEngine.Sampler.LCM else SdCppEngine.Sampler.EULER_A
+        return SdCppEngine.Sampler.entries.getOrElse(idx - 1) { SdCppEngine.Sampler.EULER_A }
+    }
+
+    /** 调度器选择：索引 0 = 自动 */
+    private fun pickScheduler(hasLora: Boolean): SdCppEngine.Scheduler {
+        val idx = schedulerSpinner.selectedItemPosition
+        if (idx <= 0) return if (hasLora) SdCppEngine.Scheduler.LCM else SdCppEngine.Scheduler.DISCRETE
+        return SdCppEngine.Scheduler.entries.getOrElse(idx - 1) { SdCppEngine.Scheduler.DISCRETE }
     }
 
     fun toBitmap(img: ImageData): Bitmap = img.bitmap
@@ -846,6 +945,56 @@ class DrawPage(
         LinearLayout.LayoutParams.MATCH_PARENT,
         LinearLayout.LayoutParams.WRAP_CONTENT
     ).apply { topMargin = dp(top) }
+
+    /** 顶部菜单的一项 */
+    private fun tabItem(t: String) = TextView(c).apply {
+        text = t
+        textSize = 13.5f
+        gravity = Gravity.CENTER
+        setPadding(0, dp(11), 0, dp(11))
+    }
+
+    /** 切换「参数 / 结果」面板，并高亮当前项 */
+    private fun switchPane(toResult: Boolean) {
+        if (!::paramPane.isInitialized) return
+        paramPane.visibility = if (toResult) View.GONE else View.VISIBLE
+        resultPane.visibility = if (toResult) View.VISIBLE else View.GONE
+        for ((tv, sel) in listOf(tabParams to !toResult, tabResult to toResult)) {
+            tv.setTextColor(if (sel) primary else subText)
+            tv.typeface = if (sel) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+            tv.setBackgroundColor(if (sel) 0xFFEDF1FF.toInt() else Color.WHITE)
+        }
+    }
+
+    /** 宽 × 高 输入行 */
+    private fun whRow(label: String, hint: String): View {
+        val wrap = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
+        wrap.addView(smallLabel(label))
+        val row = LinearLayout(c).apply { orientation = LinearLayout.HORIZONTAL }
+        row.addView(widthEdit, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        row.addView(TextView(c).apply {
+            text = " × "
+            textSize = 14f
+            setTextColor(textColor)
+            gravity = Gravity.CENTER
+        }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        row.addView(heightEdit, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        wrap.addView(row, matchWrap(top = 4))
+        wrap.addView(TextView(c).apply {
+            text = hint
+            textSize = 10.5f
+            setTextColor(subText)
+            setPadding(0, dp(3), 0, 0)
+        })
+        return wrap
+    }
+
+    private fun choiceSpinner(items: List<String>) = android.widget.Spinner(c).apply {
+        adapter = android.widget.ArrayAdapter(c, android.R.layout.simple_spinner_dropdown_item, items)
+    }
+
+    /** 结果图保存用的文件名 */
+    private fun saveName(): String = "ponko_${System.currentTimeMillis()}.png"
 }
 
 
