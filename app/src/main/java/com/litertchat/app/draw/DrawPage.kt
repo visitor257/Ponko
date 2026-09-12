@@ -764,6 +764,7 @@ class DrawPage(
     // ================= 生成 =================
 
     private fun generateFromUi() {
+        persistAll()   // 生成前先把参数落盘，保证「改完就生成」也被记住
         if (!isReady()) {
             val msg = if (llmLoaded) "当前加载的是语言模型，不能绘图。请到「模型」页加载绘图模型（.gguf）。"
             else "请先到「模型」页的「绘图模型」里选择并加载模型"
@@ -1074,17 +1075,40 @@ class DrawPage(
     private fun loadInt(key: String, def: Int): Int = prefs().getInt(key, def)
 
     /**
-     * 参数改动即时落盘。只在输入框真正获得焦点时保存，
-     * 避免 build() 初始化时把恢复出来的值又写一遍。
+     * 参数改动即时落盘。绑定时机在 setText(初值) 之后，
+     * 所以初始化不会把恢复出来的值又写一遍。
      */
     private fun bindParam(edit: EditText, key: String) {
         edit.addTextChangedListener(object : android.text.TextWatcher {
             override fun afterTextChanged(s: android.text.Editable?) {
-                if (edit.hasFocus()) prefs().edit().putString(key, s?.toString() ?: "").apply()
+                val v = s?.toString().orEmpty()
+                if (v.isNotBlank()) prefs().edit().putString(key, v).apply()
             }
             override fun beforeTextChanged(s: CharSequence?, st: Int, b: Int, cnt: Int) {}
             override fun onTextChanged(s: CharSequence?, st: Int, b: Int, cnt: Int) {}
         })
+    }
+
+    /**
+     * 把当前所有参数写盘 —— 由 MainActivity.onPause() 与「开始生成」兜底调用。
+     * 不能只靠输入框的 TextWatcher：切 tab、直接杀进程等场景可能漏掉。
+     */
+    fun persistAll() {
+        if (!::stepsEdit.isInitialized) return
+        val e = prefs().edit()
+        fun put(k: String, ed: EditText) {
+            val v = ed.text.toString()
+            if (v.isNotBlank()) e.putString(k, v)
+        }
+        put(KEY_W, widthEdit)
+        put(KEY_H, heightEdit)
+        put(KEY_STEPS, stepsEdit)
+        put(KEY_CFG, cfgEdit)
+        put(KEY_SEED, seedEdit)
+        put(KEY_LORA_SCALE, loraScaleEdit)
+        e.putInt(KEY_SAMPLER, samplerSpinner.selectedItemPosition)
+        e.putInt(KEY_SCHEDULER, schedulerSpinner.selectedItemPosition)
+        e.apply()
     }
 
     /** Spinner 选择落盘 */

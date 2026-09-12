@@ -303,6 +303,7 @@ class MainActivity : Activity() {
     override fun onPause() {
         super.onPause()
         saveSessions()
+        drawPage?.persistAll()   // 绘图参数兜底落盘
     }
 
     override fun onDestroy() {
