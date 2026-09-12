@@ -156,6 +156,8 @@ class DrawPage(
     private lateinit var resultImg: ImageView
     private lateinit var resultInfo: TextView
     private lateinit var saveBtn: Button
+    private lateinit var historyRow: LinearLayout
+    private lateinit var histEmpty: TextView
 
     /** 最近一次生成的图（结果页「保存到相册」用） */
     private var lastImage: Bitmap? = null
@@ -341,6 +343,48 @@ class DrawPage(
         }
         resultCard.addView(saveBtn, matchWrap(top = 10))
         resultPane.addView(resultCard)
+
+        // ---- 生成历史（只活在内存里，App 进程结束即清空） ----
+        val histCard = card()
+        histCard.addView(title("生成历史"))
+        histCard.addView(TextView(c).apply {
+            text = "只留在内存里 —— 关掉 App 就清空。点缩略图切换大图，长按删除。"
+            textSize = 11f
+            setTextColor(subText)
+            setPadding(0, dp(4), 0, 0)
+        })
+        histEmpty = TextView(c).apply {
+            text = "还没有历史"
+            textSize = 12f
+            setTextColor(subText)
+            setPadding(0, dp(10), 0, 0)
+        }
+        histCard.addView(histEmpty)
+        historyRow = LinearLayout(c).apply { orientation = LinearLayout.HORIZONTAL }
+        val hsv = android.widget.HorizontalScrollView(c).apply {
+            isHorizontalScrollBarEnabled = false
+            addView(historyRow)
+        }
+        histCard.addView(hsv, matchWrap(top = 8))
+        val clearHistBtn = Button(c).apply {
+            text = "清空历史"
+            textSize = 12f
+            setTextColor(subText)
+            setOnClickListener {
+                if (DrawHistory.size() == 0) {
+                    toast("历史已经是空的")
+                } else {
+                    android.app.AlertDialog.Builder(act)
+                        .setMessage("清空全部生成历史？（已保存到相册的不受影响）")
+                        .setPositiveButton("清空") { _, _ -> DrawHistory.clear(); refreshHistory() }
+                        .setNegativeButton("取消", null)
+                        .show()
+                }
+            }
+        }
+        histCard.addView(clearHistBtn, matchWrap(top = 10))
+        resultPane.addView(histCard)
+        refreshHistory()
 
         refreshLoraHint()
         refreshQuantText()
@@ -765,9 +809,11 @@ class DrawPage(
                 val bmp = toBitmap(img)
                 val sec = (System.currentTimeMillis() - startedAt) / 1000
                 resultImg.post {
+                    DrawHistory.add(img)          // 先进历史（内存）
                     lastImage = bmp
                     resultImg.setImageBitmap(bmp)
                     resultInfo.text = "${img.width}×${img.height} · seed ${img.seed} · 耗时 ${sec} 秒"
+                    refreshHistory()
                     switchPane(toResult = true)   // 出图后自动跳到结果页
                 }
                 progressText.post { progressText.text = "完成：${img.width}×${img.height}，seed=${img.seed}，耗时 ${sec} 秒" }
@@ -1051,6 +1097,40 @@ class DrawPage(
 
     /** 结果图保存用的文件名 */
     private fun saveName(): String = "ponko_${System.currentTimeMillis()}.png"
+
+    // ---- 生成历史（只活在内存里，进程结束即清空） ----
+
+    /** 点缩略图：把大图切到这一张 */
+    private fun showHistoryImage(img: ImageData) {
+        lastImage = img.bitmap
+        resultImg.setImageBitmap(img.bitmap)
+        resultInfo.text = "${img.width}×${img.height} · seed ${img.seed}"
+    }
+
+    /** 重建缩略图列表 */
+    private fun refreshHistory() {
+        if (!::historyRow.isInitialized) return
+        val items = DrawHistory.list()
+        histEmpty.visibility = if (items.isEmpty()) View.VISIBLE else View.GONE
+        historyRow.removeAllViews()
+        for (img in items) {
+            val iv = ImageView(c).apply {
+                setImageBitmap(img.bitmap)
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                setBackgroundColor(0xFFEDEDED.toInt())
+                setOnClickListener { showHistoryImage(img) }
+                setOnLongClickListener {
+                    android.app.AlertDialog.Builder(act)
+                        .setMessage("删除这一张历史？（已保存到相册的不受影响）")
+                        .setPositiveButton("删除") { _, _ -> DrawHistory.remove(img); refreshHistory() }
+                        .setNegativeButton("取消", null)
+                        .show()
+                    true
+                }
+            }
+            historyRow.addView(iv, LinearLayout.LayoutParams(dp(76), dp(76)).apply { rightMargin = dp(8) })
+        }
+    }
 }
 
 
@@ -1058,4 +1138,31 @@ class DrawPage(
 class ImageData(val bitmap: Bitmap, val seed: Long) {
     val width: Int get() = bitmap.width
     val height: Int get() = bitmap.height
+}
+
+/**
+ * 绘图结果历史 —— 纯内存，App 进程结束即清空（用户要求「保留至程序被杀」）。
+ * 放在 object 里而不是 DrawPage 字段里，这样 Activity 重建（旋转屏幕、
+ * 内存回收后恢复）也能看到同一份历史。
+ */
+object DrawHistory {
+    /** 最多留这么多张，防止一直生成把内存撑爆（512×512 一张约 1MB） */
+    private const val MAX = 30
+    private val items = mutableListOf<ImageData>()
+
+    /** 新的排在最前 */
+    fun add(img: ImageData) {
+        items.add(0, img)
+        while (items.size > MAX) items.removeAt(items.size - 1)
+    }
+
+    fun list(): List<ImageData> = items
+
+    fun remove(img: ImageData) {
+        items.remove(img)
+    }
+
+    fun clear() = items.clear()
+
+    fun size() = items.size
 }
