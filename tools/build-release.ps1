@@ -45,12 +45,19 @@ $f = Get-Item $signed
 Write-Host ("  {0}  {1} bytes  {2}" -f $f.Name, $f.Length, $f.LastWriteTime)
 
 Step "4/5 拷贝到 Z 盘（VirtualBox 共享盘，可能离线）"
-try {
-    Copy-Item $signed "Z:\$RemoteName" -Force
-    Write-Host ("  Z:\{0} OK" -f $RemoteName)
-} catch {
-    Write-Warning ("  Z 盘不可用，跳过：{0}" -f $_.Exception.Message)
+# 注意：共享盘离线时 Copy-Item 会长时间阻塞且不抛异常，try/catch 拦不住，
+# 必须放进后台作业加超时，否则整个构建流程会卡在这里。
+$zj = Start-Job -ScriptBlock {
+    param($src, $dst)
+    try { Copy-Item $src $dst -Force; "OK" } catch { "FAIL: $($_.Exception.Message)" }
+} -ArgumentList $signed, "Z:\$RemoteName"
+if (Wait-Job $zj -Timeout 15) {
+    Write-Host ("  Z:\{0} -> {1}" -f $RemoteName, (Receive-Job $zj))
+} else {
+    Write-Warning "  Z 盘 15 秒内无响应（共享盘离线？），跳过"
+    Stop-Job $zj
 }
+Remove-Job $zj -Force
 
 if ($SkipUpload) {
     Write-Host "`n-SkipUpload 指定，跳过网盘上传。" -ForegroundColor Yellow

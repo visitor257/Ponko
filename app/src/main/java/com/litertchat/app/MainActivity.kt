@@ -421,17 +421,17 @@ class MainActivity : Activity() {
             clipToPadding = false
             setPadding(dp(12), dp(12), dp(12), dp(12))
         }
-        val card = card()
-
-        card.addView(pageTitle("模型"))
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
         // ================= 运行方式（对话 / 绘图共用） =================
+        val card = sectionCard()
+        card.addView(pageTitle("运行方式"))
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
         row.addView(TextView(this).apply {
-            text = "运行方式"
+            text = "后端"
             textSize = 13f
             setTextColor(C_TEXT)
         }, wrapWrap())
@@ -446,32 +446,33 @@ class MainActivity : Activity() {
         row.addView(backendSpinner, wrapWrap().apply { leftMargin = dp(6) })
         card.addView(row, matchWrap().apply { topMargin = dp(10) })
         card.addView(
-            hintText("对话与绘图共用。GPU 更快，但部分机型驱动不稳（尤其华为的 Vulkan）——绘图有独立进程保护，崩了会回退 CPU；对话模型若加载失败，改回 CPU 即可。"),
+            hintText("对话与绘图共用。GPU 更快，但部分机型驱动不稳（尤其华为 Vulkan）；加载失败就改回 CPU。"),
             matchWrap().apply { topMargin = dp(4) }
         )
 
         // ================= 对话模型 =================
-        card.addView(pageTitle("对话模型"), matchWrap().apply { topMargin = dp(12) })
-        card.addView(hintText("本地语言模型，用来聊天：.litertlm（LiteRT-LM）或 .gguf（llama.cpp）。首次会复制到 App 私有目录，之后可直接选用。GGUF 走 CPU 多线程，并在会话内复用 KV 前缀（长对话只需计算新增内容）。"))
-
-        card.addView(actionButton("选择对话模型文件（.litertlm / .gguf）") { pickModelFile() },
-            matchWrap().apply { topMargin = dp(12) })
-
-        savedContainer = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            visibility = View.GONE
-        }
-        card.addView(savedContainer, matchWrap().apply { topMargin = dp(6) })
+        val chatCard = sectionCard()
+        chatCard.addView(pageTitle("对话模型"))
+        chatCard.addView(hintText("本地语言模型：.litertlm（LiteRT-LM）或 .gguf（llama.cpp）。选文件后会复制到 App 私有目录，之后可直接点列表选用。"))
 
         modelInfoText = TextView(this).apply {
             text = "未选择对话模型文件"
             textSize = 12f
             setTextColor(C_SUBTEXT)
         }
-        card.addView(modelInfoText, matchWrap().apply { topMargin = dp(8) })
+        chatCard.addView(modelInfoText, matchWrap().apply { topMargin = dp(6) })
+
+        chatCard.addView(actionButton("选择对话模型文件（.litertlm / .gguf）") { pickModelFile() },
+            matchWrap().apply { topMargin = dp(8) })
+
+        savedContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+        }
+        chatCard.addView(savedContainer, matchWrap().apply { topMargin = dp(6) })
 
         loadButton = actionButton("加载对话模型") { toggleLoad() }
-        card.addView(loadButton, matchWrap().apply { topMargin = dp(12) })
+        chatCard.addView(loadButton, matchWrap().apply { topMargin = dp(8) })
 
         progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             visibility = View.GONE
@@ -479,12 +480,13 @@ class MainActivity : Activity() {
             indeterminateTintList = ColorStateList.valueOf(C_PRIMARY)
             progressTintList = ColorStateList.valueOf(C_PRIMARY)
         }
-        card.addView(progressBar, matchWrap().apply { topMargin = dp(8) })
+        chatCard.addView(progressBar, matchWrap().apply { topMargin = dp(8) })
 
         // ================= 绘图模型 =================
-        card.addView(pageTitle("绘图模型"), matchWrap().apply { topMargin = dp(24) })
-        card.addView(
-            hintText("stable-diffusion.cpp 的 GGUF 绘图模型（Anything V5 / SD1.5 等），用来生成图片：文件夹里放 .gguf 文件即可（合一版单文件；分离式模型会自动挑体积最大的当主模型、名字带 vae 的当 VAE）。加载后在「对话」页输入就是正面提示词。"),
+        val drawCard = sectionCard()
+        drawCard.addView(pageTitle("绘图模型"))
+        drawCard.addView(
+            hintText("stable-diffusion.cpp 的 GGUF 绘图模型（Anything V5 / SD1.5 等）。文件夹里放 .gguf 即可；加载后在「对话」页输入就是正面提示词。"),
             matchWrap().apply { topMargin = dp(4) }
         )
         val dStatus = TextView(this).apply {
@@ -493,10 +495,10 @@ class MainActivity : Activity() {
             setTextColor(C_SUBTEXT)
         }
         drawModelStatus = dStatus
-        card.addView(dStatus, matchWrap().apply { topMargin = dp(6) })
+        drawCard.addView(dStatus, matchWrap().apply { topMargin = dp(6) })
         // 上次崩溃信息（自捕获，供排查）
         if (pendingDrawCrash) {
-            card.addView(TextView(this).apply {
+            drawCard.addView(TextView(this).apply {
                 text = "⚠ 上次「加载绘图模型」中途崩溃了（native 层）。已执行阶段：\n" + (pendingDrawStage ?: "（无记录）")
                 textSize = 11f
                 setTextColor(C_ERR)
@@ -504,7 +506,7 @@ class MainActivity : Activity() {
             }, matchWrap())
         }
         takeCrashLog()?.let { log ->
-            card.addView(TextView(this).apply {
+            drawCard.addView(TextView(this).apply {
                 text = "上次崩溃日志：\n" + log.takeLast(1200)
                 textSize = 10.5f
                 setTextColor(C_ERR)
@@ -512,7 +514,7 @@ class MainActivity : Activity() {
             }, matchWrap())
         }
 
-        card.addView(
+        drawCard.addView(
             actionButton("选择绘图模型文件夹") { pickDrawModelTree() },
             matchWrap().apply { topMargin = dp(8) }
         )
@@ -521,12 +523,12 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
         }
-        card.addView(drawSavedContainer, matchWrap().apply { topMargin = dp(6) })
+        drawCard.addView(drawSavedContainer, matchWrap().apply { topMargin = dp(6) })
         // 加载 / 卸载合成一个按钮：未加载时点击 = 加载，已加载时点击 = 卸载
         drawToggleBtn = actionButton("加载绘图模型") { onDrawToggleClick() }
-        card.addView(drawToggleBtn, matchWrap().apply { topMargin = dp(8) })
-        card.addView(
-            actionButton("查看加载日志") {
+        drawCard.addView(drawToggleBtn, matchWrap().apply { topMargin = dp(8) })
+        drawCard.addView(
+            smallButton("查看加载日志") {
                 val f = File(filesDir, "draw/.loadstage")
                 val log = if (f.exists()) runCatching { f.readText() }.getOrDefault("（读取失败）") else "（无日志）"
                 val body = log.takeLast(8000)
@@ -552,13 +554,14 @@ class MainActivity : Activity() {
                     .setNegativeButton("关闭", null)
                     .show()
             },
-            matchWrap().apply { topMargin = dp(8) }
+            matchWrap().apply { topMargin = dp(10) }
         )
 
         // ================= LoRA 加速 =================
-        card.addView(pageTitle("LoRA 加速"), matchWrap().apply { topMargin = dp(24) })
-        card.addView(
-            hintText("LCM-LoRA 是几十 MB 的「蒸馏补丁」，挂到主模型上可把 20 步压到 4~8 步（约 5 倍加速）。它不改动主模型文件。注意：LoRA 和「量化」是两回事（量化由模型文件本身决定，这里会显示当前模型的量化等级）。国外直连慢的话用 hf-mirror 镜像。"),
+        val loraCard = sectionCard()
+        loraCard.addView(pageTitle("LoRA 加速"))
+        loraCard.addView(
+            hintText("LCM-LoRA 是几十 MB 的「蒸馏补丁」，挂到主模型上可把 20 步压到 4~8 步（约 5 倍加速），不改动主模型文件。LoRA 与「量化」是两回事（量化由模型文件本身决定，列表里会标出等级）。国外直连慢就用 hf-mirror 镜像。"),
             matchWrap().apply { topMargin = dp(4) }
         )
         val lStatus = TextView(this).apply {
@@ -567,26 +570,32 @@ class MainActivity : Activity() {
             setTextColor(C_SUBTEXT)
         }
         loraStatusTv = lStatus
-        card.addView(lStatus, matchWrap().apply { topMargin = dp(6) })
+        loraCard.addView(lStatus, matchWrap().apply { topMargin = dp(6) })
 
         loraBox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
         }
-        card.addView(loraBox, matchWrap().apply { topMargin = dp(6) })
+        loraCard.addView(loraBox, matchWrap().apply { topMargin = dp(6) })
 
-        card.addView(
+        loraCard.addView(
             actionButton("下载 LoRA（LCM-LoRA · 约 135MB）") { pickLoraSource() },
             matchWrap().apply { topMargin = dp(8) }
         )
-        card.addView(
-            actionButton("删除 LoRA") { confirmDeleteLora() },
-            matchWrap().apply { topMargin = dp(8) }
+        loraCard.addView(
+            smallButton("删除 LoRA") { confirmDeleteLora() },
+            matchWrap().apply { topMargin = dp(10) }
         )
+
+        root.addView(card)
+        root.addView(chatCard)
+        root.addView(drawCard)
+        root.addView(loraCard)
+
         refreshLoraUi()
         refreshDrawModels()
 
-        sv.addView(card, FrameLayout.LayoutParams(
+        sv.addView(root, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
         return sv
     }
@@ -625,6 +634,14 @@ class MainActivity : Activity() {
         background = rounded(C_CARD, 16)
         setPadding(dp(14), dp(12), dp(14), dp(12))
         elevation = dp(1).toFloat()
+    }
+
+    /** 模型页的分区卡片：每块内容一张，底部留 10dp 间距，避免全塞进一张大卡里。 */
+    private fun sectionCard(): LinearLayout = card().apply {
+        layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { bottomMargin = dp(10) }
     }
 
     private fun pageTitle(text: String) = TextView(this).apply {
