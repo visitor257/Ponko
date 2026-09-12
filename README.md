@@ -2,6 +2,8 @@
 
 > 名字来自日语「ポンコツ」(ponkotsu)——破铜烂铁。脑子不中用，但可以随时换成最好的模型。
 
+[English](README.en.md) · 中文
+
 一个**完全离线**的 Android 本地 AI App：既能聊大语言模型，也能画图。
 
 ## 对话
@@ -22,17 +24,24 @@
 
 ## 绘图
 
-引擎是 [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp)（本项目用 NDK 自行编译，流程见 `tools/sdcpp/`），读取 **GGUF 格式**的 Stable Diffusion 模型。
+引擎是 [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp)，读取 **GGUF 格式**的 Stable Diffusion 模型。
 
-- **文生图**：绘图页填提示词 → 生成 → 结果页可保存到相册
+> sd.cpp 源码在 `app/src/main/cpp/sd/`，构建时由 NDK + CMake **现场编译**（不再手工塞预编译 `.so`），
+> 所以改了 C++ 直接 `assembleRelease` 即可，不存在「源码改了但包内是旧库」的情况。
+
+- **文生图**：绘图页顶部切「参数」/「结果」两个视图；填提示词 → 生成 → 结果页可保存到相册
 - **生成历史**：结果页保留本次运行最近 30 张，可翻看 / 单张删除 / 一键清空；**只存在内存里，关掉 App 即清空**
 - **参数**：宽高（64 的倍数）、步数、CFG、种子、采样器、调度器都能调，**重启后自动记住**（提示词不保留）
 - **LCM-LoRA 加速**：App 内一键下载（HuggingFace 官方 / hf-mirror 双源），可把 20 步压到 4~8 步
 - **对话页出图**：语言模型与绘图模型都加载时，直接说「画一张…」就会调用绘图模型生成
 
+## 多语言
+
+界面文案全部资源化（`res/values` = 英文，`res/values-zh` = 中文），**跟随系统语言**自动切换，无需设置项。
+
 ## 构建
 
-需要 JDK 17 + Android SDK（compileSdk 36）。
+需要 JDK 17 + Android SDK（compileSdk 36）+ **NDK 27.3** + **CMake 3.31.6**。
 
 ```bash
 gradle assembleRelease
@@ -49,14 +58,15 @@ powershell -File tools/build-release.ps1
 ```
 
 - `minSdk 28` / `targetSdk 36`，**仅 arm64-v8a**（原生库限制，需真机，模拟器跑不了）
+- 首次全量编译 sd.cpp + ggml 约 8~9 分钟，C++ 未改动时增量仅约 10 秒
 - 主要依赖：`com.google.ai.edge.litertlm:litertlm-android:0.17.0`、`net.ladenthin:llama-android:5.1.0`、`io.noties.markwon:*:4.6.2`
-- 自编原生库：`libstable-diffusion.so`（sd.cpp 本体）、`libponko_sd.so`（JNI 桥）
+- CMake 现场产出：`libstable-diffusion.so`（sd.cpp 本体）、`libponko_sd.so`（JNI 桥）
 
 ## 模型从哪来
 
 - `.litertlm`：HuggingFace 上的 `litert-community` / `google` 组织（Gemma 系列等）
 - `.gguf`（对话）：HuggingFace 上任意 GGUF 量化模型；手机 CPU 上建议 **1B~3B、Q4 量化**
-- `.gguf`（绘图）：stable-diffusion.cpp 格式的 SD1.5 系模型（如 Anything V5）；**Q4_0 每步比 Q8_0 快，画质略降**
+- `.gguf`（绘图）：stable-diffusion.cpp 格式的 SD1.5 系模型（如 Anything V5）
 - **LoRA**：`lcm-lora-sdv1-5.safetensors`（约 130 MB），App 内可直接下载
 
 ## 已知限制
@@ -66,6 +76,7 @@ powershell -File tools/build-release.ps1
 - 「关闭思考」依赖模型自带的对话模板，个别模型可能仍会输出思考内容
 - 绘图是纯 CPU 推理：256×256 + LCM-LoRA 6 步约 1 分钟，512×512 明显更慢
 - 绘图量化等级写死在模型文件里，App 只读取并显示，不会转换
+- 绘图原生库用 `-march=armv8.2-a+dotprod+fp16` 编译，需要 2019 年后的 64 位 ARM 设备
 
 ## 许可
 

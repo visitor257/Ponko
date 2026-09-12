@@ -8,21 +8,21 @@ import urllib.request
 REPO = "visitor257/Ponko"
 TOKFILE = r"C:\Users\Administrator\Desktop\git_repo_tok.txt"
 APK = r"C:\Users\Administrator\.qclaw\workspace-agent-e522fb09\LiteRT-Chat\app\build\outputs\apk\release\Ponko-release.apk"
-TAG = "v1.1"
-NAME = "Ponko v1.1"
+TAG = "v1.1.1"
+NAME = "Ponko v1.1.1"
 
-BODY = """Ponko v1.1 —— 本地 AI App（Android）：聊天 + 绘图
+BODY = """Ponko v1.1.1 —— 本地 AI App（Android）：聊天 + 绘图
 
 所有推理都在本机离线运行，不联网、无遥测，对话记录只保存在设备本地。
+请先阅读 [README](https://github.com/visitor257/Ponko#readme)。
 
-## 本次新增（v1.0 → v1.1）
-- **绘图功能**：内置自编 stable-diffusion.cpp，读 GGUF 格式的 SD1.5 系模型，纯 CPU 文生图
-- **LCM-LoRA 加速**：App 内一键下载（HF 官方 / hf-mirror 双源），20 步压到 4~8 步
-- **对话页出图**：语言模型与绘图模型同时加载时，直接说「画一张…」就会调用绘图模型
-- **生成历史**：结果页保留本次运行最近 30 张，可翻看 / 单张删除（关掉 App 即清空）
-- **参数记忆**：绘图参数（宽高 / 步数 / CFG / 种子 / 采样器 / 调度器 / LoRA）重启后保留
-- **模型页改版**：分区卡片、双入口（对话模型 / 绘图模型）、加载卸载合一
-- 界面文案精简，关于页新增「作者」「项目」
+## 本次新增（v1.1 → v1.1.1）
+- **中英双语**：全部界面文案资源化，跟随系统语言自动切换（中文 / English）
+- **绘图提速**：打开 FlashAttention、线程数调优、改用 `-O3 -march=armv8.2-a+dotprod+fp16` 编译，256×256 实测从 125 秒降到 56 秒
+- **绘图页改版**：顶部「参数 / 结果」双视图；结果页一键保存到相册；生成按钮与进度条前移；「开始 / 中断」合并为一个按钮
+- **生成历史**：结果页保留最近 30 张（内存内，关闭即清空）
+- **参数记忆**：绘图参数重启后保留（修复了此前偶尔不生效的问题）
+- **构建方式**：sd.cpp 源码入仓，改由 Gradle / CMake 现场编译（对使用无影响）
 
 ## 对话功能
 - 双后端：LiteRT-LM（`.litertlm`）+ llama.cpp（`.gguf`）
@@ -32,10 +32,15 @@ BODY = """Ponko v1.1 —— 本地 AI App（Android）：聊天 + 绘图
 - 生成中可继续打字；中断后可继续对话；一键「重新生成」（随机种子，结果不重复）
 - 自动跟随滚动，上滑暂停、一键回到底部
 
+## 绘图功能
+- 内置自编 stable-diffusion.cpp，读 GGUF 格式的 SD1.5 系模型，纯 CPU 文生图
+- LCM-LoRA 加速：App 内一键下载（HF 官方 / hf-mirror 双源），20 步压到 4~8 步
+- 对话页出图：语言模型与绘图模型同时加载时，直接说「画一张…」就会调用绘图模型
+- 宽高 / 步数 / CFG / 种子 / 采样器 / 调度器全可调
+
 ## 安装
-- 仅支持 **arm64-v8a**（64 位 ARM 真机）
-- **minSdk 28**（Android 9 及以上）
-- 若装过旧版（debug 或 v1.0）请先卸载（签名不同，无法覆盖）
+- 仅支持 **arm64-v8a**（64 位 ARM 真机），**minSdk 28**（Android 9 及以上）
+- v1.1（versionCode 2）可直接覆盖安装；更早的 debug 版或 v1.0 请先卸载（签名不同）
 - 模型文件需自备：对话模型（`.litertlm` / `.gguf`）与绘图模型（SD1.5 GGUF）分别在 App 内「模型」页导入
 
 ## 许可
