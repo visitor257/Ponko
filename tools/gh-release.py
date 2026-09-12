@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """在 GitHub 上为 visitor257/Ponko 创建 Release 并上传 APK 附件。"""
 import json
+import os
 import re
 import sys
 import urllib.request
@@ -62,6 +63,14 @@ def req(url, data=None, ctype=None, method=None, timeout=180):
     return urllib.request.urlopen(r, timeout=timeout)
 
 
+def _head_sha():
+    """返回本地 HEAD 的完整 sha，避免 GitHub 用远端 main 的旧 HEAD 打 tag。"""
+    import subprocess
+    r = subprocess.run('git rev-parse HEAD', cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       capture_output=True, encoding="utf-8", errors="replace", shell=True)
+    return r.stdout.strip().splitlines()[0]
+
+
 def main():
     api = "https://api.github.com/repos/" + REPO
 
@@ -76,7 +85,7 @@ def main():
 
     payload = json.dumps({
         "tag_name": TAG,
-        "target_commitish": "main",
+        "target_commitish": _head_sha(),
         "name": NAME,
         "body": BODY,
         "draft": False,
