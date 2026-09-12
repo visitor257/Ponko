@@ -106,28 +106,50 @@ class MainActivity : Activity() {
 
     /** 语言模型可用的绘图命令说明（仅当绘图模型与语言模型同时就绪时注入）。 */
     private val drawToolPrompt = """
-        你还具备绘图能力：当用户想要的是一张图片时，先用一两句话回应，然后另起一行输出一个绘图命令：
+        你具备绘图能力，但只有在用户**明确要求生成/画一张图片**时才使用。
+        其他任何情况（闲聊、问答、写代码、翻译等）都正常回答，不要主动画图，也不要展示这个命令。
 
+        需要画图时：先用一两句话回应，然后在回复正文的最后另起一行输出：
         <draw>画面描述</draw>
 
         画面描述用英文、逗号分隔的关键词（例如 1girl, silver hair, school uniform, cherry blossoms），
-        只写画面本身，不要写参数、编号或解释。系统会用它调用绘图模型，并把图片直接展示给用户。
+        只写画面本身，不要写参数、编号或解释。
+        这条命令必须出现于你的最终回答正文中，不要写在思考过程里，否则系统收不到。
     """.trimIndent()
 
     /** 语言模型与绘图模型同时就绪 → 语言模型可以用 <draw> 命令调绘图模型。 */
     private val canDrawFromChat: Boolean
         get() = drawPage?.isReady() == true && (engine != null || llamaModel != null)
 
-    /** 从回答里取出 <draw>…</draw> 命令：返回提示词（无则 null），并把标记从正文里换掉。 */
-    private fun takeDrawCommand(answerBuf: StringBuilder, ai: AiArea, turn: QaTurn): String? {
+    /**
+     * 从回答里取出 <draw>…</draw> 命令：返回提示词（无则 null），并把标记从正文/思考里换掉。
+     * 先扫正文，再扫思考过程 —— 思考模式下模型常把「决定画图」写在 thought 里。
+     */
+    private fun takeDrawCommand(
+        answerBuf: StringBuilder,
+        thoughtBuf: StringBuilder,
+        ai: AiArea,
+        turn: QaTurn,
+    ): String? {
         if (!canDrawFromChat) return null
-        val m = drawCmdRegex.find(answerBuf) ?: return null
-        val prompt = m.groupValues[1].trim()
-        // 去掉原始标记，换一行说明，避免把 <draw> 写进对话历史
-        answerBuf.replace(m.range.first, m.range.last + 1, "（🖼 已交由绘图模型出图）")
-        turn.answer = answerBuf.toString()
-        markwonFull.setMarkdown(ai.answer, answerBuf.toString())
-        return prompt.ifEmpty { null }
+        // 1) 正文里的命令
+        drawCmdRegex.find(answerBuf)?.let { m ->
+            val prompt = m.groupValues[1].trim()
+            // 去掉原始标记，换一行说明，避免把 <draw> 写进对话历史
+            answerBuf.replace(m.range.first, m.range.last + 1, "（🖼 已交由绘图模型出图）")
+            turn.answer = answerBuf.toString()
+            markwonFull.setMarkdown(ai.answer, answerBuf.toString())
+            return prompt.ifEmpty { null }
+        }
+        // 2) 思考过程里的命令（思考模式）
+        drawCmdRegex.find(thoughtBuf)?.let { m ->
+            val prompt = m.groupValues[1].trim()
+            thoughtBuf.replace(m.range.first, m.range.last + 1, "（🖼 决定调用绘图模型出图）")
+            turn.thought = thoughtBuf.toString()
+            ai.thoughtBody.text = thoughtBuf.toString()
+            return prompt.ifEmpty { null }
+        }
+        return null
     }
 
     /** 对话页当前是否「出图模式」。
@@ -2137,7 +2159,7 @@ class MainActivity : Activity() {
             } finally {
                 ai.regenButton.visibility = View.VISIBLE
                 // 语言模型可能输出了 <draw>…</draw>：先把正文里的标记换掉再存历史
-                val drawReq = if (!cancelled) takeDrawCommand(answerBuf, ai, turn) else null
+                val drawReq = if (!cancelled) takeDrawCommand(answerBuf, thoughtBuf, ai, turn) else null
                 saveSessions()
                 setBusy(false)
                 setStoppingUi(false)
