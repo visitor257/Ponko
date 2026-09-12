@@ -669,7 +669,7 @@ class MainActivity : Activity() {
         val card = card()
 
         card.addView(pageTitle("关于"))
-        card.addView(hintText("版本 1.1"))
+        card.addView(hintText("版本 1.1.1"))
         val portrait = ImageView(this).apply {
             setImageResource(R.drawable.about_portrait)
             adjustViewBounds = true
