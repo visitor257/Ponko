@@ -101,6 +101,35 @@ class MainActivity : Activity() {
     private var busy = false
 
     /** 当前处于绘图模式：对话页的输入会被当作正面提示词去生成图片 */
+    /** 让语言模型「调用」绘图模型时使用的命令标记。 */
+    private val drawCmdRegex = Regex("<draw>(.*?)</draw>", RegexOption.DOT_MATCHES_ALL)
+
+    /** 语言模型可用的绘图命令说明（仅当绘图模型与语言模型同时就绪时注入）。 */
+    private val drawToolPrompt = """
+        你还具备绘图能力：当用户想要的是一张图片时，先用一两句话回应，然后另起一行输出一个绘图命令：
+
+        <draw>画面描述</draw>
+
+        画面描述用英文、逗号分隔的关键词（例如 1girl, silver hair, school uniform, cherry blossoms），
+        只写画面本身，不要写参数、编号或解释。系统会用它调用绘图模型，并把图片直接展示给用户。
+    """.trimIndent()
+
+    /** 语言模型与绘图模型同时就绪 → 语言模型可以用 <draw> 命令调绘图模型。 */
+    private val canDrawFromChat: Boolean
+        get() = drawPage?.isReady() == true && (engine != null || llamaModel != null)
+
+    /** 从回答里取出 <draw>…</draw> 命令：返回提示词（无则 null），并把标记从正文里换掉。 */
+    private fun takeDrawCommand(answerBuf: StringBuilder, ai: AiArea, turn: QaTurn): String? {
+        if (!canDrawFromChat) return null
+        val m = drawCmdRegex.find(answerBuf) ?: return null
+        val prompt = m.groupValues[1].trim()
+        // 去掉原始标记，换一行说明，避免把 <draw> 写进对话历史
+        answerBuf.replace(m.range.first, m.range.last + 1, "（🖼 已交由绘图模型出图）")
+        turn.answer = answerBuf.toString()
+        markwonFull.setMarkdown(ai.answer, answerBuf.toString())
+        return prompt.ifEmpty { null }
+    }
+
     /** 对话页当前是否「出图模式」。
      *  规则：语言模型在场时（包括两种模型同时加载），对话页一律走聊天；
      *  只有「绘图模型已就绪、且没有加载语言模型」时，对话页输入才当成绘图提示词。 */
@@ -1412,7 +1441,7 @@ class MainActivity : Activity() {
                     // 加载语言模型 → 对话页回到聊天（drawMode 由「有无语言模型」自动决定）
                     drawPage?.llmLoaded = true
                     updateThinkEnabled()
-                    addSystemHint("对话模型加载完成，可以开始对话了。想画图请到「绘图」页。")
+                    addSystemHint("对话模型加载完成。绘图模型也已加载时，直接说「画一张…」就会调它出图；否则请到「绘图」页。")
                 }
             } catch (e: Throwable) {
                 withContext(Dispatchers.Main) {
@@ -1551,6 +1580,8 @@ class MainActivity : Activity() {
      */
     private fun buildInferenceParams(s: ChatSession, maxTurns: Int = 24): InferenceParameters {
         val msgs = mutableListOf<Pair<String, String>>()
+        // 两种模型都就绪时，告知语言模型它可以用 <draw> 命令调绘图模型
+        if (canDrawFromChat) msgs += Pair("system", drawToolPrompt)
         for (t in s.turns.takeLast(maxTurns)) {
             msgs += Pair("user", t.user)
             if (t.answer.isNotEmpty()) msgs += Pair("assistant", t.answer)
@@ -1579,6 +1610,8 @@ class MainActivity : Activity() {
     /** 用某个对话的文本历史构建 LiteRT 会话配置。 */
     private fun configFor(s: ChatSession, thinking: Boolean): ConversationConfig {
         val msgs = mutableListOf<Message>()
+        // 两种模型都就绪时，告知语言模型它可以用 <draw> 命令调绘图模型
+        if (canDrawFromChat) msgs += Message.system(drawToolPrompt)
         for (t in s.turns) {
             msgs += Message.user(t.user)
             if (t.answer.isNotEmpty()) msgs += Message.model(t.answer)
@@ -2102,10 +2135,12 @@ class MainActivity : Activity() {
                 setStatus("生成出错", C_ERR)
                 toast("生成出错：${e.message}")
             } finally {
+                ai.regenButton.visibility = View.VISIBLE
+                // 语言模型可能输出了 <draw>…</draw>：先把正文里的标记换掉再存历史
+                val drawReq = if (!cancelled) takeDrawCommand(answerBuf, ai, turn) else null
                 saveSessions()
                 setBusy(false)
                 setStoppingUi(false)
-                ai.regenButton.visibility = View.VISIBLE
                 if (cancelled) {
                     if (answerBuf.isNotEmpty()) {
                         markwonFull.setMarkdown(ai.answer, answerBuf.toString())
@@ -2114,6 +2149,10 @@ class MainActivity : Activity() {
                         ai.answer.setTextColor(C_SUBTEXT)
                     }
                     setStatus("已中断", C_IDLE)
+                } else if (drawReq != null) {
+                    // 交给绘图模型出图（必须等 busy 复位后再启动，否则会被当成「正在生成中」拦住）
+                    val dpg = drawPage
+                    if (dpg != null) doDrawFromChat(drawReq, dpg)
                 }
                 scrollToBottom()
             }
