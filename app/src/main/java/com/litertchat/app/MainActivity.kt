@@ -101,7 +101,11 @@ class MainActivity : Activity() {
     private var busy = false
 
     /** 当前处于绘图模式：对话页的输入会被当作正面提示词去生成图片 */
-    private var drawMode = false
+    /** 对话页当前是否「出图模式」。
+     *  规则：语言模型在场时（包括两种模型同时加载），对话页一律走聊天；
+     *  只有「绘图模型已就绪、且没有加载语言模型」时，对话页输入才当成绘图提示词。 */
+    private val drawMode: Boolean
+        get() = drawPage?.isReady() == true && engine == null && llamaModel == null
 
     /** .gguf 架构探测结果缓存，避免重复读头部 */
     private val ggufKindCache = HashMap<String, GgufProbe.Kind>()
@@ -281,7 +285,6 @@ class MainActivity : Activity() {
         dpg.onPipelineReady = {
             // 回调可能来自 IO 线程，UI 操作统一回主线程
             runOnUiThread {
-                drawMode = true
                 dpg.llmLoaded = false
                 updateThinkEnabled()
                 drawModelStatus?.text = dpg.modelSummary()
@@ -1094,7 +1097,6 @@ class MainActivity : Activity() {
         }
         if (dpg.isReady()) {
             dpg.unloadModel()
-            drawMode = false
             updateThinkEnabled()
             drawModelStatus?.text = dpg.modelSummary()
             setStatus("未加载模型", C_IDLE)
@@ -1114,7 +1116,6 @@ class MainActivity : Activity() {
             drawModelStatus?.text = if (err == null) dpg.modelSummary() else err
             if (err == null) {
                 drawMainPath = dpg.currentMainName()?.let { File(filesDir, "draw/$it").absolutePath }
-                drawMode = true
                 dpg.llmLoaded = false
                 updateThinkEnabled()
                 refreshDrawModels()
@@ -1408,11 +1409,10 @@ class MainActivity : Activity() {
                     loadButton.background = rounded(Color.rgb(246, 247, 250), 12,
                         strokeDp = 1, strokeColor = Color.rgb(219, 224, 234))
                     loadButton.setTextColor(C_TEXT)
-                    // 加载语言模型 → 退出绘图模式
-                    drawMode = false
+                    // 加载语言模型 → 对话页回到聊天（drawMode 由「有无语言模型」自动决定）
                     drawPage?.llmLoaded = true
                     updateThinkEnabled()
-                    addSystemHint("对话模型加载完成，可以开始对话了。")
+                    addSystemHint("对话模型加载完成，可以开始对话了。想画图请到「绘图」页。")
                 }
             } catch (e: Throwable) {
                 withContext(Dispatchers.Main) {
@@ -1442,6 +1442,8 @@ class MainActivity : Activity() {
         loadButton.setTextColor(Color.WHITE)
         setStatus("对话模型已卸载", C_IDLE)
         addSystemHint("对话模型已卸载。")
+        // 语言模型卸载后，若绘图模型还在，对话页会自动变回出图模式
+        updateThinkEnabled()
     }
 
     // ================= chat =================
@@ -1910,7 +1912,7 @@ class MainActivity : Activity() {
 
         // 绘图模式：把输入当作正面提示词，按绘图页的参数（除正面提示词外）生成
         val dpg = drawPage
-        if (drawMode && dpg != null && dpg.isReady()) {
+        if (drawMode && dpg != null) {
             doDrawFromChat(text, dpg)
             return
         }
