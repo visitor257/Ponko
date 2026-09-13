@@ -106,8 +106,8 @@ powershell -File tools/build-release.ps1
 | 组件 | 许可证 | 分发方式 |
 | --- | --- | --- |
 | [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) | MIT | 源码随仓库分发（`app/src/main/cpp/sd/`） |
-| [ggml](https://github.com/ggerganov/ggml) | MIT | 源码随仓库分发（`app/src/main/cpp/sd/ggml/`） |
-| sd.cpp 附带第三方文件（stb / json.hpp / httplib / miniz / darts_clone） | Public Domain / MIT / BSD-3-Clause | 源码随仓库分发（`app/src/main/cpp/sd/thirdparty/`） |
+| [ggml](https://github.com/ggerganov/ggml)（另含 Intel / Codeplay / Arm / Mozilla 的贡献文件） | MIT / Apache-2.0 | 源码随仓库分发（`app/src/main/cpp/sd/ggml/`） |
+| sd.cpp 附带第三方文件（stb / json.hpp / httplib / miniz / zip / darts_clone） | Public Domain / MIT / BSD-3-Clause | 源码随仓库分发（`app/src/main/cpp/sd/thirdparty/`） |
 | [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM) | Apache-2.0 | Gradle 依赖 |
 | [llama.cpp](https://github.com/ggerganov/llama.cpp)（经 java-llama.cpp 绑定） | MIT | Gradle 依赖 |
 | [Markwon](https://github.com/noties/Markwon) | Apache-2.0 | Gradle 依赖 |

@@ -107,8 +107,8 @@ powershell -File tools/build-release.ps1
 | Component | License | Distributed as |
 | --- | --- | --- |
 | [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) | MIT | source in this repo (`app/src/main/cpp/sd/`) |
-| [ggml](https://github.com/ggerganov/ggml) | MIT | source in this repo (`app/src/main/cpp/sd/ggml/`) |
-| Third-party files bundled with sd.cpp (stb / json.hpp / httplib / miniz / darts_clone) | Public Domain / MIT / BSD-3-Clause | source in this repo (`app/src/main/cpp/sd/thirdparty/`) |
+| [ggml](https://github.com/ggerganov/ggml) (also carries contributed files from Intel / Codeplay / Arm / Mozilla) | MIT / Apache-2.0 | source in this repo (`app/src/main/cpp/sd/ggml/`) |
+| Third-party files bundled with sd.cpp (stb / json.hpp / httplib / miniz / zip / darts_clone) | Public Domain / MIT / BSD-3-Clause | source in this repo (`app/src/main/cpp/sd/thirdparty/`) |
 | [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM) | Apache-2.0 | Gradle dependency |
 | [llama.cpp](https://github.com/ggerganov/llama.cpp) (via java-llama.cpp binding) | MIT | Gradle dependency |
 | [Markwon](https://github.com/noties/Markwon) | Apache-2.0 | Gradle dependency |

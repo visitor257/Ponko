@@ -67,12 +67,26 @@ A. Bundled source code (distributed with this repository, under app/src/main/cpp
       Copyright: Copyright (c) 2023-2024 The ggml authors
       Source: https://github.com/ggerganov/ggml
       License text: app/src/main/cpp/sd/ggml/LICENSE
+      Note: The vendored ggml tree also carries files contributed by other
+            projects, each under a permissive license:
+              - Intel Corporation / Codeplay Software Ltd. (ggml-sycl,
+                ggml-openvino): MIT License, and Apache License 2.0 with
+                LLVM Exceptions for the parts derived from the LLVM Project
+              - Arm Limited - KleidiAI (ggml-cpu/kleidiai): MIT License
+              - Mozilla Foundation - llamafile sgemm
+                (ggml-cpu/llamafile/sgemm.cpp): MIT License
+              - nlohmann/json (thirdparty/json.hpp) embeds SIMDe
+                (MIT, Evan Nemerson) and Abseil (Apache License 2.0)
+            The GPU backends (CUDA / Metal / OpenCL / SYCL / OpenVINO) are kept
+            as source only and are not compiled into the app.
 
   - Third-party files bundled with stable-diffusion.cpp (thirdparty/)
-      - stb_image.h / stb_image_write.h: Public Domain or MIT
+      - stb_image.h / stb_image_write.h / stb_image_resize.h: Public Domain or MIT
       - json.hpp (JSON for Modern C++): MIT License
       - httplib.h (cpp-httplib): MIT License
       - miniz.h: MIT License
+      - zip.c / zip.h (kuba--/zip): MIT License
+        License text: licenses/zip-LICENSE.txt
       - darts_clone: BSD 3-Clause License
         License text: app/src/main/cpp/sd/thirdparty/LICENSE.darts_clone.txt
 
@@ -157,7 +171,7 @@ D. Components statically linked into third-party native libraries
       Full notices: licenses/onnxruntime-ThirdPartyNotices.txt
 
   The native libraries of stable-diffusion.cpp and of the llama.cpp binding
-  bundle ggml, stb, miniz, json.hpp, httplib and darts_clone (see section A).
+  bundle ggml, stb, miniz, json.hpp, httplib, zip and darts_clone (see section A).
 
   The Apache License 2.0 full text is available at licenses/apache-2.0.txt.
 
@@ -241,12 +255,25 @@ A. 内置源码（随本仓库分发，源码位于 app/src/main/cpp/）
       著作权：Copyright (c) 2023-2024 The ggml authors
       来源：https://github.com/ggerganov/ggml
       许可证文本：app/src/main/cpp/sd/ggml/LICENSE
+      说明：裁剪后的 ggml 目录里还包含其他项目贡献的文件，均为宽松许可：
+            - Intel Corporation / Codeplay Software Ltd.（ggml-sycl、
+              ggml-openvino）：MIT License；其中源自 LLVM Project 的部分为
+              Apache License 2.0 with LLVM Exceptions
+            - Arm Limited - KleidiAI（ggml-cpu/kleidiai）：MIT License
+            - Mozilla Foundation - llamafile sgemm
+              （ggml-cpu/llamafile/sgemm.cpp）：MIT License
+            - nlohmann/json（thirdparty/json.hpp）内嵌 SIMDe
+              （MIT，Evan Nemerson）与 Abseil（Apache License 2.0）
+            各 GPU 后端（CUDA / Metal / OpenCL / SYCL / OpenVINO）仅保留源码，
+            不参与 App 编译。
 
   - stable-diffusion.cpp 附带的第三方文件（thirdparty/）
       - stb_image.h / stb_image_write.h：公有领域（Public Domain）或 MIT
       - json.hpp（JSON for Modern C++）：MIT License
       - httplib.h（cpp-httplib）：MIT License
       - miniz.h：MIT License
+      - zip.c / zip.h（kuba--/zip）：MIT License
+        许可证文本：licenses/zip-LICENSE.txt
       - darts_clone：BSD 3-Clause License
         许可证文本：app/src/main/cpp/sd/thirdparty/LICENSE.darts_clone.txt
 
@@ -325,7 +352,7 @@ D. 静态链入第三方原生库的组件（打包在 APK 的 .so 里）
       完整声明：licenses/onnxruntime-ThirdPartyNotices.txt
 
   stable-diffusion.cpp 与 llama.cpp 绑定的原生库内含 ggml、stb、miniz、
-  json.hpp、httplib、darts_clone（见 A 段）。
+  json.hpp、httplib、zip、darts_clone（见 A 段）。
 
   Apache License 2.0 全文见 licenses/apache-2.0.txt。
 
