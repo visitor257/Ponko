@@ -161,6 +161,15 @@ D. Components statically linked into third-party native libraries
 
   The Apache License 2.0 full text is available at licenses/apache-2.0.txt.
 
+E. Build tooling distributed with this repository (not part of the app)
+
+  - Gradle Wrapper (gradle/wrapper/gradle-wrapper.jar, gradlew, gradlew.bat)
+      License: Apache License 2.0     Copyright: Copyright (c) Gradle, Inc.
+      Source: https://github.com/gradle/gradle
+      Note: Only the Wrapper is committed, so the project builds with the
+            exact Gradle version (9.7.1). It is a build-time tool and is not
+            included in the APK.
+
 --------------------------------------------------------------------------
 Note
 --------------------------------------------------------------------------
@@ -319,6 +328,14 @@ D. 静态链入第三方原生库的组件（打包在 APK 的 .so 里）
   json.hpp、httplib、darts_clone（见 A 段）。
 
   Apache License 2.0 全文见 licenses/apache-2.0.txt。
+
+E. 随本仓库分发的构建工具（不属于 App 本体）
+
+  - Gradle Wrapper（gradle/wrapper/gradle-wrapper.jar、gradlew、gradlew.bat）
+      许可证：Apache License 2.0  著作权：Copyright (c) Gradle, Inc.
+      来源：https://github.com/gradle/gradle
+      说明：仓库内只提交 Wrapper，以保证用固定版本的 Gradle（9.7.1）构建。
+            它只是构建期工具，不会打进 APK。
 
 --------------------------------------------------------------------------
 说明
