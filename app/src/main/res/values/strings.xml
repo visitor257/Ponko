@@ -36,7 +36,7 @@
 <string name="s_033">2. Tap \"Load chat model\" to start (first init takes seconds to tens of seconds)</string>
 <string name="s_034">⚙️ Params</string>
 <string name="s_035">⚠ The last \"Load draw model\" crashed in native code. Stages completed:\n</string>
-<string name="s_036">a cute anime girl, highly detailed</string>
+<string name="s_036">e.g. 1girl</string>
 <string name="s_037">Usually 1.0; drop to 0.6-0.8 if the style is too strong, raise to 1.2 for more (0 = disabled)</string>
 <string name="s_038">Last crash log:\n</string>
 <string name="s_039">Download LoRA (LCM-LoRA)</string>
@@ -267,4 +267,15 @@
     <string name="v_058">0 LoRA: %1$s (%2$s MB)</string>
     <string name="v_059">Generation failed (%1$s s): %2$s</string>
     <string name="v_060">See \"Load log\" for the full stack trace</string>
+    <string name="s_207">Text to Image</string>
+    <string name="s_208">Image to Image</string>
+    <string name="s_209">Reference image</string>
+    <string name="s_210">Choose image</string>
+    <string name="s_211">No image selected (tap above to pick from gallery)</string>
+    <string name="s_212">Denoise strength</string>
+    <string name="s_213">Smaller = closer to the source (0.05–0.99)</string>
+    <string name="s_214">Please choose a reference image first</string>
+    <string name="s_215">Could not read the selected image</string>
+    <string name="v_061">Reference selected: %1$s×%2$s</string>
+<string name="s_216">e.g. lowres, bad anatomy, bad hands, text, error, worst quality</string>
 </resources>

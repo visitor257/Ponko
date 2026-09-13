@@ -82,6 +82,10 @@ object SdCppEngine {
         sampleMethod: Int,
         scheduler: Int,
         cb: StepCallback?,
+        initData: ByteArray?,
+        initWidth: Int,
+        initHeight: Int,
+        strength: Float,
     ): IntArray?
 
     external fun nativeCancel(handle: Long)
@@ -105,7 +109,11 @@ object SdCppEngine {
         flashAttn: Boolean = true,
     ): Long = nativeCreate(modelPath, vaePath, nThreads, wtype, flashAttn)
 
-    /** 生成一张图；失败返回 null。 */
+    /** 生成一张图；失败返回 null。
+     *
+     *  initImage 非空则会走图生图（img2img）：它会被缩放到 width×height 后作为初始 latent，
+     *  strength(<1) 决定从第几步开始去噪（越小越接近原图）。
+     */
     fun render(
         handle: Long,
         prompt: String,
@@ -120,14 +128,43 @@ object SdCppEngine {
         sampler: Sampler = Sampler.EULER_A,
         scheduler: Scheduler = Scheduler.DISCRETE,
         cb: StepCallback? = null,
+        initImage: ByteArray? = null,
+        initWidth: Int = 0,
+        initHeight: Int = 0,
+        strength: Float = 1.0f,
     ): Bitmap? {
         val effectiveSeed = if (seed < 0) (System.currentTimeMillis() % 1_000_000_000L) else seed
+        val useInit = initImage != null && initImage.isNotEmpty() && initWidth > 0 && initHeight > 0
         val px = nativeGenerate(
             handle, prompt, negative, loraPath, loraScale,
             width, height, steps, cfg, effectiveSeed,
             sampler.code, scheduler.code, cb,
+            if (useInit) initImage else null,
+            if (useInit) initWidth else 0,
+            if (useInit) initHeight else 0,
+            if (useInit) strength else 1.0f,
         ) ?: return null
         if (px.isEmpty()) return null
         return Bitmap.createBitmap(px, width, height, Bitmap.Config.ARGB_8888)
+    }
+
+    /**
+     * Bitmap → RGB888 交错字节（每像素 3 字节，行优先，左上原点）。
+     * sd.cpp 的 init_image 就吃这个布局（见 sd_image_get_f32）。
+     */
+    fun bitmapToRgb888(bitmap: Bitmap): ByteArray {
+        val w = bitmap.width
+        val h = bitmap.height
+        val px = IntArray(w * h)
+        bitmap.getPixels(px, 0, w, 0, 0, w, h)
+        val out = ByteArray(w * h * 3)
+        var j = 0
+        for (i in px.indices) {
+            val p = px[i]
+            out[j++] = ((p shr 16) and 0xFF).toByte()
+            out[j++] = ((p shr 8) and 0xFF).toByte()
+            out[j++] = (p and 0xFF).toByte()
+        }
+        return out
     }
 }

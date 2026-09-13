@@ -36,7 +36,7 @@
     <string name="s_033">② 点「加载对话模型」开始（首次初始化需几秒~几十秒）</string>
     <string name="s_034">⚙️ 参数</string>
     <string name="s_035">⚠ 上次「加载绘图模型」中途崩溃了（native 层）。已执行阶段：\n</string>
-    <string name="s_036">一个可爱的动漫女孩，细节丰富</string>
+    <string name="s_036">例如：1girl</string>
     <string name="s_037">一般 1.0；画风太浓可降到 0.6~0.8，加强可到 1.2（0 = 不挂）</string>
     <string name="s_038">上次崩溃日志：\n</string>
     <string name="s_039">下载 LoRA（LCM-LoRA）</string>
@@ -267,4 +267,15 @@
     <string name="v_058">0 LoRA：%1$s（%2$s MB）</string>
     <string name="v_059">生成失败（%1$s 秒）：%2$s</string>
     <string name="v_060">完整堆栈见「查看加载日志」</string>
+    <string name="s_207">文生图</string>
+    <string name="s_208">图生图</string>
+    <string name="s_209">参考图</string>
+    <string name="s_210">选择图片</string>
+    <string name="s_211">未选择图片（点上方按钮从相册选择）</string>
+    <string name="s_212">重绘强度</string>
+    <string name="s_213">越小越接近原图（0.05–0.99）</string>
+    <string name="s_214">请先选择一张参考图</string>
+    <string name="s_215">无法读取所选图片</string>
+    <string name="v_061">已选择参考图：%1$s×%2$s</string>
+    <string name="s_216">例如：lowres, bad anatomy, bad hands, text, error, worst quality</string>
 </resources>

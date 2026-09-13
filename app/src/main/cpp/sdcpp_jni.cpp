@@ -118,7 +118,12 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeCreate(
 }
 
 // nativeGenerate(handle, prompt, negative, loraPath, loraScale,
-//                width, height, steps, cfg, seed, sampleMethod, scheduler, cb) -> IntArray(ARGB)
+//                width, height, steps, cfg, seed, sampleMethod, scheduler,
+//                cb, initData, initWidth, initHeight, strength) -> IntArray(ARGB)
+//
+// initData 非空 → 图生图（img2img）：RGB888 交错字节（每像素 3 字节，行优先，左上原点），
+// sd.cpp 会把它按 request 尺寸缩放后编码进 latent，并按 strength(<1) 决定起始噪声步数。
+// initData 为空 → 文生图，strength 忽略。
 extern "C" JNIEXPORT jintArray JNICALL
 Java_com_litertchat_app_draw_SdCppEngine_nativeGenerate(
         JNIEnv* env, jobject /*thiz*/,
@@ -127,7 +132,8 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeGenerate(
         jstring loraPath, jfloat loraScale,
         jint width, jint height, jint steps, jfloat cfg, jlong seed,
         jint sampleMethod, jint scheduler,
-        jobject cb) {
+        jobject cb,
+        jbyteArray initData, jint initWidth, jint initHeight, jfloat strength) {
     SdHandle* h = reinterpret_cast<SdHandle*>(handle);
     if (h == nullptr || h->ctx == nullptr) return nullptr;
 
@@ -164,6 +170,27 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeGenerate(
     g.batch_count     = 1;
     g.strength        = 1.0f;
     g.clip_skip       = -1;
+
+    // 图生图：拿到 RGB888 原始字节，指针在 generate_image 期间必须保持有效。
+    // 生成结束（含失败）后统一在下方 ReleaseByteArrayElements 释放。
+    jbyte* initBytes = nullptr;
+    if (initData != nullptr && initWidth > 0 && initHeight > 0) {
+        initBytes = env->GetByteArrayElements(initData, nullptr);
+        if (initBytes != nullptr) {
+            g.init_image.width   = static_cast<uint32_t>(initWidth);
+            g.init_image.height  = static_cast<uint32_t>(initHeight);
+            g.init_image.channel = 3;
+            g.init_image.data    = reinterpret_cast<uint8_t*>(initBytes);
+            // strength 夹到 (0,1)：=1 会退化成「全部重绘」（等价文生图，但白跑一遍 VAE 编码）
+            float s = strength;
+            if (!(s > 0.f)) s = 0.01f;
+            if (s >= 1.f)   s = 0.99f;
+            g.strength = s;
+            LOGI("img2img: init %dx%d, strength=%.2f", initWidth, initHeight, s);
+        } else {
+            LOGE("img2img: GetByteArrayElements returned null");
+        }
+    }
     if (useLora) {
         lora.is_high_noise = false;
         lora.multiplier    = loraScale;
@@ -210,6 +237,9 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeGenerate(
         LOGE("generate_image failed (ok=%d, n=%d)", ok ? 1 : 0, n);
     }
 
+    if (initBytes != nullptr && initData != nullptr) {
+        env->ReleaseByteArrayElements(initData, initBytes, JNI_ABORT);
+    }
     if (h->cb) { env->DeleteGlobalRef(h->cb); h->cb = nullptr; h->cb_mid = nullptr; }
     sd_set_progress_callback(nullptr, nullptr);
     g_active = nullptr;

@@ -80,6 +80,17 @@ class DrawPage(
         private const val KEY_LORA_SCALE = "drawLoraScale"
         private const val KEY_SAMPLER = "drawSampler"
         private const val KEY_SCHEDULER = "drawScheduler"
+
+        // 图生图参数（与文生图分开存）
+        private const val KEY_I2I_W = "i2iW"
+        private const val KEY_I2I_H = "i2iH"
+        private const val KEY_I2I_STEPS = "i2iSteps"
+        private const val KEY_I2I_CFG = "i2iCfg"
+        private const val KEY_I2I_SEED = "i2iSeed"
+        private const val KEY_I2I_STRENGTH = "i2iStrength"
+        private const val KEY_I2I_LORA_SCALE = "i2iLoraScale"
+        private const val KEY_I2I_SAMPLER = "i2iSampler"
+        private const val KEY_I2I_SCHEDULER = "i2iScheduler"
     }
 
     private val c: Context get() = act
@@ -170,6 +181,39 @@ class DrawPage(
     /** 最近一次生成的图（结果页「保存到相册」用） */
     private var lastImage: Bitmap? = null
 
+    // ---- 模式：文生图 / 图生图 ----
+    private lateinit var tabT2i: TextView
+    private lateinit var tabI2i: TextView
+    private lateinit var t2iContent: LinearLayout
+    private lateinit var i2iContent: LinearLayout
+
+    /** 当前参数页是否处于「图生图」模式 */
+    private var img2imgMode = false
+
+    // ---- 图生图专属控件 ----
+    private lateinit var i2iPromptEdit: EditText
+    private lateinit var i2iNegEdit: EditText
+    private lateinit var i2iWidthEdit: EditText
+    private lateinit var i2iHeightEdit: EditText
+    private lateinit var i2iStepsEdit: EditText
+    private lateinit var i2iCfgEdit: EditText
+    private lateinit var i2iSeedEdit: EditText
+    private lateinit var i2iStrengthEdit: EditText
+    private lateinit var i2iSamplerSpinner: android.widget.Spinner
+    private lateinit var i2iSchedulerSpinner: android.widget.Spinner
+    private lateinit var i2iLoraCheck: CheckBox
+    private lateinit var i2iLoraScaleEdit: EditText
+    private lateinit var i2iLoraHint: TextView
+    private lateinit var i2iGenBtn: Button
+    private lateinit var i2iProgressText: TextView
+    private lateinit var i2iProgressBar: ProgressBar
+    private lateinit var i2iPreview: ImageView
+    private lateinit var i2iPickBtn: Button
+    private lateinit var i2iImgHint: TextView
+
+    /** 图生图选中的参考图（仅内存，进程结束即失效） */
+    private var i2iBitmap: Bitmap? = null
+
     /** 保存图片到相册：MainActivity 注入实现（复用它的 MediaStore 逻辑）。参数：图 + 文件名 */
     var onSaveImage: ((Bitmap, String) -> Unit)? = null
 
@@ -203,6 +247,9 @@ class DrawPage(
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(10), dp(16), dp(12))
         }
+        // 文生图内容容器：下面的提示词/按钮/参数都先进这里，
+        // 再和「图生图」页面一起放进模式容器，由子标签切换。
+        t2iContent = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
 
         // ---- 模型状态（模型统一在「模型」页选择并加载） ----
         val modelCard = card()
@@ -217,15 +264,29 @@ class DrawPage(
         modelCard.addView(quantText)
         paramPane.addView(modelCard)
 
+        // ---- 模式子标签：文生图 / 图生图 ----
+        val modeBar = LinearLayout(c).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setBackgroundColor(Color.WHITE)
+            setPadding(dp(8), dp(2), dp(8), dp(2))
+        }
+        tabT2i = modeTab(c.getString(R.string.s_207))
+        tabI2i = modeTab(c.getString(R.string.s_208))
+        tabT2i.setOnClickListener { switchMode(toImg2Img = false) }
+        tabI2i.setOnClickListener { switchMode(toImg2Img = true) }
+        modeBar.addView(tabT2i, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        modeBar.addView(tabI2i, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        paramPane.addView(modeBar, matchWrap())
+
         // ---- 提示词 ----
         val promptCard = card()
         promptCard.addView(title(c.getString(R.string.s_108)))
         promptEdit = labeledEdit(c.getString(R.string.s_036), singleLine = false, minLines = 3)
         promptCard.addView(promptEdit, matchWrap(top = 6))
         promptCard.addView(smallLabel(c.getString(R.string.s_177)))
-        negEdit = labeledEdit("lowres, bad anatomy, bad hands, text, error, worst quality", singleLine = false, minLines = 2)
+        negEdit = labeledEdit(c.getString(R.string.s_216), singleLine = false, minLines = 2)
         promptCard.addView(negEdit, matchWrap(top = 4))
-        paramPane.addView(promptCard)
+        t2iContent.addView(promptCard)
 
         // ---- 生成 / 中断（同一个按钮），放在提示词与参数之间，方便盯着进度 ----
         genBtn = Button(c).apply {
@@ -235,7 +296,7 @@ class DrawPage(
             typeface = Typeface.DEFAULT_BOLD
             setOnClickListener { if (generating) doCancel() else generateFromUi() }
         }
-        paramPane.addView(genBtn, matchWrap(top = 2))
+        t2iContent.addView(genBtn, matchWrap(top = 2))
 
         progressText = TextView(c).apply {
             textSize = 12f
@@ -243,14 +304,14 @@ class DrawPage(
             visibility = View.GONE
             setPadding(0, dp(8), 0, 0)
         }
-        paramPane.addView(progressText)
+        t2iContent.addView(progressText)
 
         progressBar = ProgressBar(c, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
             progress = 0
             visibility = View.GONE
         }
-        paramPane.addView(progressBar, matchWrap(top = 4))
+        t2iContent.addView(progressBar, matchWrap(top = 4))
 
         // ---- 参数 ----
         val paramCard = card()
@@ -260,7 +321,7 @@ class DrawPage(
         widthEdit = smallNumber(loadParam(KEY_W, "512"))
         heightEdit = smallNumber(loadParam(KEY_H, "512"))
         paramCard.addView(whRow(c.getString(R.string.s_070),
-            c.getString(R.string.s_068)))
+            c.getString(R.string.s_068), widthEdit, heightEdit))
 
         // 采样器 / 调度器
         samplerSpinner = choiceSpinner(
@@ -307,6 +368,7 @@ class DrawPage(
                         cfgEdit.setText("1.8")
                     }
                 }
+                if (::i2iLoraCheck.isInitialized) i2iLoraCheck.isChecked = checked
                 refreshLoraHint()
             }
         }
@@ -320,7 +382,19 @@ class DrawPage(
             setPadding(0, dp(2), 0, 0)
         }
         paramCard.addView(loraHint)
-        paramPane.addView(paramCard)
+        t2iContent.addView(paramCard)
+
+        // ---- 图生图页面 ----
+        i2iContent = buildI2iContent()
+
+        // 模式容器：用 visibility 切换，不用嵌套 ViewPager，
+        // 否则会和外层「参数/结果」的左右翻页抢手势。
+        val paramHost = FrameLayout(c)
+        paramHost.addView(t2iContent, ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        paramHost.addView(i2iContent, ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        paramPane.addView(paramHost, matchWrap())
 
         // ---- 结果面板 ----
         resultPane = LinearLayout(c).apply {
@@ -412,8 +486,217 @@ class DrawPage(
 
         refreshLoraHint()
         refreshQuantText()
+        switchMode(toImg2Img = false)
         switchPane(toResult = false)
         return root
+    }
+
+    // ================= 图生图页面 =================
+
+    /** 构建「图生图」参数页（独立的一套控件，持久化键也独立） */
+    private fun buildI2iContent(): LinearLayout {
+        val box = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
+
+        // ---- 参考图 ----
+        val imgCard = card()
+        imgCard.addView(title(c.getString(R.string.s_209)))
+        i2iPreview = ImageView(c).apply {
+            adjustViewBounds = true
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setBackgroundColor(0xFFF2F3F5.toInt())
+            visibility = View.GONE
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+        }
+        imgCard.addView(i2iPreview, matchWrap(top = 8))
+        i2iPickBtn = Button(c).apply {
+            text = c.getString(R.string.s_210)
+            setBackgroundColor(primary)
+            setTextColor(Color.WHITE)
+            typeface = Typeface.DEFAULT_BOLD
+            setOnClickListener { pickImage() }
+        }
+        imgCard.addView(i2iPickBtn, matchWrap(top = 10))
+        i2iImgHint = TextView(c).apply {
+            text = c.getString(R.string.s_211)
+            textSize = 11.5f
+            setTextColor(subText)
+            setPadding(0, dp(6), 0, 0)
+        }
+        imgCard.addView(i2iImgHint)
+        box.addView(imgCard)
+
+        // ---- 提示词 ----
+        val promptCard = card()
+        promptCard.addView(title(c.getString(R.string.s_108)))
+        i2iPromptEdit = labeledEdit(c.getString(R.string.s_036), singleLine = false, minLines = 3)
+        promptCard.addView(i2iPromptEdit, matchWrap(top = 6))
+        promptCard.addView(smallLabel(c.getString(R.string.s_177)))
+        i2iNegEdit = labeledEdit(c.getString(R.string.s_216), singleLine = false, minLines = 2)
+        promptCard.addView(i2iNegEdit, matchWrap(top = 4))
+        box.addView(promptCard)
+
+        // ---- 生成 / 中断 ----
+        i2iGenBtn = Button(c).apply {
+            text = c.getString(R.string.s_098)
+            setBackgroundColor(primary)
+            setTextColor(Color.WHITE)
+            typeface = Typeface.DEFAULT_BOLD
+            setOnClickListener { if (generating) doCancel() else generateFromUiI2i() }
+        }
+        box.addView(i2iGenBtn, matchWrap(top = 2))
+
+        i2iProgressText = TextView(c).apply {
+            textSize = 12f
+            setTextColor(subText)
+            visibility = View.GONE
+            setPadding(0, dp(8), 0, 0)
+        }
+        box.addView(i2iProgressText)
+        i2iProgressBar = ProgressBar(c, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            progress = 0
+            visibility = View.GONE
+        }
+        box.addView(i2iProgressBar, matchWrap(top = 4))
+
+        // ---- 参数 ----
+        val paramCard = card()
+        paramCard.addView(title(c.getString(R.string.s_065)))
+
+        // 重绘强度：越小越接近原图
+        i2iStrengthEdit = smallNumber(loadParam(KEY_I2I_STRENGTH, "0.75"))
+        bindParam(i2iStrengthEdit, KEY_I2I_STRENGTH)
+        paramCard.addView(paramRow(c.getString(R.string.s_212), i2iStrengthEdit, c.getString(R.string.s_213)))
+
+        // 尺寸：默认选图时会同步成参考图尺寸（64 倍数）
+        i2iWidthEdit = smallNumber(loadParam(KEY_I2I_W, "512"))
+        i2iHeightEdit = smallNumber(loadParam(KEY_I2I_H, "512"))
+        bindParam(i2iWidthEdit, KEY_I2I_W)
+        bindParam(i2iHeightEdit, KEY_I2I_H)
+        paramCard.addView(whRow(c.getString(R.string.s_070), c.getString(R.string.s_068), i2iWidthEdit, i2iHeightEdit))
+
+        i2iSamplerSpinner = choiceSpinner(
+            listOf(c.getString(R.string.s_169)) + SdCppEngine.Sampler.entries.map { it.label }
+        )
+        i2iSchedulerSpinner = choiceSpinner(
+            listOf(c.getString(R.string.s_168)) + SdCppEngine.Scheduler.entries.map { it.label }
+        )
+        i2iSamplerSpinner.setSelection(loadInt(KEY_I2I_SAMPLER, 0).coerceIn(0, i2iSamplerSpinner.adapter.count - 1), false)
+        i2iSchedulerSpinner.setSelection(loadInt(KEY_I2I_SCHEDULER, 0).coerceIn(0, i2iSchedulerSpinner.adapter.count - 1), false)
+        i2iSamplerSpinner.onItemSelectedListener = persistSpinner(KEY_I2I_SAMPLER)
+        i2iSchedulerSpinner.onItemSelectedListener = persistSpinner(KEY_I2I_SCHEDULER)
+        paramCard.addView(paramRow(c.getString(R.string.s_191), i2iSamplerSpinner, c.getString(R.string.s_015)))
+        paramCard.addView(paramRow(c.getString(R.string.s_176), i2iSchedulerSpinner, c.getString(R.string.s_014)))
+
+        i2iStepsEdit = smallNumber(loadParam(KEY_I2I_STEPS, "20"))
+        i2iCfgEdit = smallNumber(loadParam(KEY_I2I_CFG, "7.0"))
+        i2iSeedEdit = smallNumber(loadParam(KEY_I2I_SEED, "-1"))
+        bindParam(i2iStepsEdit, KEY_I2I_STEPS)
+        bindParam(i2iCfgEdit, KEY_I2I_CFG)
+        bindParam(i2iSeedEdit, KEY_I2I_SEED)
+        paramCard.addView(paramRow(c.getString(R.string.s_192), i2iStepsEdit, c.getString(R.string.s_179)))
+        paramCard.addView(paramRow(c.getString(R.string.s_013), i2iCfgEdit, c.getString(R.string.s_178)))
+        paramCard.addView(paramRow(c.getString(R.string.s_193), i2iSeedEdit, c.getString(R.string.s_008)))
+
+        // LoRA（与文生图共用同一个开关，两边 checkbox 相互同步）
+        i2iLoraCheck = CheckBox(c).apply {
+            text = c.getString(R.string.s_022)
+            textSize = 13f
+            setTextColor(textColor)
+            isChecked = useLora
+            setPadding(0, dp(10), 0, 0)
+            setOnCheckedChangeListener { _, checked ->
+                useLora = checked
+                if (checked) {
+                    if (activeLora() == null) toast(c.getString(R.string.s_186))
+                    else { i2iStepsEdit.setText("6"); i2iCfgEdit.setText("1.8") }
+                }
+                if (::loraCheck.isInitialized) loraCheck.isChecked = checked
+                refreshLoraHint()
+            }
+        }
+        paramCard.addView(i2iLoraCheck)
+        i2iLoraScaleEdit = smallNumber(loadParam(KEY_I2I_LORA_SCALE, "1.0"))
+        bindParam(i2iLoraScaleEdit, KEY_I2I_LORA_SCALE)
+        paramCard.addView(paramRow(c.getString(R.string.s_024), i2iLoraScaleEdit, c.getString(R.string.s_037)))
+        i2iLoraHint = TextView(c).apply {
+            textSize = 11f
+            setTextColor(subText)
+            setPadding(0, dp(2), 0, 0)
+        }
+        paramCard.addView(i2iLoraHint)
+        box.addView(paramCard)
+
+        return box
+    }
+
+    /** 切换「文生图 / 图生图」参数页 */
+    private fun switchMode(toImg2Img: Boolean) {
+        if (!::t2iContent.isInitialized) return
+        img2imgMode = toImg2Img
+        t2iContent.visibility = if (toImg2Img) View.GONE else View.VISIBLE
+        i2iContent.visibility = if (toImg2Img) View.VISIBLE else View.GONE
+        for ((tv, sel) in listOf(tabT2i to !toImg2Img, tabI2i to toImg2Img)) {
+            tv.setTextColor(if (sel) primary else subText)
+            tv.typeface = if (sel) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+            tv.setBackgroundColor(if (sel) 0xFFEDF1FF.toInt() else Color.WHITE)
+        }
+    }
+
+    /** 模式子标签样式（比顶部页签略小） */
+    private fun modeTab(t: String) = TextView(c).apply {
+        text = t
+        textSize = 13f
+        gravity = Gravity.CENTER
+        setPadding(0, dp(9), 0, dp(9))
+    }
+
+    /** 从相册/文件选择参考图 */
+    private fun pickImage() {
+        val i = android.content.Intent(android.content.Intent.ACTION_GET_CONTENT).apply {
+            addCategory(android.content.Intent.CATEGORY_OPENABLE)
+            type = "image/*"
+        }
+        act.startActivityForResult(i, REQ_IMAGE)
+    }
+
+    /** 解码选中的图片；超过 2048 像素则按比例下采样，避免 OOM */
+    private fun decodePickedImage(uri: Uri): Bitmap? = runCatching {
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        c.contentResolver.openInputStream(uri)?.use {
+            android.graphics.BitmapFactory.decodeStream(it, null, bounds)
+        }
+        var sample = 1
+        val maxSide = maxOf(bounds.outWidth, bounds.outHeight)
+        while (maxSide / sample > 2048) sample *= 2
+        val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+        c.contentResolver.openInputStream(uri)?.use {
+            android.graphics.BitmapFactory.decodeStream(it, null, opts)
+        }
+    }.getOrNull()
+
+    /** 选定参考图后的处理：预览 + 同步输出尺寸 */
+    private fun applyPickedImage(bmp: Bitmap) {
+        i2iBitmap = bmp
+        i2iPreview.setImageBitmap(bmp)
+        i2iPreview.visibility = View.VISIBLE
+        val w = ((bmp.width / 64) * 64).coerceIn(64, 2048)
+        val h = ((bmp.height / 64) * 64).coerceIn(64, 2048)
+        i2iWidthEdit.setText(w.toString())
+        i2iHeightEdit.setText(h.toString())
+        i2iImgHint.text = c.getString(R.string.v_061, bmp.width, bmp.height)
+    }
+
+    private fun refreshI2iLoraHint() {
+        if (!::i2iLoraHint.isInitialized) return
+        try {
+            val a = activeLora()
+            i2iLoraHint.text = when {
+                a == null -> c.getString(R.string.s_118)
+                useLora -> c.getString(R.string.v_028, (a.nameWithoutExtension))
+                else -> c.getString(R.string.v_029, (a.nameWithoutExtension))
+            }
+        } catch (_: Throwable) {}
     }
 
     // ================= LoRA =================
@@ -461,6 +744,7 @@ class DrawPage(
                 else -> c.getString(R.string.v_029, (a.nameWithoutExtension))
             }
         } catch (_: Throwable) {}
+        refreshI2iLoraHint()
     }
 
     /**
@@ -933,6 +1217,151 @@ class DrawPage(
         return SdCppEngine.Scheduler.entries.getOrElse(idx - 1) { SdCppEngine.Scheduler.DISCRETE }
     }
 
+    // ================= 图生图生成 =================
+
+    /** 图生图采样器（对应图生图页的 spinner） */
+    private fun pickI2iSampler(hasLora: Boolean): SdCppEngine.Sampler {
+        val idx = i2iSamplerSpinner.selectedItemPosition
+        if (idx <= 0) return if (hasLora) SdCppEngine.Sampler.LCM else SdCppEngine.Sampler.EULER_A
+        return SdCppEngine.Sampler.entries.getOrElse(idx - 1) { SdCppEngine.Sampler.EULER_A }
+    }
+
+    /** 图生图调度器 */
+    private fun pickI2iScheduler(hasLora: Boolean): SdCppEngine.Scheduler {
+        val idx = i2iSchedulerSpinner.selectedItemPosition
+        if (idx <= 0) return if (hasLora) SdCppEngine.Scheduler.LCM else SdCppEngine.Scheduler.DISCRETE
+        return SdCppEngine.Scheduler.entries.getOrElse(idx - 1) { SdCppEngine.Scheduler.DISCRETE }
+    }
+
+    /** 点图生图页的「生成」按钮 */
+    private fun generateFromUiI2i() {
+        persistAll()
+        if (!isReady()) {
+            val msg = if (llmLoaded) c.getString(R.string.s_100)
+            else c.getString(R.string.s_173)
+            Toast.makeText(c, msg, Toast.LENGTH_LONG).show()
+            return
+        }
+        if (i2iBitmap == null) {
+            Toast.makeText(c, c.getString(R.string.s_214), Toast.LENGTH_SHORT).show()
+            return
+        }
+        val prompt = i2iPromptEdit.text.toString().trim()
+        if (prompt.isEmpty()) {
+            Toast.makeText(c, c.getString(R.string.s_047), Toast.LENGTH_SHORT).show()
+            return
+        }
+        setGenerating(true)
+        i2iProgressText.visibility = View.VISIBLE
+        i2iProgressText.text = c.getString(R.string.s_126)
+        curStep = 0
+        totalStep = 0
+        i2iProgressBar.progress = 0
+        i2iProgressBar.visibility = View.VISIBLE
+        onStatus?.invoke(c.getString(R.string.s_165), false)
+        val startedAt = System.currentTimeMillis()
+        scope.launch {
+            val ticker = launch {
+                while (true) {
+                    delay(1000)
+                    val sec = (System.currentTimeMillis() - startedAt) / 1000
+                    i2iProgressText.post {
+                        val phase = if (sec < 8) c.getString(R.string.s_127) else c.getString(R.string.s_129)
+                        val stepInfo = if (totalStep > 0) c.getString(R.string.v_049, (curStep), (totalStep)) else ""
+                        i2iProgressText.text = c.getString(R.string.v_050, (phase), (stepInfo), (sec))
+                        if (totalStep > 0) {
+                            i2iProgressBar.progress = (curStep * 100 / totalStep).coerceIn(0, 100)
+                        }
+                    }
+                }
+            }
+            try {
+                val img = generateImageI2i(prompt) { cur, total ->
+                    curStep = cur
+                    totalStep = total
+                }
+                ticker.cancel()
+                val bmp = toBitmap(img)
+                val sec = (System.currentTimeMillis() - startedAt) / 1000
+                resultImg.post {
+                    DrawHistory.add(img)
+                    lastImage = bmp
+                    resultImg.setImageBitmap(bmp)
+                    resultInfo.text = c.getString(R.string.v_051, (img.width), (img.height), (img.seed), (sec))
+                    refreshHistory()
+                    switchPane(toResult = true)
+                }
+                i2iProgressText.post { i2iProgressText.text = c.getString(R.string.v_052, (img.width), (img.height), (img.seed), (sec)) }
+                onStatus?.invoke(c.getString(R.string.v_053, (sec)), false)
+            } catch (e: Throwable) {
+                ticker.cancel()
+                val sec = (System.currentTimeMillis() - startedAt) / 1000
+                if (cancelRequested) {
+                    i2iProgressText.post { i2iProgressText.text = c.getString(R.string.v_054, (sec)) }
+                    onStatus?.invoke(c.getString(R.string.s_154), false)
+                } else {
+                    i2iProgressText.post { i2iProgressText.text = c.getString(R.string.v_059, (sec), (e.message ?: e.javaClass.simpleName)) + "\n" + c.getString(R.string.v_060) }
+                    onStatus?.invoke(c.getString(R.string.v_055, (e.message ?: e.javaClass.simpleName)), true)
+                }
+            } finally {
+                setGenerating(false)
+                i2iProgressBar.post { i2iProgressBar.visibility = View.GONE }
+            }
+        }
+    }
+
+    /** 图生图实际推理：把选中的参考图编码成 RGB888 传给 native，strength 控制重绘幅度 */
+    private suspend fun generateImageI2i(
+        prompt: String,
+        onProgress: (Int, Int) -> Unit = { _, _ -> },
+    ): ImageData {
+        val steps = i2iStepsEdit.text.toString().toIntOrNull()?.coerceIn(1, 150) ?: 20
+        val cfg = i2iCfgEdit.text.toString().toFloatOrNull()?.coerceIn(1f, 30f) ?: 7.0f
+        val seed = i2iSeedEdit.text.toString().toLongOrNull() ?: -1L
+        val useSeed = if (seed < 0) System.currentTimeMillis() else seed
+        val w = (i2iWidthEdit.text.toString().toIntOrNull() ?: 512).let { (it / 64) * 64 }.coerceIn(64, 2048)
+        val hgt = (i2iHeightEdit.text.toString().toIntOrNull() ?: 512).let { (it / 64) * 64 }.coerceIn(64, 2048)
+        val strength = i2iStrengthEdit.text.toString().toFloatOrNull()?.coerceIn(0.05f, 0.99f) ?: 0.75f
+        onProgress(0, steps)
+        cancelRequested = false
+
+        val h = sdHandle
+        if (h == 0L) throw IllegalStateException(c.getString(R.string.s_163))
+        if (mainModel == null) throw IllegalStateException(c.getString(R.string.s_121))
+        val src = i2iBitmap ?: throw IllegalStateException(c.getString(R.string.s_214))
+
+        val lora = if (useLora) activeLora() else null
+        val negative = i2iNegEdit.text.toString()
+        val sampler = pickI2iSampler(lora != null)
+        val scheduler = pickI2iScheduler(lora != null)
+        val loraScale = i2iLoraScaleEdit.text.toString().toFloatOrNull()?.coerceIn(0f, 2f) ?: 1.0f
+
+        val bmp = withContext(Dispatchers.IO) {
+            val rgb = SdCppEngine.bitmapToRgb888(src)
+            SdCppEngine.render(
+                handle = h,
+                prompt = prompt,
+                negative = negative,
+                loraPath = lora?.absolutePath,
+                loraScale = loraScale,
+                width = w,
+                height = hgt,
+                steps = steps,
+                cfg = cfg,
+                seed = useSeed,
+                sampler = sampler,
+                scheduler = scheduler,
+                cb = { cur, total -> onProgress(cur, total) },
+                initImage = rgb,
+                initWidth = src.width,
+                initHeight = src.height,
+                strength = strength,
+            )
+        } ?: throw IllegalStateException(c.getString(R.string.s_147))
+        onProgress(steps, steps)
+        return ImageData(bmp, useSeed)
+    }
+
     fun toBitmap(img: ImageData): Bitmap = img.bitmap
 
     /** 点「中断生成」：先给个即时反馈，再请求 native 中断 */
@@ -949,6 +1378,11 @@ class DrawPage(
             genBtn.text = if (g) c.getString(R.string.s_040) else c.getString(R.string.s_098)
             genBtn.setBackgroundColor(if (g) 0xFFD9534F.toInt() else primary)
         }
+        if (::i2iGenBtn.isInitialized) i2iGenBtn.post {
+            i2iGenBtn.isEnabled = true
+            i2iGenBtn.text = if (g) c.getString(R.string.s_040) else c.getString(R.string.s_098)
+            i2iGenBtn.setBackgroundColor(if (g) 0xFFD9534F.toInt() else primary)
+        }
     }
 
     fun cancel() {
@@ -956,7 +1390,20 @@ class DrawPage(
         if (sdHandle != 0L) runCatching { SdCppEngine.nativeCancel(sdHandle) }
     }
 
-    fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?): Boolean = false
+    fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?): Boolean {
+        if (requestCode != REQ_IMAGE) return false
+        if (resultCode != Activity.RESULT_OK) return true
+        val uri = data?.data ?: return true
+        scope.launch {
+            val bmp = withContext(Dispatchers.IO) { decodePickedImage(uri) }
+            if (bmp == null) {
+                toast(c.getString(R.string.s_215))
+            } else {
+                applyPickedImage(bmp)
+            }
+        }
+        return true
+    }
 
     fun release() {
         if (sdHandle != 0L) runCatching { SdCppEngine.nativeFree(sdHandle) }
@@ -1091,18 +1538,18 @@ class DrawPage(
     }
 
     /** 宽 × 高 输入行 */
-    private fun whRow(label: String, hint: String): View {
+    private fun whRow(label: String, hint: String, wEdit: EditText, hEdit: EditText): View {
         val wrap = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
         wrap.addView(smallLabel(label))
         val row = LinearLayout(c).apply { orientation = LinearLayout.HORIZONTAL }
-        row.addView(widthEdit, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        row.addView(wEdit, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         row.addView(TextView(c).apply {
             text = " × "
             textSize = 14f
             setTextColor(textColor)
             gravity = Gravity.CENTER
         }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
-        row.addView(heightEdit, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        row.addView(hEdit, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         wrap.addView(row, matchWrap(top = 4))
         wrap.addView(TextView(c).apply {
             text = hint
@@ -1159,6 +1606,17 @@ class DrawPage(
         put(KEY_LORA_SCALE, loraScaleEdit)
         e.putInt(KEY_SAMPLER, samplerSpinner.selectedItemPosition)
         e.putInt(KEY_SCHEDULER, schedulerSpinner.selectedItemPosition)
+        if (::i2iStepsEdit.isInitialized) {
+            put(KEY_I2I_W, i2iWidthEdit)
+            put(KEY_I2I_H, i2iHeightEdit)
+            put(KEY_I2I_STEPS, i2iStepsEdit)
+            put(KEY_I2I_CFG, i2iCfgEdit)
+            put(KEY_I2I_SEED, i2iSeedEdit)
+            put(KEY_I2I_STRENGTH, i2iStrengthEdit)
+            put(KEY_I2I_LORA_SCALE, i2iLoraScaleEdit)
+            e.putInt(KEY_I2I_SAMPLER, i2iSamplerSpinner.selectedItemPosition)
+            e.putInt(KEY_I2I_SCHEDULER, i2iSchedulerSpinner.selectedItemPosition)
+        }
         e.apply()
     }
 
