@@ -958,11 +958,54 @@ class DrawPage(
     /** 打标目录：filesDir/tagger */
     private fun taggerDir(): File = File(c.filesDir, TAGGER_DIR).apply { mkdirs() }
 
-    fun taggerModelFile(): File? =
-        taggerDir().listFiles { f -> f.isFile && f.name.endsWith(".onnx", true) }?.firstOrNull()
+    /** 已导入的打标模型（.onnx），按名字排序 */
+    fun listTaggerModels(): List<File> =
+        taggerDir().listFiles { f -> f.isFile && f.name.endsWith(".onnx", true) }?.sortedBy { it.name } ?: emptyList()
 
-    fun taggerCsvFile(): File? =
-        taggerDir().listFiles { f -> f.isFile && f.name.endsWith(".csv", true) }?.firstOrNull()
+    /** 已导入的标签表（.csv） */
+    fun listTaggerCsvs(): List<File> =
+        taggerDir().listFiles { f -> f.isFile && f.name.endsWith(".csv", true) }?.sortedBy { it.name } ?: emptyList()
+
+    /** 当前选中的打标模型（优先上次选择的，否则第一个） */
+    fun taggerModelFile(): File? = pickSelected(listTaggerModels(), "selTaggerModel")
+
+    /** 当前选中的标签表 */
+    fun taggerCsvFile(): File? = pickSelected(listTaggerCsvs(), "selTaggerCsv")
+
+    private fun pickSelected(all: List<File>, key: String): File? {
+        if (all.isEmpty()) return null
+        val saved = prefs().getString(key, null)
+        return all.firstOrNull { it.name == saved } ?: all.first()
+    }
+
+    fun currentTaggerModelName(): String? = taggerModelFile()?.name
+    fun currentTaggerCsvName(): String? = taggerCsvFile()?.name
+
+    /** 选择打标模型（换模型就卸载旧的，下次打标时重新加载） */
+    fun selectTaggerModel(f: File) {
+        prefs().edit().putString("selTaggerModel", f.name).apply()
+        TaggerEngine.unload()
+    }
+
+    /** 选择标签表 */
+    fun selectTaggerCsv(f: File) {
+        prefs().edit().putString("selTaggerCsv", f.name).apply()
+        TaggerEngine.unload()
+    }
+
+    fun taggerLoaded(): Boolean = TaggerEngine.isLoaded()
+
+    /** 卸载打标模型，释放内存 */
+    fun unloadTagger() = TaggerEngine.unload()
+
+    /** 模型页「加载打标模型」：按当前选择的模型/标签表加载，返回 null=成功 */
+    suspend fun loadTaggerFromUi(onStage: (String) -> Unit = {}): String? {
+        val model = taggerModelFile()
+        val csv = taggerCsvFile()
+        if (model == null || csv == null) return c.getString(R.string.s_228)
+        onStage(c.getString(R.string.s_245))
+        return withContext(Dispatchers.IO) { ensureTaggerLoaded() }
+    }
 
     /** 供「模型」页展示的打标状态 */
     fun taggerSummary(): String {
@@ -1089,13 +1132,25 @@ class DrawPage(
 
     fun hasLora(): Boolean = listLoras().isNotEmpty()
 
-    /** 当前生效的 LoRA（选中的；没选就取第一个） */
+    /** 当前生效的 LoRA（优先用户选中的，其次上次选中的，最后取第一个） */
     fun activeLora(): File? {
         val all = listLoras()
         if (all.isEmpty()) return null
         val sel = loraFile
         if (sel != null && sel.isFile && all.any { it.absolutePath == sel.absolutePath }) return sel
+        val saved = prefs().getString("selLora", null)
+        if (saved != null) all.firstOrNull { it.name == saved }?.let { loraFile = it; return it }
         return all.first()
+    }
+
+    /** UI 高亮用：当前生效的 LoRA 名 */
+    fun currentLoraName(): String? = activeLora()?.name
+
+    /** 选中某个 LoRA（持久化选择） */
+    fun selectLora(f: File) {
+        loraFile = f
+        prefs().edit().putString("selLora", f.name).apply()
+        refreshLoraHint()
     }
 
     /** 供「模型」页展示的 LoRA 状态 */

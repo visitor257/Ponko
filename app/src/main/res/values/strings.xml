@@ -314,4 +314,8 @@
     <string name="s_249">Restore defaults</string>
     <string name="s_250">Saved as default</string>
     <string name="s_251">Defaults restored</string>
+    <string name="s_252">Tagger models</string>
+    <string name="s_253">Tag lists</string>
+    <string name="s_254">Load tagger</string>
+    <string name="s_255">Unload tagger</string>
 </resources>

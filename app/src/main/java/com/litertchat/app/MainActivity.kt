@@ -243,6 +243,10 @@ class MainActivity : Activity() {
     /** 打标模型 / 标签表导入按钮 */
     private var taggerOnnxBtn: TextView? = null
     private var taggerCsvBtn: TextView? = null
+    /** 已导入的打标模型 / 标签表列表容器 */
+    private var taggerBox: LinearLayout? = null
+    /** 打标模型 加载/卸载 按钮 */
+    private var taggerLoadBtn: TextView? = null
     /** 当前选定的绘图主模型（绝对路径） */
     private var drawMainPath: String? = null
     /** LoRA 状态文本（模型页） */
@@ -714,6 +718,15 @@ class MainActivity : Activity() {
         drawCard.addView(taggerOnnxBtn, matchWrap().apply { topMargin = dp(8) })
         taggerCsvBtn = actionButton(getString(R.string.s_244)) { pickTaggerCsv() }
         drawCard.addView(taggerCsvBtn, matchWrap().apply { topMargin = dp(8) })
+
+        taggerBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+        }
+        drawCard.addView(taggerBox, matchWrap().apply { topMargin = dp(6) })
+
+        taggerLoadBtn = actionButton(getString(R.string.s_254)) { onTaggerToggleClick() }
+        drawCard.addView(taggerLoadBtn, matchWrap().apply { topMargin = dp(8) })
 
         root.addView(card)
         root.addView(chatCard)
@@ -1490,19 +1503,13 @@ class MainActivity : Activity() {
             return
         }
         box.visibility = View.VISIBLE
-        box.addView(TextView(this).apply {
-            text = getString(R.string.s_092)
-            textSize = 12f
-            setTextColor(C_SUBTEXT)
-            setPadding(0, dp(4), 0, 0)
-        }, matchWrap())
+        box.addView(listHeader(getString(R.string.s_092)))
+        val active = dpg?.currentLoraName()
         for (f in all) {
-            box.addView(TextView(this).apply {
-                text = "• ${f.name}　${fmtSize(f.length())}"
-                textSize = 12.5f
-                setTextColor(C_TEXT)
-                setPadding(dp(4), dp(4), 0, 0)
-            }, matchWrap())
+            box.addView(
+                selectableChip(f, f.name == active) { dpg?.selectLora(f); refreshLoraUi() },
+                matchWrap().apply { topMargin = dp(4) }
+            )
         }
     }
 
@@ -2655,11 +2662,98 @@ class MainActivity : Activity() {
         taggerOnnxBtn?.alpha = if (b) 0.5f else 1f
         taggerCsvBtn?.isEnabled = !b
         taggerCsvBtn?.alpha = if (b) 0.5f else 1f
+        taggerLoadBtn?.isEnabled = !b
+        taggerLoadBtn?.alpha = if (b) 0.5f else 1f
     }
 
-    /** 刷新模型页的打标（Tagger）状态 */
+    /** 刷新模型页的打标（Tagger）状态：状态行 + 可选列表（模型 / 标签表） */
     private fun refreshTaggerUi() {
-        taggerStatusTv?.text = drawPage?.taggerSummary() ?: getString(R.string.s_245)
+        val dpg = drawPage
+        taggerStatusTv?.text = dpg?.taggerSummary() ?: getString(R.string.s_245)
+        refreshTaggerToggle()
+        val box = taggerBox ?: return
+        box.removeAllViews()
+        val models = dpg?.listTaggerModels().orEmpty()
+        val csvs = dpg?.listTaggerCsvs().orEmpty()
+        if (models.isEmpty() && csvs.isEmpty()) {
+            box.visibility = View.GONE
+            return
+        }
+        box.visibility = View.VISIBLE
+        val curM = dpg?.currentTaggerModelName()
+        val curC = dpg?.currentTaggerCsvName()
+        if (models.isNotEmpty()) {
+            box.addView(listHeader(getString(R.string.s_252)))
+            for (f in models) {
+                box.addView(
+                    selectableChip(f, f.name == curM) { dpg?.selectTaggerModel(f); refreshTaggerUi() },
+                    matchWrap().apply { topMargin = dp(4) }
+                )
+            }
+        }
+        if (csvs.isNotEmpty()) {
+            box.addView(listHeader(getString(R.string.s_253)))
+            for (f in csvs) {
+                box.addView(
+                    selectableChip(f, f.name == curC) { dpg?.selectTaggerCsv(f); refreshTaggerUi() },
+                    matchWrap().apply { topMargin = dp(4) }
+                )
+            }
+        }
+    }
+
+    /** 按当前是否已加载切换按钮文案 */
+    private fun refreshTaggerToggle() {
+        taggerLoadBtn?.text = getString(
+            if (drawPage?.taggerLoaded() == true) R.string.s_255 else R.string.s_254)
+    }
+
+    /** 加载 / 卸载打标模型（多个打标模型之间切换用） */
+    private fun onTaggerToggleClick() {
+        val dpg = drawPage ?: return
+        if (dpg.taggerLoaded()) {
+            dpg.unloadTagger()
+            refreshTaggerUi()
+            return
+        }
+        setBusy(true)
+        setDrawBusy(true)
+        showDrawProgress(true)
+        setStatus(getString(R.string.s_131), C_WARN)
+        scope.launch {
+            val err = dpg.loadTaggerFromUi { stage -> taggerStatusTv?.text = stage }
+            setBusy(false)
+            setDrawBusy(false)
+            showDrawProgress(false)
+            if (err == null) {
+                setStatus(getString(R.string.s_161), C_OK)
+                toast(getString(R.string.s_091))
+            } else {
+                setStatus(getString(R.string.s_158), C_ERR)
+                toast(err)
+            }
+            refreshTaggerUi()
+        }
+    }
+
+    /** 列表小标题 */
+    private fun listHeader(t: String) = TextView(this).apply {
+        text = t
+        textSize = 12f
+        setTextColor(C_SUBTEXT)
+        setPadding(0, dp(6), 0, 0)
+    }
+
+    /** 可点选的条目（高亮当前选中） */
+    private fun selectableChip(f: File, selected: Boolean, onClick: () -> Unit) = TextView(this).apply {
+        text = "▶ ${f.name}　${fmtSize(f.length())}"
+        textSize = 12.5f
+        setTextColor(if (selected) C_PRIMARY else C_TEXT)
+        setPadding(dp(12), dp(8), dp(12), dp(8))
+        background = rounded(if (selected) C_PRIMARY_SOFT else Color.rgb(247, 248, 251), 10,
+            strokeDp = if (selected) 1 else 0, strokeColor = C_PRIMARY)
+        isClickable = true
+        setOnClickListener { onClick() }
     }
 
     private fun showDrawProgress(show: Boolean) {

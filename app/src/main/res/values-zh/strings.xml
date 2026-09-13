@@ -314,4 +314,8 @@
     <string name="s_249">恢复默认</string>
     <string name="s_250">已设为默认值</string>
     <string name="s_251">已恢复默认</string>
+    <string name="s_252">打标模型</string>
+    <string name="s_253">标签表</string>
+    <string name="s_254">加载打标模型</string>
+    <string name="s_255">卸载打标模型</string>
 </resources>
