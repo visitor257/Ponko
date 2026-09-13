@@ -53,8 +53,6 @@ Code is MIT; art assets (icons, artwork) are all rights reserved. Third-party co
 
 ---
 
-## 中文说明
-
 Ponko v1.2 —— 本地 AI App（Android）：聊天 + 绘图
 
 所有推理都在本机离线运行，不联网、无遥测，对话记录只保存在设备本地。
