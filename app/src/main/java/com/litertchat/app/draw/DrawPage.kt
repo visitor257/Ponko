@@ -24,8 +24,8 @@ import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.ScrollView
 import android.widget.Toast
-import androidx.recyclerview.widget.RecyclerView
-import androidx.viewpager2.widget.ViewPager2
+import androidx.viewpager.widget.PagerAdapter
+import androidx.viewpager.widget.ViewPager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -158,7 +158,7 @@ class DrawPage(
     private lateinit var tabResult: TextView
     private lateinit var paramPane: LinearLayout
     private lateinit var resultPane: LinearLayout
-    private lateinit var pager: ViewPager2
+    private lateinit var pager: ViewPager
 
     // 结果面板
     private lateinit var resultImg: ImageView
@@ -396,11 +396,12 @@ class DrawPage(
         resultPane.addView(histCard)
         refreshHistory()
 
-        // ---- 参数 / 结果：ViewPager2 跟手翻页（同手机桌面） ----
-        pager = ViewPager2(c).apply {
+        // ---- 参数 / 结果：ViewPager 跟手翻页（同手机桌面） ----
+        // 用老版 ViewPager 而不是 ViewPager2：它的 PagerAdapter 原生支持直接复用
+        // 已有的 View；ViewPager2 内部是 RecyclerView，重复 attach 同一个 View 会崩。
+        pager = ViewPager(c).apply {
             adapter = PaneAdapter(listOf(scrollWrap(paramPane), scrollWrap(resultPane)))
-            offscreenPageLimit = 1
-            registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
+            addOnPageChangeListener(object : ViewPager.SimpleOnPageChangeListener() {
                 override fun onPageSelected(position: Int) {
                     highlightTabs(toResult = position == 1)
                 }
@@ -1067,20 +1068,26 @@ class DrawPage(
         }
     }
 
-    /** 给面板包一层可纵向滚动的 ScrollView（ViewPager2 需要一个确定高度的子项） */
+    /** 给面板包一层可纵向滚动的 ScrollView（翻页控件需要一个确定高度的子项） */
     private fun scrollWrap(inner: View) = ScrollView(c).apply {
         isFillViewport = true
         addView(inner, ViewGroup.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
     }
 
-    /** ViewPager2 用的最小 Adapter：直接复用已建好的两个面板，不做重建 */
-    private class PaneAdapter(private val panes: List<View>) : RecyclerView.Adapter<PaneAdapter.VH>() {
-        class VH(v: View) : RecyclerView.ViewHolder(v)
-        override fun getItemCount() = panes.size
-        override fun getItemViewType(position: Int) = position
-        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) = VH(panes[viewType])
-        override fun onBindViewHolder(holder: VH, position: Int) { }
+    /** ViewPager 用的最小 PagerAdapter：直接复用已建好的两个面板，不重建 */
+    private class PaneAdapter(private val panes: List<View>) : PagerAdapter() {
+        override fun getCount() = panes.size
+        override fun isViewFromObject(view: View, obj: Any) = view === obj
+        override fun instantiateItem(container: ViewGroup, position: Int): Any {
+            val v = panes[position]
+            (v.parent as? ViewGroup)?.removeView(v)
+            container.addView(v)
+            return v
+        }
+        override fun destroyItem(container: ViewGroup, position: Int, obj: Any) {
+            (obj as? View)?.let { container.removeView(it) }
+        }
     }
 
     /** 宽 × 高 输入行 */

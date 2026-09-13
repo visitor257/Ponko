@@ -1,7 +1,10 @@
-绘图页翻页改为 ViewPager2（跟手翻页，同手机桌面）
+修复：点开绘图页闪退（ViewPager2 改为 ViewPager）
 
-- 之前自写的 SwipeFrameLayout 只能"滑动后切换"，不跟手且易失灵，弃用删除
-- 改用 androidx.viewpager2：拖动时页面跟手平移、松手吸附、边缘回弹
-- 为满足 ViewPager2 对子项高度的要求，绘图页不再由外层 ScrollView 包裹；
-  两个面板各自包一层 ScrollView 负责纵向滚动（横竖滑动互不干扰）
-- 顶部菜单点击仍可切换；tab 高亮改由 onPageSelected 同步，手势翻页也会跟着亮
+- 根因：ViewPager2 内部是 RecyclerView，不支持直接复用已有的 View 实例；
+  为同一个 position 重复创建 ViewHolder 时会重复 attach 同一个 View 而崩溃
+- 改用 androidx.viewpager.widget.ViewPager + PagerAdapter：该适配器本就是
+  为「复用已有 View」设计的，instantiateItem/destroyItem 成对增删，安全
+- 翻页手感不变（跟手拖动、松手吸附、边缘回弹）
+- 另在 MainActivity 包一层兜底：绘图页构建抛异常时不再闪退，改为页面上
+  显示错误堆栈，便于定位
+- 依赖：androidx.viewpager2 换成 androidx.viewpager:1.0.0

@@ -354,8 +354,20 @@ class MainActivity : Activity() {
         }
         // 注意：不在启动时自动加载绘图模型——native 加载失败会直接崩掉启动流程。
         // 改为在「模型」页手动点「加载绘图模型」（见下方按钮）。
-        // 绘图页内部用 ViewPager2 做左右翻页，外层不能再套 ScrollView（横竖滑动会打架）
-        tabDraw = dpg.build()
+        // 绘图页内部用 ViewPager 做左右翻页，外层不能再套 ScrollView（横竖滑动会打架）
+        tabDraw = runCatching { dpg.build() }.getOrElse { e ->
+            // 兜底：绘图页构建失败也不能让整个 App 挂掉，把原因显示出来便于定位
+            ScrollView(this).apply {
+                setBackgroundColor(C_BG)
+                addView(TextView(this@MainActivity).apply {
+                    text = "绘图页初始化失败：\n" + android.util.Log.getStackTraceString(e)
+                    textSize = 12f
+                    setTextColor(0xFFCC3333.toInt())
+                    setPadding(36, 36, 36, 36)
+                    setTextIsSelectable(true)
+                })
+            }
+        }
         val contentFrame = FrameLayout(this)
         contentFrame.addView(tabChat, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
