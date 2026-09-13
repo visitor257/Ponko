@@ -4,7 +4,7 @@
 
 English · [中文](README.md)
 
-A **fully offline** Android app for local AI: chat with LLMs and generate images.
+A **fully offline** Android app for local AI: chat with LLMs, generate images, and tag them.
 
 ## Chat
 
@@ -30,11 +30,25 @@ The engine is [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.
 > the build (no prebuilt `.so` checked in), so after editing C++ you just run `assembleRelease` —
 > there is no way to ship a stale native library by accident.
 
-- **Text to image**: the Draw page has two views, "Parameters" and "Result". Enter a prompt → generate → save to gallery from the Result view.
+- **Three modes**: the parameters area is split into **Text-to-Image / Image-to-Image / Tagger** sub-pages
+  - **Text to image**: enter a prompt and generate
+  - **Image to image**: pick a reference photo from your gallery as the base, then use the prompt and the "denoise strength" (0.05–0.99) to restyle / change background / refine; the output size auto-aligns to the reference (multiple of 64)
+  - **Tagger**: reverse an image into Danbooru-style tags (see below)
+- **Parameter defaults**: every parameter page has "Set as default" / "Restore defaults" (each asks for confirmation); Text-to-Image and Image-to-Image keep **separate default sets for LoRA on/off**, and toggling the LoRA switch applies the matching set
 - **Generation history**: the Result view keeps the last 30 images of this run — browse, delete one, or clear all. **In-memory only; gone when the app is closed.**
 - **Parameters**: width/height (multiples of 64), steps, CFG, seed, sampler, scheduler — all adjustable and **remembered across restarts** (prompts are not).
-- **LCM-LoRA acceleration**: one-tap download in-app (official HuggingFace / hf-mirror), cutting 20 steps down to 4–8.
+- **LoRA**: one-tap in-app download of LCM-LoRA (official HuggingFace / hf-mirror), cutting 20 steps down to 4–8. You can also **import a local LoRA** (a single `.safetensors`), and switch between multiple LoRAs from the list.
+- **Model import**: the drawing model is imported as a **single `.gguf` file**.
 - **Draw from chat**: when both a chat model and a draw model are loaded, just say "draw me …" and the draw model is invoked.
+- The "Parameters" / "Result" views can be swiped left/right; save images to the gallery from the Result view.
+
+## Tagging (Tagger)
+
+- **Fully offline** image-to-tags: import a WD14-style ONNX tagger (`.onnx`) plus its matching tag list (`selected_tags.csv`) — nothing is bundled or downloaded
+- The "Tagger" page: pick an image → set threshold (default 0.35) / max tags (default 40) → get tags
+- Send the tags to **Text-to-Image / Image-to-Image** (with a confirmation prompt); from the Result view you can also send a generated image to **Image-to-Image** or to **Tagger**
+- Multiple taggers / tag lists can be switched from the list on the Models page; "Load / Unload tagger" loads on demand and frees memory when you are done
+- Backend follows the Models page run mode: CPU, or NNAPI when GPU is selected
 
 ## Languages
 
@@ -68,7 +82,8 @@ powershell -File tools/build-release.ps1
 - `.litertlm`: the `litert-community` / `google` organizations on HuggingFace (Gemma family, etc.)
 - `.gguf` (chat): any GGUF quantized model on HuggingFace; on a phone CPU, **1B–3B at Q4** is recommended
 - `.gguf` (drawing): SD1.5-family models in stable-diffusion.cpp format (e.g. Anything V5)
-- **LoRA**: `lcm-lora-sdv1-5.safetensors` (~130 MB), downloadable in-app
+- **LoRA**: `lcm-lora-sdv1-5.safetensors` (~130 MB), downloadable in-app; a local `.safetensors` can also be imported directly
+- **Tagger**: the `.onnx` of a WD14 Tagger plus its matching `selected_tags.csv` (the two must go together, e.g. `wd-v1-4-swinv2-tagger-v2`)
 
 ## Known limitations
 
@@ -78,6 +93,8 @@ powershell -File tools/build-release.ps1
 - Drawing runs on CPU only: 256×256 with LCM-LoRA at 6 steps takes about a minute; 512×512 is noticeably slower
 - The quantization level is baked into the model file; the app only reads and displays it, never converts
 - The drawing native library is built with `-march=armv8.2-a+dotprod+fp16`, requiring a 64-bit ARM device from 2019 or later
+- Tagging only supports WD14-style ONNX models (Danbooru tags); the `.onnx` and `selected_tags.csv` must be imported as a matching pair
+- The tagger model is loaded lazily on first use (it holds hundreds of MB of memory) and can be unloaded manually from the Models page
 
 ## License
 
