@@ -1,10 +1,20 @@
-修复：点开绘图页闪退（ViewPager2 改为 ViewPager）
+修复三个问题（GGUF 对话）
 
-- 根因：ViewPager2 内部是 RecyclerView，不支持直接复用已有的 View 实例；
-  为同一个 position 重复创建 ViewHolder 时会重复 attach 同一个 View 而崩溃
-- 改用 androidx.viewpager.widget.ViewPager + PagerAdapter：该适配器本就是
-  为「复用已有 View」设计的，instantiateItem/destroyItem 成对增删，安全
-- 翻页手感不变（跟手拖动、松手吸附、边缘回弹）
-- 另在 MainActivity 包一层兜底：绘图页构建抛异常时不再闪退，改为页面上
-  显示错误堆栈，便于定位
-- 依赖：androidx.viewpager2 换成 androidx.viewpager:1.0.0
+1) GGUF + 绘图模型同时加载时对话报 "Invalid role: system"
+   原因：为 <draw> 功能给对话历史加了一条 system 角色消息，llama.cpp 的
+   对话模板只认 user/assistant，直接拒绝。
+   改法：不再新增 system 消息，把绘图能力说明并进最后一条 user 消息
+   （该消息只用于本次推理，不写入历史）。LiteRT 侧不变，仍用 system。
+
+2) GGUF 生成中「停止」后报 task not found，且已输出内容消失
+   原因：native 迭代器被打断后抛异常，被当成真的出错，错误信息覆盖了
+   已经流式输出到气泡里的正文。
+   改法：新增 stopRequested 标志（用户点停止时置位）；GGUF 迭代循环捕获
+   中断异常并正常收尾；catch 分支区分「主动中断」（保留已输出内容，
+   状态显示「已中断」）和「真的出错」。
+
+3) 对话内容无法长按复制
+   原因：AI 气泡的 TextView 在 setTextIsSelectable(true) 之后又设了
+   isFocusable = false，把可选中所需的焦点属性覆盖掉了。
+   改法：去掉该行；防止流式重渲染抢输入框焦点由 renderAnswer/
+   renderThought 里的焦点守卫负责。

@@ -194,6 +194,11 @@ class MainActivity : Activity() {
     private var llamaModel: LlamaModel? = null
     private var ggufIterator: LlamaIterator? = null
 
+    /** 用户点了「停止」。native 中断后往往抛异常（如 llama.cpp 的 task not found），
+     *  用它把「主动中断」和「真的出错」分开，避免已输出的内容被错误信息覆盖。 */
+    @Volatile
+    private var stopRequested = false
+
     private lateinit var markwonFull: Markwon
     private lateinit var markwonStream: Markwon
 
@@ -1542,6 +1547,7 @@ class MainActivity : Activity() {
         if (job != null && job.isActive) {
             // 关键：先让原生侧真正停下来。只取消协程 Flow 的话，LiteRT / llama.cpp 的
             // native 推理线程还在跑，下一次发送会撞上同一份上下文直接卡死。
+            stopRequested = true
             runCatching { conversation?.cancelProcess() }
             runCatching { ggufIterator?.cancel() }
             // 绘图（MNN / sd.cpp）也要打断：否则 native 还在跑，界面已停
@@ -1639,12 +1645,20 @@ class MainActivity : Activity() {
      */
     private fun buildInferenceParams(s: ChatSession, maxTurns: Int = 24): InferenceParameters {
         val msgs = mutableListOf<Pair<String, String>>()
-        // 两种模型都就绪时，告知语言模型它可以用 <draw> 命令调绘图模型
-        if (canDrawFromChat) msgs += Pair("system", drawToolPrompt)
-        for (t in s.turns.takeLast(maxTurns)) {
-            msgs += Pair("user", t.user)
+        // 两种模型都就绪时，把绘图能力说明并进最后一条 user 消息：
+        // llama.cpp 的对话模板只认 user/assistant，新增 system 角色会直接报
+        // 「Invalid role: system」。这份 msgs 只用于本次推理，不落历史。
+        val turns = s.turns.takeLast(maxTurns)
+        for ((ti, t) in turns.withIndex()) {
+            val userText = if (canDrawFromChat && ti == turns.size - 1) {
+                t.user + "\n\n" + drawToolPrompt
+            } else {
+                t.user
+            }
+            msgs += Pair("user", userText)
             if (t.answer.isNotEmpty()) msgs += Pair("assistant", t.answer)
         }
+        if (canDrawFromChat && msgs.isEmpty()) msgs += Pair("user", drawToolPrompt)
         var p = InferenceParameters.empty()
             .withMessages(null, msgs)
             .withCachePrompt(true)
@@ -2055,6 +2069,7 @@ class MainActivity : Activity() {
         val thoughtBuf = StringBuilder()
         var lastRender = 0L
         var cancelled = false
+        stopRequested = false
 
         fun renderAnswer(force: Boolean) {
             val now = SystemClock.uptimeMillis()
@@ -2118,8 +2133,18 @@ class MainActivity : Activity() {
                             val it = iterable.iterator()
                             ggufIterator = it
                             try {
-                                while (it.hasNext()) {
-                                    val out = it.next()
+                                // 用户中断后 native 迭代器会抛异常（如 task not found），
+                                // 此时正常收尾，不当成错误
+                                val next = {
+                                    try {
+                                        if (it.hasNext()) it.next() else null
+                                    } catch (e: Throwable) {
+                                        if (!stopRequested) throw e
+                                        null
+                                    }
+                                }
+                                while (true) {
+                                    val out = next() ?: break
                                     if (out.text.isNotEmpty()) send(out.text)
                                 }
                             } finally {
@@ -2199,10 +2224,16 @@ class MainActivity : Activity() {
                 cancelled = true
                 throw e
             } catch (e: Throwable) {
-                ai.answer.text = getString(R.string.v_024, (e.message))
-                ai.answer.setTextColor(C_ERR)
-                setStatus(getString(R.string.s_145), C_ERR)
-                toast(getString(R.string.v_025, (e.message)))
+                if (stopRequested) {
+                    // 主动中断：native 被打断后常抛异常（task not found 等），
+                    // 按「已中断」处理，保留已经输出到界面上的内容
+                    cancelled = true
+                } else {
+                    ai.answer.text = getString(R.string.v_024, (e.message))
+                    ai.answer.setTextColor(C_ERR)
+                    setStatus(getString(R.string.s_145), C_ERR)
+                    toast(getString(R.string.v_025, (e.message)))
+                }
             } finally {
                 ai.regenButton.visibility = View.VISIBLE
                 // 语言模型可能输出了 <draw>…</draw>：先把正文里的标记换掉再存历史
@@ -2301,8 +2332,8 @@ class MainActivity : Activity() {
             setTextColor(C_TEXT)
             setLineSpacing(dp(3).toFloat(), 1f)
             setTextIsSelectable(true)
-            // 不参与键盘焦点争夺：否则流式重渲染时会把焦点从输入框抢走，导致打不了字
-            isFocusable = false
+            // 不给 isFocusable = false：那会把 setTextIsSelectable 设的焦点属性覆盖掉，
+            // 导致长按无法选中复制。防键盘焦点抢夺由 renderAnswer/renderThought 里的焦点守卫负责。
         }
         wrap.addView(answer, matchWrap().apply { topMargin = dp(4) })
 
