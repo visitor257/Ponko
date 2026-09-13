@@ -9,18 +9,21 @@ import urllib.request
 REPO = "visitor257/Ponko"
 TOKFILE = r"C:\Users\Administrator\Desktop\git_repo_tok.txt"
 APK = r"C:\Users\Administrator\.qclaw\workspace-agent-e522fb09\LiteRT-Chat\app\build\outputs\apk\release\Ponko-release.apk"
-TAG = "v1.1.1"
-NAME = "Ponko v1.1.1"
+TAG = "v1.2"
+NAME = "Ponko v1.2"
 
-BODY = """Ponko v1.1.1 —— 本地 AI App（Android）：聊天 + 绘图
+BODY = """Ponko v1.2 —— 本地 AI App（Android）：聊天 + 绘图
 
 所有推理都在本机离线运行，不联网、无遥测，对话记录只保存在设备本地。
 请先阅读 [README](https://github.com/visitor257/Ponko#readme)。
 
-## v1.1.1 亮点（含 2026-09-13 补充）
-- **第三方声明补全**（2026-09-13 补充）：NOTICE / README / App「关于」页补齐第三方组件清单（stable-diffusion.cpp、ggml、LiteRT-LM、llama.cpp、Markwon、Kotlin/AndroidX、LLVM 运行时），标注许可证与源码位置
-- **合规说明**：注明 stable-diffusion.cpp（MIT）源码随项目分发，并说明为控制体积对其词表做了裁剪；不含任何模型权重文件
-- 英文界面「关于」页同步更新
+## v1.2 亮点
+- **图生图（Image-to-Image）**：绘图页参数区拆成「文生图 / 图生图」两页
+  - 图生图：从相册选一张参考图当底稿，配合提示词与「重绘强度」改风格 / 换背景 / 精修
+  - 选图后自动把输出尺寸对齐参考图（64 的倍数），可手动调整
+  - 重绘强度 0.05~0.99：越小越接近原图，越大越听提示词
+- 提示词占位改为示例式（正面「例如：1girl」，负面「例如：lowres, bad anatomy, ...」）
+- 版本 1.1.1 -> 1.2.0（versionCode 4）
 
 ## 对话功能
 - 双后端：LiteRT-LM（`.litertlm`）+ llama.cpp（`.gguf`）
@@ -31,14 +34,15 @@ BODY = """Ponko v1.1.1 —— 本地 AI App（Android）：聊天 + 绘图
 - 自动跟随滚动，上滑暂停、一键回到底部
 
 ## 绘图功能
-- 内置自编 stable-diffusion.cpp，读 GGUF 格式的 SD1.5 系模型，纯 CPU 文生图
+- 内置自编 stable-diffusion.cpp，读 GGUF 格式的 SD1.5 系模型，纯 CPU 绘制
+- **文生图 + 图生图**两种模式
 - LCM-LoRA 加速：App 内一键下载（HF 官方 / hf-mirror 双源），20 步压到 4~8 步
 - 对话页出图：语言模型与绘图模型同时加载时，直接说「画一张…」就会调用绘图模型
 - 宽高 / 步数 / CFG / 种子 / 采样器 / 调度器全可调
 
 ## 安装
 - 仅支持 **arm64-v8a**（64 位 ARM 真机），**minSdk 28**（Android 9 及以上）
-- v1.1.1（versionCode 3）可直接覆盖安装；更早的 debug 版或 v1.0 请先卸载（签名不同）
+- v1.2（versionCode 4）可直接覆盖安装；更早的 debug 版或 v1.0 请先卸载（签名不同）
 - 模型文件需自备：对话模型（`.litertlm` / `.gguf`）与绘图模型（SD1.5 GGUF）分别在 App 内「模型」页导入
 
 ## 许可
