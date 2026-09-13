@@ -354,10 +354,8 @@ class MainActivity : Activity() {
         }
         // 注意：不在启动时自动加载绘图模型——native 加载失败会直接崩掉启动流程。
         // 改为在「模型」页手动点「加载绘图模型」（见下方按钮）。
-        tabDraw = ScrollView(this).apply {
-            setBackgroundColor(C_BG)
-            addView(dpg.build())
-        }
+        // 绘图页内部用 ViewPager2 做左右翻页，外层不能再套 ScrollView（横竖滑动会打架）
+        tabDraw = dpg.build()
         val contentFrame = FrameLayout(this)
         contentFrame.addView(tabChat, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))

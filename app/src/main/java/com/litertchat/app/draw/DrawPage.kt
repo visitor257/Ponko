@@ -13,6 +13,7 @@ import android.text.InputType
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
@@ -21,7 +22,10 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
+import android.widget.ScrollView
 import android.widget.Toast
+import androidx.recyclerview.widget.RecyclerView
+import androidx.viewpager2.widget.ViewPager2
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -154,6 +158,7 @@ class DrawPage(
     private lateinit var tabResult: TextView
     private lateinit var paramPane: LinearLayout
     private lateinit var resultPane: LinearLayout
+    private lateinit var pager: ViewPager2
 
     // 结果面板
     private lateinit var resultImg: ImageView
@@ -171,18 +176,18 @@ class DrawPage(
     fun build(): View {
         val root = LinearLayout(c).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(12), dp(16), dp(12))
             setBackgroundColor(0xFFF5F6F8.toInt())
         }
 
-        // ---- 顶部菜单：参数 / 结果 ----
+        // ---- 顶部菜单：参数 / 结果（点击或左右翻页都能切） ----
         val tabBar = LinearLayout(c).apply {
             orientation = LinearLayout.HORIZONTAL
             setBackgroundColor(Color.WHITE)
+            setPadding(dp(16), dp(12), dp(16), 0)
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = dp(10) }
+            )
         }
         tabParams = tabItem(c.getString(R.string.s_034))
         tabResult = tabItem(c.getString(R.string.s_203))
@@ -193,8 +198,11 @@ class DrawPage(
         root.addView(tabBar)
 
         // ---- 参数面板 ----
-        // 两个面板先各自建好，最后一起放进可左右滑动的容器
-        paramPane = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
+        // 内容容器；外面会各自包一层 ScrollView，再交给 ViewPager2 做左右翻页
+        paramPane = LinearLayout(c).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(10), dp(16), dp(12))
+        }
 
         // ---- 模型状态（模型统一在「模型」页选择并加载） ----
         val modelCard = card()
@@ -317,7 +325,7 @@ class DrawPage(
         // ---- 结果面板 ----
         resultPane = LinearLayout(c).apply {
             orientation = LinearLayout.VERTICAL
-            visibility = View.GONE
+            setPadding(dp(16), dp(10), dp(16), dp(12))
         }
 
         val resultCard = card()
@@ -388,17 +396,18 @@ class DrawPage(
         resultPane.addView(histCard)
         refreshHistory()
 
-        // ---- 参数 / 结果：可左右滑动切换 ----
-        val paneHost = SwipeFrameLayout(c).apply {
-            val lp = { FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT) }
-            addView(paramPane, lp())
-            addView(resultPane, lp())
-            onSwipeLeft = { switchPane(toResult = true) }    // 左划 → 结果
-            onSwipeRight = { switchPane(toResult = false) }  // 右划 → 参数
+        // ---- 参数 / 结果：ViewPager2 跟手翻页（同手机桌面） ----
+        pager = ViewPager2(c).apply {
+            adapter = PaneAdapter(listOf(scrollWrap(paramPane), scrollWrap(resultPane)))
+            offscreenPageLimit = 1
+            registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
+                override fun onPageSelected(position: Int) {
+                    highlightTabs(toResult = position == 1)
+                }
+            })
         }
-        root.addView(paneHost, matchWrap())
+        root.addView(pager, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
 
         refreshLoraHint()
         refreshQuantText()
@@ -1041,21 +1050,37 @@ class DrawPage(
         setPadding(0, dp(11), 0, dp(11))
     }
 
-    /** 切换「参数 / 结果」面板，并高亮当前项 */
+    /** 切换「参数 / 结果」面板（带动画翻页），并高亮当前项 */
     private fun switchPane(toResult: Boolean) {
         if (!::paramPane.isInitialized) return
-        val show = if (toResult) resultPane else paramPane
-        val hide = if (toResult) paramPane else resultPane
-        hide.visibility = View.GONE
-        show.visibility = View.VISIBLE
-        // 轻微淡入，避免切换生硬
-        show.alpha = 0f
-        show.animate().alpha(1f).setDuration(140).start()
+        if (::pager.isInitialized) pager.setCurrentItem(if (toResult) 1 else 0, true)
+        highlightTabs(toResult)
+    }
+
+    /** 同步顶部菜单的高亮；手势翻页时也由它更新 */
+    private fun highlightTabs(toResult: Boolean) {
+        if (!::tabParams.isInitialized) return
         for ((tv, sel) in listOf(tabParams to !toResult, tabResult to toResult)) {
             tv.setTextColor(if (sel) primary else subText)
             tv.typeface = if (sel) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
             tv.setBackgroundColor(if (sel) 0xFFEDF1FF.toInt() else Color.WHITE)
         }
+    }
+
+    /** 给面板包一层可纵向滚动的 ScrollView（ViewPager2 需要一个确定高度的子项） */
+    private fun scrollWrap(inner: View) = ScrollView(c).apply {
+        isFillViewport = true
+        addView(inner, ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+    }
+
+    /** ViewPager2 用的最小 Adapter：直接复用已建好的两个面板，不做重建 */
+    private class PaneAdapter(private val panes: List<View>) : RecyclerView.Adapter<PaneAdapter.VH>() {
+        class VH(v: View) : RecyclerView.ViewHolder(v)
+        override fun getItemCount() = panes.size
+        override fun getItemViewType(position: Int) = position
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) = VH(panes[viewType])
+        override fun onBindViewHolder(holder: VH, position: Int) { }
     }
 
     /** 宽 × 高 输入行 */

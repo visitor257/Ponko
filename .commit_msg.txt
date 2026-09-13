@@ -1,6 +1,7 @@
-绘图页：参数 / 结果 两个面板支持左右滑动切换
+绘图页翻页改为 ViewPager2（跟手翻页，同手机桌面）
 
-- 新增 SwipeFrameLayout：只处理横向滑动，纵向滚动照常交给 ScrollView；
-  起点落在「生成历史」横向滚动区时不拦截，避免抢它的滑动
-- 顶部菜单点击切换保留，切换时加 140ms 淡入
-- 不用 ViewPager2：它要求子项 match_parent，会和本页外层 ScrollView 冲突
+- 之前自写的 SwipeFrameLayout 只能"滑动后切换"，不跟手且易失灵，弃用删除
+- 改用 androidx.viewpager2：拖动时页面跟手平移、松手吸附、边缘回弹
+- 为满足 ViewPager2 对子项高度的要求，绘图页不再由外层 ScrollView 包裹；
+  两个面板各自包一层 ScrollView 负责纵向滚动（横竖滑动互不干扰）
+- 顶部菜单点击仍可切换；tab 高亮改由 onPageSelected 同步，手势翻页也会跟着亮
