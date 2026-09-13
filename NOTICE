@@ -131,6 +131,36 @@ C. NDK runtime libraries distributed with this repository
             stable-diffusion.cpp requires the OpenMP runtime. Distribution
             follows the terms of the LLVM license.
 
+D. Components statically linked into third-party native libraries
+   (shipped inside the .so files in the APK)
+
+  liblitertlm_jni.so (LiteRT-LM) bundles, among others:
+      - TensorFlow Lite / LiteRT   Apache License 2.0   Copyright (c) Google LLC
+      - XNNPACK                    BSD 3-Clause        Copyright (c) Google LLC
+            License text: licenses/XNNPACK-LICENSE.txt
+      - sentencepiece              Apache License 2.0   Copyright (c) Google LLC
+      - HuggingFace tokenizers     Apache License 2.0   Copyright (c) Hugging Face
+      - re2                        BSD 3-Clause        Copyright (c) The RE2 Authors
+            License text: licenses/re2-LICENSE.txt
+      - Abseil                     Apache License 2.0   Copyright (c) The Abseil Authors
+      - cpuinfo                    BSD 2-Clause        Copyright (c) Google LLC,
+                                                          Facebook Inc., Georgia Institute of Technology
+            License text: licenses/cpuinfo-LICENSE.txt
+      - protobuf                   BSD 3-Clause        Copyright (c) Google Inc.
+            License text: licenses/protobuf-LICENSE.txt
+      - flatbuffers                Apache License 2.0   Copyright (c) Google LLC
+      - zlib                       zlib License        Copyright (c) Jean-loup Gailly and Mark Adler
+            License text: licenses/zlib-LICENSE.txt
+
+  libonnxruntime.so (ONNX Runtime) bundles, among others, XNNPACK,
+  protobuf, ONNX (Apache License 2.0), Abseil, flatbuffers, re2 and cpuinfo.
+      Full notices: licenses/onnxruntime-ThirdPartyNotices.txt
+
+  The native libraries of stable-diffusion.cpp and of the llama.cpp binding
+  bundle ggml, stb, miniz, json.hpp, httplib and darts_clone (see section A).
+
+  The Apache License 2.0 full text is available at licenses/apache-2.0.txt.
+
 --------------------------------------------------------------------------
 Note
 --------------------------------------------------------------------------
@@ -260,6 +290,35 @@ C. 随仓库分发的 NDK 运行时库（app/src/main/jniLibs/arm64-v8a/）
       著作权：Copyright (c) The LLVM Project
       说明：来自 Android NDK（android-ndk-r27），stable-diffusion.cpp 的
             编译产物依赖 OpenMP 运行时。分发遵循 LLVM 许可证条款。
+
+D. 静态链入第三方原生库的组件（打包在 APK 的 .so 里）
+
+  liblitertlm_jni.so（LiteRT-LM）内含以下组件（仅列主要项）：
+      - TensorFlow Lite / LiteRT   Apache License 2.0  著作权：Google LLC
+      - XNNPACK                    BSD 3-Clause       著作权：Google LLC
+            许可证文本：licenses/XNNPACK-LICENSE.txt
+      - sentencepiece              Apache License 2.0  著作权：Google LLC
+      - HuggingFace tokenizers     Apache License 2.0  著作权：Hugging Face
+      - re2                        BSD 3-Clause       著作权：The RE2 Authors
+            许可证文本：licenses/re2-LICENSE.txt
+      - Abseil                     Apache License 2.0  著作权：The Abseil Authors
+      - cpuinfo                    BSD 2-Clause       著作权：Google LLC、
+                                                         Facebook Inc.、Georgia Institute of Technology
+            许可证文本：licenses/cpuinfo-LICENSE.txt
+      - protobuf                   BSD 3-Clause       著作权：Google Inc.
+            许可证文本：licenses/protobuf-LICENSE.txt
+      - flatbuffers                Apache License 2.0  著作权：Google LLC
+      - zlib                       zlib License       著作权：Jean-loup Gailly and Mark Adler
+            许可证文本：licenses/zlib-LICENSE.txt
+
+  libonnxruntime.so（ONNX Runtime）内含 XNNPACK、protobuf、ONNX（Apache License 2.0）、
+  Abseil、flatbuffers、re2、cpuinfo 等。
+      完整声明：licenses/onnxruntime-ThirdPartyNotices.txt
+
+  stable-diffusion.cpp 与 llama.cpp 绑定的原生库内含 ggml、stb、miniz、
+  json.hpp、httplib、darts_clone（见 A 段）。
+
+  Apache License 2.0 全文见 licenses/apache-2.0.txt。
 
 --------------------------------------------------------------------------
 说明

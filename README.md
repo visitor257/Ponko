@@ -119,12 +119,15 @@ powershell -File tools/build-release.ps1
 | [SLF4J API](https://www.slf4j.org/)（llama.cpp 绑定引入） | MIT | Gradle 传递依赖 |
 | FastDoubleParser / Schubfach（Jackson 打包内） | MIT / Boost-1.0 | 随 Jackson 打包（`META-INF/*-LICENSE`） |
 | 注解类库（jspecify / checker-qual / error_prone_annotations / JetBrains annotations） | Apache-2.0 / MIT | Gradle 传递依赖（仅注解，无运行时代码） |
+| 静态链入 LiteRT-LM 原生库（LiteRT / TFLite、XNNPACK、sentencepiece、HF tokenizers、re2、Abseil、cpuinfo、protobuf、flatbuffers、zlib） | Apache-2.0 / BSD-3-Clause / BSD-2-Clause / zlib | 编入 `liblitertlm_jni.so` |
+| 静态链入 ONNX Runtime 原生库（XNNPACK、protobuf、ONNX、Abseil、flatbuffers、re2、cpuinfo 等） | Apache-2.0 / BSD-3-Clause / BSD-2-Clause | 编入 `libonnxruntime.so` |
 | LLVM libc++ / libomp（来自 Android NDK） | Apache-2.0 with LLVM Exceptions | `app/src/main/jniLibs/` |
 
 > stable-diffusion.cpp 源码为随仓库分发的副本，为减小体积剔除了本项目用不到的分词器词表（仅保留 CLIP）。
 > 本项目**不含任何模型权重文件**；绘图模型（SD1.5 GGUF）、对话模型（`.litertlm` / `.gguf`）、LoRA 以及打标模型（`.onnx` + `selected_tags.csv`）均由使用者自行获取。
 > ONNX Runtime 自身还打包了若干第三方组件，其声明见 [licenses/onnxruntime-ThirdPartyNotices.txt](licenses/onnxruntime-ThirdPartyNotices.txt)。
 > commonmark / Jackson / Gson / SLF4J 等为**传递依赖**，由所选的 Markwon、llama.cpp 绑定、LiteRT-LM 自动引入。
+> 第三方原生库里静态链入的组件（XNNPACK、protobuf、re2、cpuinfo、zlib 等）与各类许可证全文见 [licenses/](licenses/) 与 [NOTICE](NOTICE)。
 
 ## 致谢
 

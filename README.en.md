@@ -120,12 +120,15 @@ powershell -File tools/build-release.ps1
 | [SLF4J API](https://www.slf4j.org/) (via the llama.cpp binding) | MIT | Gradle transitive dependency |
 | FastDoubleParser / Schubfach (bundled in Jackson) | MIT / Boost-1.0 | shipped inside Jackson (`META-INF/*-LICENSE`) |
 | Annotation-only libs (jspecify / checker-qual / error_prone_annotations / JetBrains annotations) | Apache-2.0 / MIT | Gradle transitive dependency (annotations only, no runtime code) |
+| Statically linked into LiteRT-LM's native library (LiteRT / TFLite, XNNPACK, sentencepiece, HF tokenizers, re2, Abseil, cpuinfo, protobuf, flatbuffers, zlib) | Apache-2.0 / BSD-3-Clause / BSD-2-Clause / zlib | built into `liblitertlm_jni.so` |
+| Statically linked into ONNX Runtime's native library (XNNPACK, protobuf, ONNX, Abseil, flatbuffers, re2, cpuinfo, ...) | Apache-2.0 / BSD-3-Clause / BSD-2-Clause | built into `libonnxruntime.so` |
 | LLVM libc++ / libomp (from the Android NDK) | Apache-2.0 with LLVM Exceptions | `app/src/main/jniLibs/` |
 
 > The bundled stable-diffusion.cpp source has unused tokenizer vocabularies trimmed (CLIP only) to keep the repo small.
 > This project contains **no model weights**; the drawing model (SD1.5 GGUF), chat models (`.litertlm` / `.gguf`), LoRA and the tagging assets (`.onnx` + `selected_tags.csv`) are supplied by the user.
 > ONNX Runtime bundles additional third-party components; see [licenses/onnxruntime-ThirdPartyNotices.txt](licenses/onnxruntime-ThirdPartyNotices.txt).
 > commonmark / Jackson / Gson / SLF4J are **transitive dependencies** pulled in automatically by Markwon, the llama.cpp binding, and LiteRT-LM.
+> Components statically linked into the third-party native libraries (XNNPACK, protobuf, re2, cpuinfo, zlib, ...) and the full license texts are in [licenses/](licenses/) and [NOTICE](NOTICE).
 
 ## Credits
 
