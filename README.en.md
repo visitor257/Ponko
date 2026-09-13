@@ -60,7 +60,7 @@ powershell -File tools/build-release.ps1
 
 - `minSdk 28` / `targetSdk 36`, **arm64-v8a only** (native library constraint; a real device is required, emulators won't run it)
 - The first full compile of sd.cpp + ggml takes about 8–9 minutes; with C++ unchanged, incremental builds take ~10 seconds
-- Main dependencies: `com.google.ai.edge.litertlm:litertlm-android:0.17.0`, `net.ladenthin:llama-android:5.1.0`, `io.noties.markwon:*:4.6.2`
+- Main dependencies: `com.google.ai.edge.litertlm:litertlm-android:0.17.0`, `net.ladenthin:llama-android:5.1.0`, `com.microsoft.onnxruntime:onnxruntime-android:1.22.0`, `io.noties.markwon:*:4.6.2`
 - Built by CMake: `libstable-diffusion.so` (sd.cpp itself), `libponko_sd.so` (JNI bridge)
 
 ## Where to get models
@@ -95,14 +95,17 @@ powershell -File tools/build-release.ps1
 | [llama.cpp](https://github.com/ggerganov/llama.cpp) (via java-llama.cpp binding) | MIT | Gradle dependency |
 | [Markwon](https://github.com/noties/Markwon) | Apache-2.0 | Gradle dependency |
 | Kotlin / kotlinx.coroutines / AndroidX | Apache-2.0 | Gradle dependency |
+| [ONNX Runtime](https://github.com/microsoft/onnxruntime) | MIT | Gradle dependency (Tagger) |
 | LLVM libc++ / libomp (from the Android NDK) | Apache-2.0 with LLVM Exceptions | `app/src/main/jniLibs/` |
 
 > The bundled stable-diffusion.cpp source has unused tokenizer vocabularies trimmed (CLIP only) to keep the repo small.
-> This project contains **no model weights**; the drawing model (SD1.5 GGUF), chat models (`.litertlm` / `.gguf`) and LoRA are supplied by the user.
+> This project contains **no model weights**; the drawing model (SD1.5 GGUF), chat models (`.litertlm` / `.gguf`), LoRA and the tagging assets (`.onnx` + `selected_tags.csv`) are supplied by the user.
+> ONNX Runtime bundles additional third-party components; see [licenses/onnxruntime-ThirdPartyNotices.txt](licenses/onnxruntime-ThirdPartyNotices.txt).
 
 ## Credits
 
 - [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM) (Google)
 - [java-llama.cpp](https://github.com/kherud/java-llama.cpp) / llama.cpp
 - [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp)
+- [ONNX Runtime](https://github.com/microsoft/onnxruntime) (Microsoft)
 - [Markwon](https://github.com/noties/Markwon)

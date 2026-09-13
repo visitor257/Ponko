@@ -59,7 +59,7 @@ powershell -File tools/build-release.ps1
 
 - `minSdk 28` / `targetSdk 36`，**仅 arm64-v8a**（原生库限制，需真机，模拟器跑不了）
 - 首次全量编译 sd.cpp + ggml 约 8~9 分钟，C++ 未改动时增量仅约 10 秒
-- 主要依赖：`com.google.ai.edge.litertlm:litertlm-android:0.17.0`、`net.ladenthin:llama-android:5.1.0`、`io.noties.markwon:*:4.6.2`
+- 主要依赖：`com.google.ai.edge.litertlm:litertlm-android:0.17.0`、`net.ladenthin:llama-android:5.1.0`、`com.microsoft.onnxruntime:onnxruntime-android:1.22.0`、`io.noties.markwon:*:4.6.2`
 - CMake 现场产出：`libstable-diffusion.so`（sd.cpp 本体）、`libponko_sd.so`（JNI 桥）
 
 ## 模型从哪来
@@ -94,14 +94,17 @@ powershell -File tools/build-release.ps1
 | [llama.cpp](https://github.com/ggerganov/llama.cpp)（经 java-llama.cpp 绑定） | MIT | Gradle 依赖 |
 | [Markwon](https://github.com/noties/Markwon) | Apache-2.0 | Gradle 依赖 |
 | Kotlin / kotlinx.coroutines / AndroidX | Apache-2.0 | Gradle 依赖 |
+| [ONNX Runtime](https://github.com/microsoft/onnxruntime) | MIT | Gradle 依赖（打标 Tagger） |
 | LLVM libc++ / libomp（来自 Android NDK） | Apache-2.0 with LLVM Exceptions | `app/src/main/jniLibs/` |
 
 > stable-diffusion.cpp 源码为随仓库分发的副本，为减小体积剔除了本项目用不到的分词器词表（仅保留 CLIP）。
-> 本项目**不含任何模型权重文件**；绘图模型（SD1.5 GGUF）、对话模型（`.litertlm` / `.gguf`）与 LoRA 均由使用者自行获取。
+> 本项目**不含任何模型权重文件**；绘图模型（SD1.5 GGUF）、对话模型（`.litertlm` / `.gguf`）、LoRA 以及打标模型（`.onnx` + `selected_tags.csv`）均由使用者自行获取。
+> ONNX Runtime 自身还打包了若干第三方组件，其声明见 [licenses/onnxruntime-ThirdPartyNotices.txt](licenses/onnxruntime-ThirdPartyNotices.txt)。
 
 ## 致谢
 
 - [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM)（Google）
 - [java-llama.cpp](https://github.com/kherud/java-llama.cpp) / llama.cpp
 - [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp)
+- [ONNX Runtime](https://github.com/microsoft/onnxruntime)（Microsoft）
 - [Markwon](https://github.com/noties/Markwon)

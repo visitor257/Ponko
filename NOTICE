@@ -89,6 +89,12 @@ B. Binary dependencies (fetched by Gradle from trusted repositories; not
       License: Apache License 2.0     Copyright: Copyright (c) JetBrains s.r.o.
   - AndroidX / Material components
       License: Apache License 2.0     Copyright: Copyright (c) The Android Open Source Project
+  - ONNX Runtime (com.microsoft.onnxruntime:onnxruntime-android)
+      License: MIT License            Copyright: Copyright (c) Microsoft Corporation
+      License text: licenses/onnxruntime-LICENSE.txt
+      Note: Used for on-device image tagging (Tagger). The runtime bundles
+            additional third-party components; their notices are reproduced
+            in licenses/onnxruntime-ThirdPartyNotices.txt.
 
 C. NDK runtime libraries distributed with this repository
    (app/src/main/jniLibs/arm64-v8a/)
@@ -109,6 +115,10 @@ This project does not include any Stable Diffusion model weights.
 Drawing models (.gguf), chat models (.litertlm / .gguf) and LoRA files are
 obtained by the user and loaded at runtime; their licensing and terms of use
 are governed by their respective distributors.
+
+The same applies to the tagging/Tagger assets: the ONNX tagger model (.onnx)
+and its tag list (selected_tags.csv) are imported by the user and are not
+distributed with this project.
 
 
 ==========================================================================
@@ -189,6 +199,11 @@ B. 二进制依赖（由 Gradle 从可信仓库拉取，不随本仓库分发）
       许可证：Apache License 2.0      著作权：Copyright (c) JetBrains s.r.o.
   - AndroidX / Material 组件
       许可证：Apache License 2.0      著作权：Copyright (c) The Android Open Source Project
+  - ONNX Runtime（com.microsoft.onnxruntime:onnxruntime-android）
+      许可证：MIT License           著作权：Copyright (c) Microsoft Corporation
+      许可证文本：licenses/onnxruntime-LICENSE.txt
+      说明：用于本机图像打标（Tagger）。该运行时另自带若干第三方组件，
+            其声明见 licenses/onnxruntime-ThirdPartyNotices.txt。
 
 C. 随仓库分发的 NDK 运行时库（app/src/main/jniLibs/arm64-v8a/）
 
@@ -206,3 +221,6 @@ C. 随仓库分发的 NDK 运行时库（app/src/main/jniLibs/arm64-v8a/）
 本项目不包含任何 Stable Diffusion 模型权重文件。绘图模型（.gguf）、
 对话模型（.litertlm / .gguf）与 LoRA 均由使用者自行获取并在运行时载入，
 其许可与使用条款以各自发布方为准。
+
+打标（Tagger）用的资产同样如此：ONNX 打标模型（.onnx）与其标签表
+（selected_tags.csv）由使用者自行导入，不随本项目分发。

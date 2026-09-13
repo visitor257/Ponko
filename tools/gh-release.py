@@ -12,21 +12,25 @@ import urllib.request
 REPO = "visitor257/Ponko"
 TOKFILE = r"C:\Users\Administrator\Desktop\git_repo_tok.txt"
 APK = r"C:\Users\Administrator\.qclaw\workspace-agent-e522fb09\LiteRT-Chat\app\build\outputs\apk\release\Ponko-release.apk"
-TAG = "v1.2"
-NAME = "Ponko v1.2"
+TAG = "v1.3"
+NAME = "Ponko v1.3"
 
-BODY = """Ponko v1.2 — Fully offline AI app for Android: chat + drawing.
+BODY = """Ponko v1.3 — Fully offline AI app for Android: chat + drawing + tagging.
 
-All inference runs on-device. No network, no telemetry; conversations stay on your phone.
+All inference runs on-device. No network, no telemetry; your data stays on your phone.
 See the [README](https://github.com/visitor257/Ponko#readme).
 
-## v1.2 Highlights
-- **Image-to-image**: the drawing page's parameters are split into two tabs — Text-to-Image / Image-to-Image
-  - Image-to-Image: pick a reference photo from your gallery as the base, then use the prompt + "denoise strength" to restyle / change background / refine
-  - Output size auto-aligns to the reference image (multiple of 64); still editable
-  - Denoise strength 0.05–0.99: lower = closer to the source, higher = follows the prompt more
-- Prompt placeholders are now example-style: positive "e.g. 1girl", negative "e.g. lowres, bad anatomy, ..."
-- Version 1.1.1 -> 1.2.0 (versionCode 4)
+## v1.3 Highlights
+- **Image tagging (Tagger)**: reverse an image into Danbooru-style tags, fully offline
+  - Import a WD14-style ONNX tagger (`.onnx`) plus its tag list (`selected_tags.csv`) yourself — nothing is bundled or downloaded
+  - New **Tagger** tab in the drawing parameters: pick an image, set threshold / max tags, then get tags
+  - Send the tags to **Text-to-Image** or **Image-to-Image** (with a confirmation prompt)
+  - On the result page you can send a generated image to **Image-to-Image** (as the reference) or to **Tagger** (as its input)
+  - Runs on ONNX Runtime and follows the Models page run mode: CPU, or NNAPI when GPU is selected
+- **Parameter defaults**: each parameter page now has "Set as default" and "Restore defaults"
+  - Text-to-Image and Image-to-Image keep **separate default sets for LoRA on/off**; toggling the LoRA switch applies the matching set
+- **Model import**: the drawing model is now imported as a **single `.gguf` file** (no more folder import); added **local LoRA import** (`.safetensors`, single file)
+- Version 1.2.0 -> 1.3.0 (versionCode 5)
 
 ## Chat
 - Two backends: LiteRT-LM (`.litertlm`) + llama.cpp (`.gguf`)
@@ -38,32 +42,37 @@ See the [README](https://github.com/visitor257/Ponko#readme).
 
 ## Drawing
 - Built-in custom stable-diffusion.cpp, loads SD1.5-family GGUF models, pure CPU
-- **Text-to-image + image-to-image**
-- LCM-LoRA acceleration: one-tap download in-app (Hugging Face official / hf-mirror), cuts 20 steps to 4–8
+- Text-to-image + image-to-image
+- LCM-LoRA acceleration: one-tap download in-app (Hugging Face official / hf-mirror), cuts 20 steps to 4-8
 - Generate from chat: when both an LLM and an SD model are loaded, just say "draw a ..."
 - Width / height / steps / CFG / seed / sampler / scheduler all adjustable
+- **Image tagging (Tagger)**: offline WD14-style ONNX tagger, tags can be forwarded to T2I / I2I
 
 ## Install
 - arm64-v8a only (64-bit ARM devices), minSdk 28 (Android 9+)
-- v1.2 (versionCode 4) installs over v1.1.1; uninstall older debug builds or v1.0 first (different signing key)
-- Model files are not bundled: import chat models (`.litertlm` / `.gguf`) and a drawing model (SD1.5 GGUF) from the in-app "Models" page
+- v1.3 (versionCode 5) installs over v1.2; uninstall older debug builds or v1.0 first (different signing key)
+- Model files are not bundled: import chat models (`.litertlm` / `.gguf`), a drawing model (SD1.5 GGUF) and, optionally, a tagger (`.onnx` + `.csv`) from the in-app "Models" page
 
 ## License
-Code is MIT; art assets (icons, artwork) are all rights reserved. Third-party components (stable-diffusion.cpp, ggml, LiteRT-LM, llama.cpp, Markwon, etc.) are distributed under their respective licenses — see the repository NOTICE.
+Code is MIT; art assets (icons, artwork) are all rights reserved. Third-party components (stable-diffusion.cpp, ggml, LiteRT-LM, llama.cpp, Markwon, ONNX Runtime, etc.) are distributed under their respective licenses — see the repository NOTICE. ONNX Runtime bundles extra third-party components; their notices are included under `licenses/`.
 
 ---
 
-Ponko v1.2 —— 本地 AI App（Android）：聊天 + 绘图
+Ponko v1.3 —— 本地 AI App（Android）：聊天 + 绘图 + 打标
 
-所有推理都在本机离线运行，不联网、无遥测，对话记录只保存在设备本地。
+所有推理都在本机离线运行，不联网、无遥测，你的数据只留在设备本地。
 
-### v1.2 亮点
-- **图生图（Image-to-Image）**：绘图页参数区拆成「文生图 / 图生图」两页
-  - 图生图：从相册选一张参考图当底稿，配合提示词与「重绘强度」改风格 / 换背景 / 精修
-  - 选图后自动把输出尺寸对齐参考图（64 的倍数），可手动调整
-  - 重绘强度 0.05~0.99：越小越接近原图，越大越听提示词
-- 提示词占位改为示例式（正面「例如：1girl」，负面「例如：lowres, bad anatomy, ...」）
-- 版本 1.1.1 -> 1.2.0（versionCode 4）
+### v1.3 亮点
+- **图像打标（Tagger）**：把一张图反推成 Danbooru 风格标签，全程离线
+  - 打标模型自备：从本机导入 WD14 类 ONNX 打标模型（`.onnx`）与其标签表（`selected_tags.csv`），不内置、不下载
+  - 绘图参数区新增「**Tagger**」页：选图 → 设阈值 / 最多标签数 → 输出标签
+  - 标签可一键**发送至文生图 / 图生图**（发送前弹确认框）
+  - 结果页可把生成的图**发送至图生图**（当参考图）或**发送至 Tagger**（当输入图）
+  - 走 ONNX Runtime，跟随模型页「运行方式」：CPU，或选 GPU 时用 NNAPI 加速
+- **参数默认值**：三个参数页都加了「**设为默认值 / 恢复默认**」
+  - 文生图、图生图**按 LoRA 开/关各存一套默认值**；切换 LoRA 开关会自动套用对应那套
+- **模型导入**：绘图模型改为导入**单个 `.gguf` 文件**（不再整目录导入）；新增**本地 LoRA 导入**（`.safetensors` 单文件）
+- 版本 1.2.0 -> 1.3.0（versionCode 5）
 
 ### 对话功能
 - 双后端：LiteRT-LM（`.litertlm`）+ llama.cpp（`.gguf`）
@@ -75,18 +84,19 @@ Ponko v1.2 —— 本地 AI App（Android）：聊天 + 绘图
 
 ### 绘图功能
 - 内置自编 stable-diffusion.cpp，读 GGUF 格式的 SD1.5 系模型，纯 CPU 绘制
-- **文生图 + 图生图**两种模式
+- 文生图 + 图生图两种模式
 - LCM-LoRA 加速：App 内一键下载（HF 官方 / hf-mirror 双源），20 步压到 4~8 步
 - 对话页出图：语言模型与绘图模型同时加载时，直接说「画一张…」就会调用绘图模型
 - 宽高 / 步数 / CFG / 种子 / 采样器 / 调度器全可调
+- **图像打标（Tagger）**：离线 WD14 类 ONNX 打标，标签可发送至文生图 / 图生图
 
 ### 安装
 - 仅支持 arm64-v8a（64 位 ARM 真机），minSdk 28（Android 9 及以上）
-- v1.2（versionCode 4）可直接覆盖安装；更早的 debug 版或 v1.0 请先卸载（签名不同）
-- 模型文件需自备：对话模型（`.litertlm` / `.gguf`）与绘图模型（SD1.5 GGUF）分别在 App 内「模型」页导入
+- v1.3（versionCode 5）可直接覆盖安装；更早的 debug 版或 v1.0 请先卸载（签名不同）
+- 模型文件需自备：对话模型（`.litertlm` / `.gguf`）、绘图模型（SD1.5 GGUF），打标模型（`.onnx` + `.csv`）可选，都在 App 内「模型」页导入
 
 ### 许可
-代码 MIT；美术资源（图标、立绘）版权归作者所有。本项目包含的第三方组件（stable-diffusion.cpp、ggml、LiteRT-LM、llama.cpp、Markwon 等）按各自许可证分发，详见仓库 NOTICE。
+代码 MIT；美术资源（图标、立绘）版权归作者所有。本项目包含的第三方组件（stable-diffusion.cpp、ggml、LiteRT-LM、llama.cpp、Markwon、ONNX Runtime 等）按各自许可证分发，详见仓库 NOTICE。ONNX Runtime 另自带若干第三方组件，其声明收录在 `licenses/` 目录。
 """
 
 

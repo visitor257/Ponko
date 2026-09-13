@@ -58,7 +58,10 @@ class DrawPage(
 
     companion object {
         const val DIR_NAME = "draw"
+        /** 打标模型/标签表目录：filesDir/tagger */
+        const val TAGGER_DIR = "tagger"
         private const val REQ_IMAGE = 0x5D02
+        private const val REQ_TAGGER_IMAGE = 0x5D03
 
         /** LCM-LoRA：HuggingFace 官方仓库路径（文件实名为 pytorch_lora_weights.safetensors） */
         private const val LORA_HF_PATH =
@@ -91,6 +94,10 @@ class DrawPage(
         private const val KEY_I2I_LORA_SCALE = "i2iLoraScale"
         private const val KEY_I2I_SAMPLER = "i2iSampler"
         private const val KEY_I2I_SCHEDULER = "i2iScheduler"
+
+        // 打标（Tagger）
+        private const val KEY_TAG_THRESHOLD = "tagThreshold"
+        private const val KEY_TAG_TOPK = "tagTopK"
     }
 
     private val c: Context get() = act
@@ -187,8 +194,8 @@ class DrawPage(
     private lateinit var t2iContent: LinearLayout
     private lateinit var i2iContent: LinearLayout
 
-    /** 当前参数页是否处于「图生图」模式 */
-    private var img2imgMode = false
+    /** 当前参数页模式：0=文生图 1=图生图 2=Tagger */
+    private var mode = 0
 
     // ---- 图生图专属控件 ----
     private lateinit var i2iPromptEdit: EditText
@@ -213,6 +220,31 @@ class DrawPage(
 
     /** 图生图选中的参考图（仅内存，进程结束即失效） */
     private var i2iBitmap: Bitmap? = null
+
+    // ---- Tagger 专属控件 ----
+    private lateinit var tabTagger: TextView
+    private lateinit var taggerContent: LinearLayout
+    private lateinit var taggerPreview: ImageView
+    private lateinit var taggerPickBtn: Button
+    private lateinit var taggerImgHint: TextView
+    private lateinit var taggerRunBtn: Button
+    private lateinit var taggerProgressText: TextView
+    private lateinit var taggerProgressBar: ProgressBar
+    private lateinit var taggerThresholdEdit: EditText
+    private lateinit var taggerTopKEdit: EditText
+    private lateinit var taggerOut: TextView
+    private lateinit var taggerSendT2iBtn: Button
+    private lateinit var taggerSendI2iBtn: Button
+
+    /** Tagger 选中的输入图（仅内存） */
+    private var taggerBitmap: Bitmap? = null
+
+    /** 最近一次打标结果（逗号分隔的 tag 文本） */
+    private var taggerTags: String = ""
+
+    /** 结果页的「发送至图生图 / 发送至 Tagger」按钮 */
+    private lateinit var resultToI2iBtn: Button
+    private lateinit var resultToTaggerBtn: Button
 
     /** 保存图片到相册：MainActivity 注入实现（复用它的 MediaStore 逻辑）。参数：图 + 文件名 */
     var onSaveImage: ((Bitmap, String) -> Unit)? = null
@@ -272,10 +304,13 @@ class DrawPage(
         }
         tabT2i = modeTab(c.getString(R.string.s_207))
         tabI2i = modeTab(c.getString(R.string.s_208))
-        tabT2i.setOnClickListener { switchMode(toImg2Img = false) }
-        tabI2i.setOnClickListener { switchMode(toImg2Img = true) }
+        tabTagger = modeTab(c.getString(R.string.s_221))
+        tabT2i.setOnClickListener { switchMode(0) }
+        tabI2i.setOnClickListener { switchMode(1) }
+        tabTagger.setOnClickListener { switchMode(2) }
         modeBar.addView(tabT2i, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         modeBar.addView(tabI2i, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        modeBar.addView(tabTagger, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         paramPane.addView(modeBar, matchWrap())
 
         // ---- 提示词 ----
@@ -318,8 +353,8 @@ class DrawPage(
         paramCard.addView(title(c.getString(R.string.s_065)))
 
         // 尺寸：宽 × 高，自由填（sd.cpp 要求 64 的倍数）——从上次的值恢复
-        widthEdit = smallNumber(loadParam(KEY_W, "512"))
-        heightEdit = smallNumber(loadParam(KEY_H, "512"))
+        widthEdit = smallNumber(loadParam(KEY_W, defOf("t2i", "w", "512")))
+        heightEdit = smallNumber(loadParam(KEY_H, defOf("t2i", "h", "512")))
         paramCard.addView(whRow(c.getString(R.string.s_070),
             c.getString(R.string.s_068), widthEdit, heightEdit))
 
@@ -330,17 +365,17 @@ class DrawPage(
         schedulerSpinner = choiceSpinner(
             listOf(c.getString(R.string.s_168)) + SdCppEngine.Scheduler.entries.map { it.label }
         )
-        samplerSpinner.setSelection(loadInt(KEY_SAMPLER, 0).coerceIn(0, samplerSpinner.adapter.count - 1), false)
-        schedulerSpinner.setSelection(loadInt(KEY_SCHEDULER, 0).coerceIn(0, schedulerSpinner.adapter.count - 1), false)
+        samplerSpinner.setSelection(loadInt(KEY_SAMPLER, defOfInt("t2i", "sampler", 0)).coerceIn(0, samplerSpinner.adapter.count - 1), false)
+        schedulerSpinner.setSelection(loadInt(KEY_SCHEDULER, defOfInt("t2i", "scheduler", 0)).coerceIn(0, schedulerSpinner.adapter.count - 1), false)
         // 先恢复再挂监听，免得 setSelection 把默认值又写回去
         samplerSpinner.onItemSelectedListener = persistSpinner(KEY_SAMPLER)
         schedulerSpinner.onItemSelectedListener = persistSpinner(KEY_SCHEDULER)
         paramCard.addView(paramRow(c.getString(R.string.s_191), samplerSpinner, c.getString(R.string.s_015)))
         paramCard.addView(paramRow(c.getString(R.string.s_176), schedulerSpinner, c.getString(R.string.s_014)))
 
-        stepsEdit = smallNumber(loadParam(KEY_STEPS, "20"))
-        cfgEdit = smallNumber(loadParam(KEY_CFG, "7.0"))
-        seedEdit = smallNumber(loadParam(KEY_SEED, "-1"))
+        stepsEdit = smallNumber(loadParam(KEY_STEPS, defOf("t2i", "steps", builtinSteps())))
+        cfgEdit = smallNumber(loadParam(KEY_CFG, defOf("t2i", "cfg", builtinCfg())))
+        seedEdit = smallNumber(loadParam(KEY_SEED, defOf("t2i", "seed", "-1")))
         bindParam(widthEdit, KEY_W)
         bindParam(heightEdit, KEY_H)
         bindParam(stepsEdit, KEY_STEPS)
@@ -359,21 +394,18 @@ class DrawPage(
             setPadding(0, dp(10), 0, 0)
             setOnCheckedChangeListener { _, checked ->
                 useLora = checked
-                if (checked) {
-                    // 打开就顺手把参数带到 LCM 的推荐档位（用户仍可手动改回去）
-                    if (activeLora() == null) {
-                        toast(c.getString(R.string.s_186))
-                    } else {
-                        stepsEdit.setText("6")
-                        cfgEdit.setText("1.8")
-                    }
-                }
+                // 切换 LoRA = 套用该状态的那套默认值（开/关各一套，可用「设为默认值」覆盖）
+                if (checked && activeLora() == null) toast(c.getString(R.string.s_186))
                 if (::i2iLoraCheck.isInitialized) i2iLoraCheck.isChecked = checked
                 refreshLoraHint()
+                if (::i2iContent.isInitialized) {
+                    applyDefaults("t2i")
+                    applyDefaults("i2i")
+                }
             }
         }
         paramCard.addView(loraCheck)
-        loraScaleEdit = smallNumber(loadParam(KEY_LORA_SCALE, "1.0"))
+        loraScaleEdit = smallNumber(loadParam(KEY_LORA_SCALE, defOf("t2i", "loraScale", "1.0")))
         bindParam(loraScaleEdit, KEY_LORA_SCALE)
         paramCard.addView(paramRow(c.getString(R.string.s_024), loraScaleEdit, c.getString(R.string.s_037)))
         loraHint = TextView(c).apply {
@@ -383,9 +415,13 @@ class DrawPage(
         }
         paramCard.addView(loraHint)
         t2iContent.addView(paramCard)
+        t2iContent.addView(defaultButtonsRow("t2i"), matchWrap(top = 10))
 
         // ---- 图生图页面 ----
         i2iContent = buildI2iContent()
+
+        // ---- Tagger 页面 ----
+        taggerContent = buildTaggerContent()
 
         // 模式容器：用 visibility 切换，不用嵌套 ViewPager，
         // 否则会和外层「参数/结果」的左右翻页抢手势。
@@ -393,6 +429,8 @@ class DrawPage(
         paramHost.addView(t2iContent, ViewGroup.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         paramHost.addView(i2iContent, ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        paramHost.addView(taggerContent, ViewGroup.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         paramPane.addView(paramHost, matchWrap())
 
@@ -426,6 +464,29 @@ class DrawPage(
             }
         }
         resultCard.addView(saveBtn, matchWrap(top = 10))
+
+        // 结果图一键送去「图生图」当参考图，或送去「Tagger」当输入图
+        resultToI2iBtn = Button(c).apply {
+            text = c.getString(R.string.s_225)
+            textSize = 13f
+            setTextColor(primary)
+            setBackgroundColor(0xFFEDF1FF.toInt())
+            setOnClickListener { sendResultToI2i() }
+        }
+        resultToTaggerBtn = Button(c).apply {
+            text = c.getString(R.string.s_238)
+            textSize = 13f
+            setTextColor(primary)
+            setBackgroundColor(0xFFEDF1FF.toInt())
+            setOnClickListener { sendResultToTagger() }
+        }
+        val sendRow = LinearLayout(c).apply { orientation = LinearLayout.HORIZONTAL }
+        sendRow.addView(resultToI2iBtn,
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        sendRow.addView(resultToTaggerBtn,
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                .apply { leftMargin = dp(8) })
+        resultCard.addView(sendRow, matchWrap(top = 8))
         resultPane.addView(resultCard)
 
         // ---- 生成历史（只活在内存里，App 进程结束即清空） ----
@@ -486,7 +547,7 @@ class DrawPage(
 
         refreshLoraHint()
         refreshQuantText()
-        switchMode(toImg2Img = false)
+        switchMode(0)
         switchPane(toResult = false)
         return root
     }
@@ -564,13 +625,13 @@ class DrawPage(
         paramCard.addView(title(c.getString(R.string.s_065)))
 
         // 重绘强度：越小越接近原图
-        i2iStrengthEdit = smallNumber(loadParam(KEY_I2I_STRENGTH, "0.75"))
+        i2iStrengthEdit = smallNumber(loadParam(KEY_I2I_STRENGTH, defOf("i2i", "strength", "0.75")))
         bindParam(i2iStrengthEdit, KEY_I2I_STRENGTH)
         paramCard.addView(paramRow(c.getString(R.string.s_212), i2iStrengthEdit, c.getString(R.string.s_213)))
 
         // 尺寸：默认选图时会同步成参考图尺寸（64 倍数）
-        i2iWidthEdit = smallNumber(loadParam(KEY_I2I_W, "512"))
-        i2iHeightEdit = smallNumber(loadParam(KEY_I2I_H, "512"))
+        i2iWidthEdit = smallNumber(loadParam(KEY_I2I_W, defOf("i2i", "w", "512")))
+        i2iHeightEdit = smallNumber(loadParam(KEY_I2I_H, defOf("i2i", "h", "512")))
         bindParam(i2iWidthEdit, KEY_I2I_W)
         bindParam(i2iHeightEdit, KEY_I2I_H)
         paramCard.addView(whRow(c.getString(R.string.s_070), c.getString(R.string.s_068), i2iWidthEdit, i2iHeightEdit))
@@ -581,16 +642,16 @@ class DrawPage(
         i2iSchedulerSpinner = choiceSpinner(
             listOf(c.getString(R.string.s_168)) + SdCppEngine.Scheduler.entries.map { it.label }
         )
-        i2iSamplerSpinner.setSelection(loadInt(KEY_I2I_SAMPLER, 0).coerceIn(0, i2iSamplerSpinner.adapter.count - 1), false)
-        i2iSchedulerSpinner.setSelection(loadInt(KEY_I2I_SCHEDULER, 0).coerceIn(0, i2iSchedulerSpinner.adapter.count - 1), false)
+        i2iSamplerSpinner.setSelection(loadInt(KEY_I2I_SAMPLER, defOfInt("i2i", "sampler", 0)).coerceIn(0, i2iSamplerSpinner.adapter.count - 1), false)
+        i2iSchedulerSpinner.setSelection(loadInt(KEY_I2I_SCHEDULER, defOfInt("i2i", "scheduler", 0)).coerceIn(0, i2iSchedulerSpinner.adapter.count - 1), false)
         i2iSamplerSpinner.onItemSelectedListener = persistSpinner(KEY_I2I_SAMPLER)
         i2iSchedulerSpinner.onItemSelectedListener = persistSpinner(KEY_I2I_SCHEDULER)
         paramCard.addView(paramRow(c.getString(R.string.s_191), i2iSamplerSpinner, c.getString(R.string.s_015)))
         paramCard.addView(paramRow(c.getString(R.string.s_176), i2iSchedulerSpinner, c.getString(R.string.s_014)))
 
-        i2iStepsEdit = smallNumber(loadParam(KEY_I2I_STEPS, "20"))
-        i2iCfgEdit = smallNumber(loadParam(KEY_I2I_CFG, "7.0"))
-        i2iSeedEdit = smallNumber(loadParam(KEY_I2I_SEED, "-1"))
+        i2iStepsEdit = smallNumber(loadParam(KEY_I2I_STEPS, defOf("i2i", "steps", builtinSteps())))
+        i2iCfgEdit = smallNumber(loadParam(KEY_I2I_CFG, defOf("i2i", "cfg", builtinCfg())))
+        i2iSeedEdit = smallNumber(loadParam(KEY_I2I_SEED, defOf("i2i", "seed", "-1")))
         bindParam(i2iStepsEdit, KEY_I2I_STEPS)
         bindParam(i2iCfgEdit, KEY_I2I_CFG)
         bindParam(i2iSeedEdit, KEY_I2I_SEED)
@@ -607,16 +668,17 @@ class DrawPage(
             setPadding(0, dp(10), 0, 0)
             setOnCheckedChangeListener { _, checked ->
                 useLora = checked
-                if (checked) {
-                    if (activeLora() == null) toast(c.getString(R.string.s_186))
-                    else { i2iStepsEdit.setText("6"); i2iCfgEdit.setText("1.8") }
-                }
+                if (checked && activeLora() == null) toast(c.getString(R.string.s_186))
                 if (::loraCheck.isInitialized) loraCheck.isChecked = checked
                 refreshLoraHint()
+                if (::t2iContent.isInitialized) {
+                    applyDefaults("t2i")
+                    applyDefaults("i2i")
+                }
             }
         }
         paramCard.addView(i2iLoraCheck)
-        i2iLoraScaleEdit = smallNumber(loadParam(KEY_I2I_LORA_SCALE, "1.0"))
+        i2iLoraScaleEdit = smallNumber(loadParam(KEY_I2I_LORA_SCALE, defOf("i2i", "loraScale", "1.0")))
         bindParam(i2iLoraScaleEdit, KEY_I2I_LORA_SCALE)
         paramCard.addView(paramRow(c.getString(R.string.s_024), i2iLoraScaleEdit, c.getString(R.string.s_037)))
         i2iLoraHint = TextView(c).apply {
@@ -625,18 +687,24 @@ class DrawPage(
             setPadding(0, dp(2), 0, 0)
         }
         paramCard.addView(i2iLoraHint)
+        paramCard.addView(defaultButtonsRow("i2i"), matchWrap(top = 10))
         box.addView(paramCard)
 
         return box
     }
 
-    /** 切换「文生图 / 图生图」参数页 */
-    private fun switchMode(toImg2Img: Boolean) {
+    /** 切换参数页：0=文生图 1=图生图 2=Tagger */
+    private fun switchMode(m: Int) {
         if (!::t2iContent.isInitialized) return
-        img2imgMode = toImg2Img
-        t2iContent.visibility = if (toImg2Img) View.GONE else View.VISIBLE
-        i2iContent.visibility = if (toImg2Img) View.VISIBLE else View.GONE
-        for ((tv, sel) in listOf(tabT2i to !toImg2Img, tabI2i to toImg2Img)) {
+        mode = m
+        t2iContent.visibility = if (m == 0) View.VISIBLE else View.GONE
+        i2iContent.visibility = if (m == 1) View.VISIBLE else View.GONE
+        if (::taggerContent.isInitialized) {
+            taggerContent.visibility = if (m == 2) View.VISIBLE else View.GONE
+        }
+        for ((tv, sel) in listOf(
+            tabT2i to (m == 0), tabI2i to (m == 1), tabTagger to (m == 2)
+        )) {
             tv.setTextColor(if (sel) primary else subText)
             tv.typeface = if (sel) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
             tv.setBackgroundColor(if (sel) 0xFFEDF1FF.toInt() else Color.WHITE)
@@ -649,6 +717,316 @@ class DrawPage(
         textSize = 13f
         gravity = Gravity.CENTER
         setPadding(0, dp(9), 0, dp(9))
+    }
+
+    // ================= Tagger 页面 =================
+
+    /** 构建「Tagger」参数页：选图 → 打标 → 结果可发送到文生图/图生图 */
+    private fun buildTaggerContent(): LinearLayout {
+        val box = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
+
+        // ---- 输入图 ----
+        val imgCard = card()
+        imgCard.addView(title(c.getString(R.string.s_209)))
+        taggerPreview = ImageView(c).apply {
+            adjustViewBounds = true
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setBackgroundColor(0xFFF2F3F5.toInt())
+            visibility = View.GONE
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+        }
+        imgCard.addView(taggerPreview, matchWrap(top = 8))
+        taggerPickBtn = Button(c).apply {
+            text = c.getString(R.string.s_210)
+            setBackgroundColor(primary)
+            setTextColor(Color.WHITE)
+            typeface = Typeface.DEFAULT_BOLD
+            setOnClickListener { pickTaggerImage() }
+        }
+        imgCard.addView(taggerPickBtn, matchWrap(top = 10))
+        taggerImgHint = TextView(c).apply {
+            text = c.getString(R.string.s_211)
+            textSize = 11.5f
+            setTextColor(subText)
+            setPadding(0, dp(6), 0, 0)
+        }
+        imgCard.addView(taggerImgHint)
+        box.addView(imgCard)
+
+        // ---- 参数：阈值 / 最多标签数 ----
+        val paramCard = card()
+        paramCard.addView(title(c.getString(R.string.s_065)))
+        taggerThresholdEdit = smallNumber(loadParam(KEY_TAG_THRESHOLD, prefs().getString("def_tag_threshold", null) ?: "0.35"))
+        bindParam(taggerThresholdEdit, KEY_TAG_THRESHOLD)
+        paramCard.addView(paramRow(c.getString(R.string.s_226), taggerThresholdEdit, "0 ~ 1"))
+        taggerTopKEdit = smallNumber(loadParam(KEY_TAG_TOPK, prefs().getString("def_tag_topk", null) ?: "40"))
+        bindParam(taggerTopKEdit, KEY_TAG_TOPK)
+        paramCard.addView(paramRow(c.getString(R.string.s_227), taggerTopKEdit, "1 ~ 300"))
+        paramCard.addView(defaultButtonsRow("tag"), matchWrap(top = 10))
+        box.addView(paramCard)
+
+        // ---- 开始打标 ----
+        taggerRunBtn = Button(c).apply {
+            text = c.getString(R.string.s_222)
+            setBackgroundColor(primary)
+            setTextColor(Color.WHITE)
+            typeface = Typeface.DEFAULT_BOLD
+            setOnClickListener { runTagger() }
+        }
+        box.addView(taggerRunBtn, matchWrap(top = 2))
+
+        taggerProgressText = TextView(c).apply {
+            textSize = 12f
+            setTextColor(subText)
+            visibility = View.GONE
+            setPadding(0, dp(8), 0, 0)
+        }
+        box.addView(taggerProgressText)
+        taggerProgressBar = ProgressBar(c, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            progress = 0
+            visibility = View.GONE
+        }
+        box.addView(taggerProgressBar, matchWrap(top = 4))
+
+        // ---- 结果 ----
+        val outCard = card()
+        outCard.addView(title(c.getString(R.string.s_223)))
+        taggerOut = TextView(c).apply {
+            textSize = 13f
+            setTextColor(textColor)
+            setTextIsSelectable(true)
+            setPadding(0, dp(6), 0, 0)
+        }
+        outCard.addView(taggerOut)
+        taggerSendT2iBtn = Button(c).apply {
+            text = c.getString(R.string.s_224)
+            textSize = 13f
+            setTextColor(primary)
+            setBackgroundColor(0xFFEDF1FF.toInt())
+            setOnClickListener { sendTags(0) }
+        }
+        taggerSendI2iBtn = Button(c).apply {
+            text = c.getString(R.string.s_225)
+            textSize = 13f
+            setTextColor(primary)
+            setBackgroundColor(0xFFEDF1FF.toInt())
+            setOnClickListener { sendTags(1) }
+        }
+        val row = LinearLayout(c).apply { orientation = LinearLayout.HORIZONTAL }
+        row.addView(taggerSendT2iBtn,
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        row.addView(taggerSendI2iBtn,
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                .apply { leftMargin = dp(8) })
+        outCard.addView(row, matchWrap(top = 10))
+        box.addView(outCard)
+
+        return box
+    }
+
+    /** 从相册给 Tagger 选输入图 */
+    private fun pickTaggerImage() {
+        val i = android.content.Intent(android.content.Intent.ACTION_GET_CONTENT).apply {
+            addCategory(android.content.Intent.CATEGORY_OPENABLE)
+            type = "image/*"
+        }
+        act.startActivityForResult(i, REQ_TAGGER_IMAGE)
+    }
+
+    /** 把某张图设为 Tagger 的输入图 */
+    private fun applyTaggerImage(bmp: Bitmap) {
+        taggerBitmap = bmp
+        taggerPreview.setImageBitmap(bmp)
+        taggerPreview.visibility = View.VISIBLE
+        taggerImgHint.text = c.getString(R.string.v_061, bmp.width, bmp.height)
+    }
+
+    /** 执行打标（IO 线程推理，回主线程更新 UI） */
+    private fun runTagger() {
+        val bmp = taggerBitmap
+        if (bmp == null) {
+            toast(c.getString(R.string.s_214))
+            return
+        }
+        val threshold = taggerThresholdEdit.text.toString().toFloatOrNull()?.coerceIn(0f, 1f) ?: 0.35f
+        val topK = taggerTopKEdit.text.toString().toIntOrNull()?.coerceIn(1, 300) ?: 40
+        taggerRunBtn.isEnabled = false
+        taggerProgressText.visibility = View.VISIBLE
+        taggerProgressText.text = c.getString(R.string.s_229)
+        taggerProgressBar.visibility = View.VISIBLE
+        taggerProgressBar.isIndeterminate = true
+        scope.launch {
+            var err: String? = null
+            var list: List<Pair<String, Float>>? = null
+            withContext(Dispatchers.IO) {
+                err = ensureTaggerLoaded()
+                if (err == null) {
+                    list = try {
+                        TaggerEngine.run(bmp, threshold, topK)
+                    } catch (t: Throwable) {
+                        err = t.message ?: t.javaClass.simpleName
+                        null
+                    }
+                }
+            }
+            taggerRunBtn.isEnabled = true
+            taggerProgressBar.visibility = View.GONE
+            taggerProgressText.visibility = View.GONE
+            when {
+                err != null -> toast(c.getString(R.string.s_236, err))
+                list.isNullOrEmpty() -> {
+                    taggerTags = ""
+                    taggerOut.text = c.getString(R.string.s_230)
+                    toast(c.getString(R.string.s_230))
+                }
+                else -> {
+                    val text = list!!.joinToString(", ") { it.first.replace('_', ' ') }
+                    taggerTags = text
+                    taggerOut.text = text
+                    toast(c.getString(R.string.s_237, list!!.size))
+                }
+            }
+        }
+    }
+
+    /** 按需加载打标模型（模型名 / 标签表 / 后端变了就重载）；返回 null = 就绪 */
+    private fun ensureTaggerLoaded(): String? {
+        val model = taggerModelFile() ?: return c.getString(R.string.s_228)
+        val csv = taggerCsvFile() ?: return c.getString(R.string.s_228)
+        val (mName, cName) = TaggerEngine.fileNames()
+        if (TaggerEngine.isLoaded() && mName == model.name && cName == csv.name &&
+            TaggerEngine.loadedWithGpu() == useGpu) return null
+        val threads = Runtime.getRuntime().availableProcessors().coerceIn(2, 8)
+        return TaggerEngine.load(model, csv, useGpu, threads)
+    }
+
+    /** 把打标结果发送到目标页（0=文生图 1=图生图），发送前弹确认 */
+    private fun sendTags(target: Int) {
+        val text = taggerTags.ifBlank { taggerOut.text?.toString().orEmpty() }
+        if (text.isBlank()) {
+            toast(c.getString(R.string.s_230))
+            return
+        }
+        val pageName = c.getString(if (target == 0) R.string.s_207 else R.string.s_208)
+        android.app.AlertDialog.Builder(act)
+            .setTitle(c.getString(R.string.s_233))
+            .setMessage(c.getString(R.string.s_234, pageName))
+            .setPositiveButton(c.getString(R.string.s_235)) { _, _ ->
+                if (target == 0) {
+                    promptEdit.setText(text)
+                    switchMode(0)
+                    toast(c.getString(R.string.s_231))
+                } else {
+                    i2iPromptEdit.setText(text)
+                    switchMode(1)
+                    toast(c.getString(R.string.s_232))
+                }
+            }
+            .setNegativeButton(c.getString(R.string.s_049), null)
+            .show()
+    }
+
+    /** 结果图 → 图生图参考图（并切换过去） */
+    private fun sendResultToI2i() {
+        val b = lastImage
+        if (b == null) {
+            toast(c.getString(R.string.s_183))
+            return
+        }
+        applyPickedImage(b)
+        switchMode(1)
+        switchPane(toResult = false)
+        toast(c.getString(R.string.s_239))
+    }
+
+    /** 结果图 → Tagger 输入图（并切换过去） */
+    private fun sendResultToTagger() {
+        val b = lastImage
+        if (b == null) {
+            toast(c.getString(R.string.s_183))
+            return
+        }
+        applyTaggerImage(b)
+        switchMode(2)
+        switchPane(toResult = false)
+        toast(c.getString(R.string.s_240))
+    }
+
+    // ---- 打标模型文件（模型页导入，这里只读） ----
+
+    /** 打标目录：filesDir/tagger */
+    private fun taggerDir(): File = File(c.filesDir, TAGGER_DIR).apply { mkdirs() }
+
+    fun taggerModelFile(): File? =
+        taggerDir().listFiles { f -> f.isFile && f.name.endsWith(".onnx", true) }?.firstOrNull()
+
+    fun taggerCsvFile(): File? =
+        taggerDir().listFiles { f -> f.isFile && f.name.endsWith(".csv", true) }?.firstOrNull()
+
+    /** 供「模型」页展示的打标状态 */
+    fun taggerSummary(): String {
+        val m = taggerModelFile() ?: return c.getString(R.string.s_245)
+        val csv = taggerCsvFile() ?: return c.getString(R.string.s_245)
+        val n = TaggerEngine.parseCsv(csv).size
+        return c.getString(R.string.v_062, m.name, csv.name, n)
+    }
+
+    /** 导入 ONNX 打标模型（单文件） */
+    suspend fun importTaggerModel(
+        uri: Uri,
+        onStage: (String) -> Unit,
+        onProgress: ((Long, Long) -> Unit)? = null
+    ): String? = copyToTagger(uri, ".onnx", R.string.s_246, onStage, onProgress)
+
+    /** 导入标签表 CSV（单文件） */
+    suspend fun importTaggerCsv(
+        uri: Uri,
+        onStage: (String) -> Unit,
+        onProgress: ((Long, Long) -> Unit)? = null
+    ): String? = copyToTagger(uri, ".csv", R.string.s_247, onStage, onProgress)
+
+    private suspend fun copyToTagger(
+        uri: Uri,
+        ext: String,
+        extErr: Int,
+        onStage: (String) -> Unit,
+        onProgress: ((Long, Long) -> Unit)?
+    ): String? = withContext(Dispatchers.IO) {
+        try {
+            val name = queryDisplayName(uri)
+            if (name == null || !name.endsWith(ext, ignoreCase = true)) {
+                return@withContext c.getString(extErr)
+            }
+            withContext(Dispatchers.Main) { onStage(c.getString(R.string.v_033, name)) }
+            val dest = File(taggerDir(), name)
+            val total = runCatching {
+                c.contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length } ?: -1L
+            }.getOrDefault(-1L)
+            withContext(Dispatchers.Main) { onProgress?.invoke(0L, total) }
+            c.contentResolver.openInputStream(uri)?.use { ins ->
+                dest.outputStream().use { outs ->
+                    val buf = ByteArray(1 shl 20)
+                    var done = 0L
+                    var tick = 0L
+                    while (true) {
+                        val n = ins.read(buf)
+                        if (n < 0) break
+                        outs.write(buf, 0, n)
+                        done += n
+                        if (done - tick >= (1L shl 20)) {
+                            tick = done
+                            val d = done
+                            withContext(Dispatchers.Main) { onProgress?.invoke(d, total) }
+                        }
+                    }
+                }
+            } ?: return@withContext c.getString(R.string.s_106)
+            TaggerEngine.unload() // 文件变了，下次重新加载
+            null
+        } catch (e: Throwable) {
+            c.getString(R.string.v_038, (e.message ?: e.javaClass.simpleName))
+        }
     }
 
     /** 从相册/文件选择参考图 */
@@ -1396,15 +1774,17 @@ class DrawPage(
     }
 
     fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?): Boolean {
-        if (requestCode != REQ_IMAGE) return false
+        if (requestCode != REQ_IMAGE && requestCode != REQ_TAGGER_IMAGE) return false
         if (resultCode != Activity.RESULT_OK) return true
         val uri = data?.data ?: return true
         scope.launch {
             val bmp = withContext(Dispatchers.IO) { decodePickedImage(uri) }
             if (bmp == null) {
                 toast(c.getString(R.string.s_215))
-            } else {
+            } else if (requestCode == REQ_IMAGE) {
                 applyPickedImage(bmp)
+            } else {
+                applyTaggerImage(bmp)
             }
         }
         return true
@@ -1631,6 +2011,99 @@ class DrawPage(
             prefs().edit().putInt(key, pos).apply()
         }
         override fun onNothingSelected(p: android.widget.AdapterView<*>?) {}
+    }
+
+    // ---- 默认值（文生图 / 图生图按 LoRA 开/关各一套；Tagger 不分） ----
+
+    /** 当前 LoRA 状态（0=关 1=开），作默认值键后缀 */
+    private fun loraTag(): String = if (useLora) "1" else "0"
+
+    private fun builtinSteps(): String = if (useLora) "6" else "20"
+    private fun builtinCfg(): String = if (useLora) "1.8" else "7.0"
+
+    /** 取某页参数的默认值：优先用户保存的默认，否则用内置 */
+    private fun defOf(page: String, name: String, builtin: String): String =
+        prefs().getString("def_${page}_${name}_${loraTag()}", null) ?: builtin
+
+    private fun defOfInt(page: String, name: String, builtin: Int): Int =
+        prefs().getInt("def_${page}_${name}_${loraTag()}", builtin)
+
+    /** 把当前页当前参数存为该页（当前 LoRA 状态）的默认值 */
+    fun saveDefaults(page: String) {
+        val lg = loraTag()
+        val e = prefs().edit()
+        fun put(n: String, ed: EditText) { e.putString("def_${page}_${n}_$lg", ed.text.toString()) }
+        when (page) {
+            "t2i" -> {
+                put("w", widthEdit); put("h", heightEdit); put("steps", stepsEdit)
+                put("cfg", cfgEdit); put("seed", seedEdit); put("loraScale", loraScaleEdit)
+                e.putInt("def_t2i_sampler_$lg", samplerSpinner.selectedItemPosition)
+                e.putInt("def_t2i_scheduler_$lg", schedulerSpinner.selectedItemPosition)
+            }
+            "i2i" -> {
+                put("strength", i2iStrengthEdit)
+                put("w", i2iWidthEdit); put("h", i2iHeightEdit); put("steps", i2iStepsEdit)
+                put("cfg", i2iCfgEdit); put("seed", i2iSeedEdit); put("loraScale", i2iLoraScaleEdit)
+                e.putInt("def_i2i_sampler_$lg", i2iSamplerSpinner.selectedItemPosition)
+                e.putInt("def_i2i_scheduler_$lg", i2iSchedulerSpinner.selectedItemPosition)
+            }
+            "tag" -> {
+                e.putString("def_tag_threshold", taggerThresholdEdit.text.toString())
+                e.putString("def_tag_topk", taggerTopKEdit.text.toString())
+            }
+        }
+        e.apply()
+        toast(c.getString(R.string.s_250))
+    }
+
+    /** 把默认值套用到指定页（当前 LoRA 状态） */
+    fun applyDefaults(page: String) {
+        when (page) {
+            "t2i" -> {
+                widthEdit.setText(defOf("t2i", "w", "512"))
+                heightEdit.setText(defOf("t2i", "h", "512"))
+                stepsEdit.setText(defOf("t2i", "steps", builtinSteps()))
+                cfgEdit.setText(defOf("t2i", "cfg", builtinCfg()))
+                seedEdit.setText(defOf("t2i", "seed", "-1"))
+                loraScaleEdit.setText(defOf("t2i", "loraScale", "1.0"))
+                samplerSpinner.setSelection(defOfInt("t2i", "sampler", 0), false)
+                schedulerSpinner.setSelection(defOfInt("t2i", "scheduler", 0), false)
+            }
+            "i2i" -> {
+                i2iStrengthEdit.setText(defOf("i2i", "strength", "0.75"))
+                i2iWidthEdit.setText(defOf("i2i", "w", "512"))
+                i2iHeightEdit.setText(defOf("i2i", "h", "512"))
+                i2iStepsEdit.setText(defOf("i2i", "steps", builtinSteps()))
+                i2iCfgEdit.setText(defOf("i2i", "cfg", builtinCfg()))
+                i2iSeedEdit.setText(defOf("i2i", "seed", "-1"))
+                i2iLoraScaleEdit.setText(defOf("i2i", "loraScale", "1.0"))
+                i2iSamplerSpinner.setSelection(defOfInt("i2i", "sampler", 0), false)
+                i2iSchedulerSpinner.setSelection(defOfInt("i2i", "scheduler", 0), false)
+            }
+            "tag" -> {
+                taggerThresholdEdit.setText(prefs().getString("def_tag_threshold", null) ?: "0.35")
+                taggerTopKEdit.setText(prefs().getString("def_tag_topk", null) ?: "40")
+            }
+        }
+    }
+
+    /** 参数卡底部的「设为默认值 / 恢复默认」一行 */
+    private fun defaultButtonsRow(page: String): LinearLayout {
+        val row = LinearLayout(c).apply { orientation = LinearLayout.HORIZONTAL }
+        row.addView(ghostButton(c.getString(R.string.s_248)) { saveDefaults(page) },
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        row.addView(ghostButton(c.getString(R.string.s_249)) { applyDefaults(page) },
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                .apply { leftMargin = dp(8) })
+        return row
+    }
+
+    private fun ghostButton(t: String, onClick: () -> Unit) = Button(c).apply {
+        text = t
+        textSize = 12.5f
+        setTextColor(primary)
+        setBackgroundColor(0xFFEDF1FF.toInt())
+        setOnClickListener { onClick() }
     }
 
     /** 结果图保存用的文件名 */

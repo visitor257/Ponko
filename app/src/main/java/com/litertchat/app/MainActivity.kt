@@ -78,6 +78,8 @@ class MainActivity : Activity() {
         private const val REQ_PICK_MODEL = 1001
     private const val REQ_PICK_DRAW_MODEL = 1002
     private const val REQ_PICK_LORA = 1003
+    private const val REQ_TAGGER_ONNX = 1004
+    private const val REQ_TAGGER_CSV = 1005
     }
 
     // ---- palette ----
@@ -236,6 +238,11 @@ class MainActivity : Activity() {
     private var drawImportBtn: TextView? = null
     /** 绘图模型导入进度条（本地复制时显示） */
     private var drawProgress: ProgressBar? = null
+    /** 打标（Tagger）状态文本（模型页） */
+    private var taggerStatusTv: TextView? = null
+    /** 打标模型 / 标签表导入按钮 */
+    private var taggerOnnxBtn: TextView? = null
+    private var taggerCsvBtn: TextView? = null
     /** 当前选定的绘图主模型（绝对路径） */
     private var drawMainPath: String? = null
     /** LoRA 状态文本（模型页） */
@@ -527,6 +534,13 @@ class MainActivity : Activity() {
             setSelection(0)
         }
         row.addView(backendSpinner, wrapWrap().apply { leftMargin = dp(6) })
+        backendSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long) {
+                // 运行方式实时同步给绘图页（Ponko 的 sd.cpp 用 Vulkan，Tagger 用 NNAPI）
+                drawPage?.useGpu = (position == 1)
+            }
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+        }
         card.addView(row, matchWrap().apply { topMargin = dp(10) })
         card.addView(
             hintText(getString(R.string.s_075)),
@@ -681,12 +695,33 @@ class MainActivity : Activity() {
             matchWrap().apply { topMargin = dp(10) }
         )
 
+        // ---- 子区块：打标（Tagger） ----
+        drawCard.addView(divider(), matchWrap().apply { topMargin = dp(14) })
+        drawCard.addView(subTitle(getString(R.string.s_241)), matchWrap().apply { topMargin = dp(12) })
+        drawCard.addView(
+            hintText(getString(R.string.s_242)),
+            matchWrap().apply { topMargin = dp(4) }
+        )
+        val tStatus = TextView(this).apply {
+            text = getString(R.string.s_245)
+            textSize = 12f
+            setTextColor(C_SUBTEXT)
+        }
+        taggerStatusTv = tStatus
+        drawCard.addView(tStatus, matchWrap().apply { topMargin = dp(6) })
+
+        taggerOnnxBtn = actionButton(getString(R.string.s_243)) { pickTaggerOnnx() }
+        drawCard.addView(taggerOnnxBtn, matchWrap().apply { topMargin = dp(8) })
+        taggerCsvBtn = actionButton(getString(R.string.s_244)) { pickTaggerCsv() }
+        drawCard.addView(taggerCsvBtn, matchWrap().apply { topMargin = dp(8) })
+
         root.addView(card)
         root.addView(chatCard)
         root.addView(drawCard)
 
         refreshLoraUi()
         refreshDrawModels()
+        refreshTaggerUi()
 
         sv.addView(root, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
@@ -832,7 +867,7 @@ class MainActivity : Activity() {
         tabDraw.visibility = if (index == 2) View.VISIBLE else View.GONE
         tabSettings.visibility = if (index == 3) View.VISIBLE else View.GONE
         // 切到「模型」页时刷新绘图模型 / LoRA 列表，避免导入后状态滞后
-        if (index == 1) { refreshDrawModels(); refreshLoraUi() }
+        if (index == 1) { refreshDrawModels(); refreshLoraUi(); refreshTaggerUi() }
         inputBar.visibility = if (index == 0) View.VISIBLE else View.GONE
         val isChat = index == 0
         appBarMenu.visibility = if (isChat) View.VISIBLE else View.INVISIBLE
@@ -1086,6 +1121,24 @@ class MainActivity : Activity() {
         startActivityForResult(i, REQ_PICK_LORA)
     }
 
+    /** 打标模型：选一个 .onnx 文件 */
+    private fun pickTaggerOnnx() {
+        val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+        }
+        startActivityForResult(i, REQ_TAGGER_ONNX)
+    }
+
+    /** 标签表：选一个 .csv 文件 */
+    private fun pickTaggerCsv() {
+        val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+        }
+        startActivityForResult(i, REQ_TAGGER_CSV)
+    }
+
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         if (drawPage?.onActivityResult(requestCode, resultCode, data) == true) return
         super.onActivityResult(requestCode, resultCode, data)
@@ -1146,6 +1199,58 @@ class MainActivity : Activity() {
                     toast(err)
                 }
                 refreshLoraUi()
+            }
+        }
+        if (requestCode == REQ_TAGGER_ONNX && resultCode == RESULT_OK) {
+            val uri = data?.data ?: return
+            val dpg = drawPage ?: return
+            setBusy(true)
+            setDrawBusy(true)
+            showDrawProgress(true)
+            setStatus(getString(R.string.s_131), C_WARN)
+            scope.launch {
+                val err = dpg.importTaggerModel(
+                    uri,
+                    onStage = { stage -> taggerStatusTv?.text = stage },
+                    onProgress = { done, total -> updateDrawProgress(done, total) }
+                )
+                setBusy(false)
+                setDrawBusy(false)
+                showDrawProgress(false)
+                if (err == null) {
+                    setStatus(getString(R.string.s_161), C_OK)
+                    toast(getString(R.string.s_091))
+                } else {
+                    setStatus(getString(R.string.s_158), C_ERR)
+                    toast(err)
+                }
+                refreshTaggerUi()
+            }
+        }
+        if (requestCode == REQ_TAGGER_CSV && resultCode == RESULT_OK) {
+            val uri = data?.data ?: return
+            val dpg = drawPage ?: return
+            setBusy(true)
+            setDrawBusy(true)
+            showDrawProgress(true)
+            setStatus(getString(R.string.s_131), C_WARN)
+            scope.launch {
+                val err = dpg.importTaggerCsv(
+                    uri,
+                    onStage = { stage -> taggerStatusTv?.text = stage },
+                    onProgress = { done, total -> updateDrawProgress(done, total) }
+                )
+                setBusy(false)
+                setDrawBusy(false)
+                showDrawProgress(false)
+                if (err == null) {
+                    setStatus(getString(R.string.s_161), C_OK)
+                    toast(getString(R.string.s_091))
+                } else {
+                    setStatus(getString(R.string.s_158), C_ERR)
+                    toast(err)
+                }
+                refreshTaggerUi()
             }
         }
     }
@@ -2546,6 +2651,15 @@ class MainActivity : Activity() {
         drawToggleBtn?.alpha = if (b) 0.5f else 1f
         drawImportBtn?.isEnabled = !b
         drawImportBtn?.alpha = if (b) 0.5f else 1f
+        taggerOnnxBtn?.isEnabled = !b
+        taggerOnnxBtn?.alpha = if (b) 0.5f else 1f
+        taggerCsvBtn?.isEnabled = !b
+        taggerCsvBtn?.alpha = if (b) 0.5f else 1f
+    }
+
+    /** 刷新模型页的打标（Tagger）状态 */
+    private fun refreshTaggerUi() {
+        taggerStatusTv?.text = drawPage?.taggerSummary() ?: getString(R.string.s_245)
     }
 
     private fun showDrawProgress(show: Boolean) {
