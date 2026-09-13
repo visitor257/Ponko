@@ -96,6 +96,30 @@ B. Binary dependencies (fetched by Gradle from trusted repositories; not
             additional third-party components; their notices are reproduced
             in licenses/onnxruntime-ThirdPartyNotices.txt.
 
+  - Transitive dependencies pulled in by the libraries above (bundled into
+    the APK, not listed in build.gradle.kts):
+
+      - commonmark-java (com.atlassian.commonmark:commonmark, via Markwon)
+          License: BSD 2-Clause        Copyright: Copyright (c) 2015-2019 Atlassian and others
+      - Jackson (com.fasterxml.jackson.core:*, via the llama.cpp binding)
+          License: Apache License 2.0  Copyright: Copyright (c) FasterXML, LLC
+      - Gson (com.google.code.gson:gson, via LiteRT-LM)
+          License: Apache License 2.0  Copyright: Copyright (c) Google Inc.
+      - SLF4J API (org.slf4j:slf4j-api, via the llama.cpp binding)
+          License: MIT License         Copyright: Copyright (c) 2004-2023 QOS.ch
+      - FastDoubleParser / Schubfach (bundled inside Jackson)
+          License: MIT License / Boost Software License 1.0
+          Copyright: Copyright (c) 2024 Werner Randelshofer, Switzerland;
+                     Copyright (c) Daniel Lemire; Copyright 2018-2020 Raffaello Giulietti
+          License text: shipped inside the APK under META-INF/FastDoubleParser-LICENSE,
+                        META-INF/FastDoubleParser-ThirdParty-LICENSE and META-INF/Schubfach-LICENSE
+      - kotlin-reflect (org.jetbrains.kotlin:kotlin-reflect)
+          License: Apache License 2.0  Copyright: Copyright (c) JetBrains s.r.o.
+      - Annotation-only libraries (jspecify, checker-qual, error_prone_annotations,
+        org.jetbrains:annotations)
+          License: Apache License 2.0 / MIT License
+          Note: annotations only, no runtime logic
+
 C. NDK runtime libraries distributed with this repository
    (app/src/main/jniLibs/arm64-v8a/)
 
@@ -204,6 +228,29 @@ B. 二进制依赖（由 Gradle 从可信仓库拉取，不随本仓库分发）
       许可证文本：licenses/onnxruntime-LICENSE.txt
       说明：用于本机图像打标（Tagger）。该运行时另自带若干第三方组件，
             其声明见 licenses/onnxruntime-ThirdPartyNotices.txt。
+
+  - 传递依赖（由上面的库自动引入，随 APK 打包，未写在 build.gradle.kts 里）：
+
+      - commonmark-java（com.atlassian.commonmark:commonmark，Markwon 引入）
+          许可证：BSD 2-Clause        著作权：Copyright (c) 2015-2019 Atlassian and others
+      - Jackson（com.fasterxml.jackson.core:*，llama.cpp 绑定引入）
+          许可证：Apache License 2.0  著作权：Copyright (c) FasterXML, LLC
+      - Gson（com.google.code.gson:gson，LiteRT-LM 引入）
+          许可证：Apache License 2.0  著作权：Copyright (c) Google Inc.
+      - SLF4J API（org.slf4j:slf4j-api，llama.cpp 绑定引入）
+          许可证：MIT License         著作权：Copyright (c) 2004-2023 QOS.ch
+      - FastDoubleParser / Schubfach（打包在 Jackson 内）
+          许可证：MIT License / Boost Software License 1.0
+          著作权：Copyright (c) 2024 Werner Randelshofer, Switzerland；
+                  Copyright (c) Daniel Lemire；Copyright 2018-2020 Raffaello Giulietti
+          许可证文本：随 APK 打包，位于 META-INF/FastDoubleParser-LICENSE、
+                     META-INF/FastDoubleParser-ThirdParty-LICENSE 与 META-INF/Schubfach-LICENSE
+      - kotlin-reflect（org.jetbrains.kotlin:kotlin-reflect）
+          许可证：Apache License 2.0  著作权：Copyright (c) JetBrains s.r.o.
+      - 仅注解类库（jspecify、checker-qual、error_prone_annotations、
+        org.jetbrains:annotations）
+          许可证：Apache License 2.0 / MIT License
+          说明：仅含注解，无运行时代码
 
 C. 随仓库分发的 NDK 运行时库（app/src/main/jniLibs/arm64-v8a/）
 

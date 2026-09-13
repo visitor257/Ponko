@@ -108,21 +108,31 @@ powershell -File tools/build-release.ps1
 | --- | --- | --- |
 | [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) | MIT | source in this repo (`app/src/main/cpp/sd/`) |
 | [ggml](https://github.com/ggerganov/ggml) | MIT | source in this repo (`app/src/main/cpp/sd/ggml/`) |
+| Third-party files bundled with sd.cpp (stb / json.hpp / httplib / miniz / darts_clone) | Public Domain / MIT / BSD-3-Clause | source in this repo (`app/src/main/cpp/sd/thirdparty/`) |
 | [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM) | Apache-2.0 | Gradle dependency |
 | [llama.cpp](https://github.com/ggerganov/llama.cpp) (via java-llama.cpp binding) | MIT | Gradle dependency |
 | [Markwon](https://github.com/noties/Markwon) | Apache-2.0 | Gradle dependency |
-| Kotlin / kotlinx.coroutines / AndroidX | Apache-2.0 | Gradle dependency |
 | [ONNX Runtime](https://github.com/microsoft/onnxruntime) | MIT | Gradle dependency (Tagger) |
+| Kotlin / kotlin-reflect / kotlinx.coroutines / AndroidX | Apache-2.0 | Gradle dependency |
+| [commonmark-java](https://github.com/commonmark/commonmark-java) (via Markwon) | BSD-2-Clause | Gradle transitive dependency |
+| [Jackson](https://github.com/FasterXML/jackson) (via the llama.cpp binding) | Apache-2.0 | Gradle transitive dependency |
+| [Gson](https://github.com/google/gson) (via LiteRT-LM) | Apache-2.0 | Gradle transitive dependency |
+| [SLF4J API](https://www.slf4j.org/) (via the llama.cpp binding) | MIT | Gradle transitive dependency |
+| FastDoubleParser / Schubfach (bundled in Jackson) | MIT / Boost-1.0 | shipped inside Jackson (`META-INF/*-LICENSE`) |
+| Annotation-only libs (jspecify / checker-qual / error_prone_annotations / JetBrains annotations) | Apache-2.0 / MIT | Gradle transitive dependency (annotations only, no runtime code) |
 | LLVM libc++ / libomp (from the Android NDK) | Apache-2.0 with LLVM Exceptions | `app/src/main/jniLibs/` |
 
 > The bundled stable-diffusion.cpp source has unused tokenizer vocabularies trimmed (CLIP only) to keep the repo small.
 > This project contains **no model weights**; the drawing model (SD1.5 GGUF), chat models (`.litertlm` / `.gguf`), LoRA and the tagging assets (`.onnx` + `selected_tags.csv`) are supplied by the user.
 > ONNX Runtime bundles additional third-party components; see [licenses/onnxruntime-ThirdPartyNotices.txt](licenses/onnxruntime-ThirdPartyNotices.txt).
+> commonmark / Jackson / Gson / SLF4J are **transitive dependencies** pulled in automatically by Markwon, the llama.cpp binding, and LiteRT-LM.
 
 ## Credits
 
 - [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM) (Google)
 - [java-llama.cpp](https://github.com/kherud/java-llama.cpp) / llama.cpp
 - [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp)
+- [ggml](https://github.com/ggerganov/ggml)
 - [ONNX Runtime](https://github.com/microsoft/onnxruntime) (Microsoft)
 - [Markwon](https://github.com/noties/Markwon)
+- [commonmark-java](https://github.com/commonmark/commonmark-java)

@@ -107,21 +107,31 @@ powershell -File tools/build-release.ps1
 | --- | --- | --- |
 | [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) | MIT | 源码随仓库分发（`app/src/main/cpp/sd/`） |
 | [ggml](https://github.com/ggerganov/ggml) | MIT | 源码随仓库分发（`app/src/main/cpp/sd/ggml/`） |
+| sd.cpp 附带第三方文件（stb / json.hpp / httplib / miniz / darts_clone） | Public Domain / MIT / BSD-3-Clause | 源码随仓库分发（`app/src/main/cpp/sd/thirdparty/`） |
 | [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM) | Apache-2.0 | Gradle 依赖 |
 | [llama.cpp](https://github.com/ggerganov/llama.cpp)（经 java-llama.cpp 绑定） | MIT | Gradle 依赖 |
 | [Markwon](https://github.com/noties/Markwon) | Apache-2.0 | Gradle 依赖 |
-| Kotlin / kotlinx.coroutines / AndroidX | Apache-2.0 | Gradle 依赖 |
 | [ONNX Runtime](https://github.com/microsoft/onnxruntime) | MIT | Gradle 依赖（打标 Tagger） |
+| Kotlin / kotlin-reflect / kotlinx.coroutines / AndroidX | Apache-2.0 | Gradle 依赖 |
+| [commonmark-java](https://github.com/commonmark/commonmark-java)（Markwon 引入） | BSD-2-Clause | Gradle 传递依赖 |
+| [Jackson](https://github.com/FasterXML/jackson)（llama.cpp 绑定引入） | Apache-2.0 | Gradle 传递依赖 |
+| [Gson](https://github.com/google/gson)（LiteRT-LM 引入） | Apache-2.0 | Gradle 传递依赖 |
+| [SLF4J API](https://www.slf4j.org/)（llama.cpp 绑定引入） | MIT | Gradle 传递依赖 |
+| FastDoubleParser / Schubfach（Jackson 打包内） | MIT / Boost-1.0 | 随 Jackson 打包（`META-INF/*-LICENSE`） |
+| 注解类库（jspecify / checker-qual / error_prone_annotations / JetBrains annotations） | Apache-2.0 / MIT | Gradle 传递依赖（仅注解，无运行时代码） |
 | LLVM libc++ / libomp（来自 Android NDK） | Apache-2.0 with LLVM Exceptions | `app/src/main/jniLibs/` |
 
 > stable-diffusion.cpp 源码为随仓库分发的副本，为减小体积剔除了本项目用不到的分词器词表（仅保留 CLIP）。
 > 本项目**不含任何模型权重文件**；绘图模型（SD1.5 GGUF）、对话模型（`.litertlm` / `.gguf`）、LoRA 以及打标模型（`.onnx` + `selected_tags.csv`）均由使用者自行获取。
 > ONNX Runtime 自身还打包了若干第三方组件，其声明见 [licenses/onnxruntime-ThirdPartyNotices.txt](licenses/onnxruntime-ThirdPartyNotices.txt)。
+> commonmark / Jackson / Gson / SLF4J 等为**传递依赖**，由所选的 Markwon、llama.cpp 绑定、LiteRT-LM 自动引入。
 
 ## 致谢
 
 - [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM)（Google）
 - [java-llama.cpp](https://github.com/kherud/java-llama.cpp) / llama.cpp
 - [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp)
+- [ggml](https://github.com/ggerganov/ggml)
 - [ONNX Runtime](https://github.com/microsoft/onnxruntime)（Microsoft）
 - [Markwon](https://github.com/noties/Markwon)
+- [commonmark-java](https://github.com/commonmark/commonmark-java)
