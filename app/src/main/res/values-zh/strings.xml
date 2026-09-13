@@ -30,7 +30,7 @@
     <string name="s_027">\n点「模型」页的「加载绘图模型」开始</string>
     <string name="s_028">hf-mirror.com（国内镜像）</string>
     <string name="s_029">huggingface.co（官方源）</string>
-    <string name="s_030">stable-diffusion.cpp 的 GGUF 绘图模型（Anything V5 / SD1.5 等）。文件夹里放 .gguf 即可；加载后在「对话」页输入就是正面提示词。</string>
+    <string name="s_030">stable-diffusion.cpp 的 GGUF 绘图模型（Anything V5 / SD1.5 等）。选择一个 .gguf 文件即可；加载后在「对话」页输入就是正面提示词。</string>
     <string name="s_031">↻ 重新生成</string>
     <string name="s_032">① 点「模型」页 —「对话模型」—「选择对话模型文件」选 .litertlm / .gguf（已复制过的可直接点列表选用）\n</string>
     <string name="s_033">② 点「加载对话模型」开始（首次初始化需几秒~几十秒）</string>
@@ -190,7 +190,7 @@
     <string name="s_187">这是最后一个对话，删除后会清空它的内容。</string>
     <string name="s_188">这是绘图模型（扩散模型），不能当对话模型用。请到「模型」页的「绘图模型」区块选择文件夹加载它。</string>
     <string name="s_189">选择对话模型文件（.litertlm / .gguf）</string>
-    <string name="s_190">选择绘图模型文件夹</string>
+    <string name="s_190">选择绘图模型文件</string>
     <string name="s_191">采样器</string>
     <string name="s_192">采样步数</string>
     <string name="s_193">随机种子</string>
@@ -278,4 +278,8 @@
     <string name="s_215">无法读取所选图片</string>
     <string name="v_061">已选择参考图：%1$s×%2$s</string>
     <string name="s_216">例如：lowres, bad anatomy, bad hands, text, error, worst quality</string>
+    <string name="s_217">请选择 .gguf 格式的绘图模型文件</string>
+    <string name="s_218">请选择 .safetensors 格式的 LoRA 文件</string>
+    <string name="s_219">导入本地 LoRA</string>
+    <string name="s_220">LoRA 已导入</string>
 </resources>

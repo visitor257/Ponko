@@ -818,101 +818,56 @@ class DrawPage(
 
     // ================= 模型（由「模型」页驱动） =================
 
-    /** 从 SAF 目录导入绘图模型：递归收集 .gguf 与 LoRA（.safetensors），复制到私有目录。返回 null 表示成功，否则为错误文案。 */
-    suspend fun prepareFromTree(treeUri: Uri, onStage: (String) -> Unit): String? {
-        return withContext(Dispatchers.IO) {
-            try {
-                onStage(c.getString(R.string.s_132))
-                val root = File(c.filesDir, DIR_NAME).apply { mkdirs() }
-                val ggufs = ArrayList<Pair<String, Uri>>()   // 主模型
-                val loras = ArrayList<Pair<String, Uri>>()   // LoRA
-
-                // SAF 坑：tree/document URI 不能直接 query，必须用 buildChildDocumentsUriUsingTree + docId
-                fun listChildren(docId: String): List<Triple<String, String, String>> {
-                    val childUri = android.provider.DocumentsContract
-                        .buildChildDocumentsUriUsingTree(treeUri, docId)
-                    return c.contentResolver.query(childUri, null, null, null, null)?.use { cur ->
-                        val out = ArrayList<Triple<String, String, String>>()
-                        val idIdx = cur.getColumnIndex(android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID)
-                        val nameIdx = cur.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                        val mimeIdx = cur.getColumnIndex(android.provider.DocumentsContract.Document.COLUMN_MIME_TYPE)
-                        while (cur.moveToNext()) {
-                            val id = if (idIdx >= 0) cur.getString(idIdx) else null
-                            val name = if (nameIdx >= 0) cur.getString(nameIdx) else null
-                            val mime = if (mimeIdx >= 0) cur.getString(mimeIdx) else null
-                            if (id != null && name != null) out.add(Triple(name, mime ?: "", id))
-                        }
-                        out
-                    } ?: emptyList()
-                }
-
-                fun walk(docId: String, depth: Int) {
-                    if (depth > 3) return
-                    for ((name, mime, childId) in listChildren(docId)) {
-                        val lower = name.lowercase()
-                        val uri = android.provider.DocumentsContract.buildDocumentUriUsingTree(treeUri, childId)
-                        when {
-                            lower.endsWith(".gguf") -> ggufs.add(name to uri)
-                            lower.endsWith(".safetensors") -> loras.add(name to uri)
-                            mime == android.provider.DocumentsContract.Document.MIME_TYPE_DIR -> walk(childId, depth + 1)
-                        }
-                    }
-                }
-
-                walk(android.provider.DocumentsContract.getTreeDocumentId(treeUri), 0)
-
-                if (ggufs.isEmpty() && loras.isEmpty()) {
-                    return@withContext c.getString(R.string.s_106)
-                }
-
-                var copied = 0
-                for ((name, uri) in ggufs) {
-                    onStage(c.getString(R.string.v_033, (name)))
-                    try {
-                        c.contentResolver.openInputStream(uri)?.use { ins ->
-                            File(root, name).outputStream().use { outs -> ins.copyTo(outs, 1 shl 20) }
-                        }
-                        copied++
-                    } catch (_: Throwable) {
-                        // 单个文件失败不阻断
-                    }
-                }
-
-                var loraCopied = 0
-                val loraDest = loraDir()
-                for ((name, uri) in loras) {
-                    onStage(c.getString(R.string.v_034, (name)))
-                    try {
-                        c.contentResolver.openInputStream(uri)?.use { ins ->
-                            File(loraDest, name).outputStream().use { outs -> ins.copyTo(outs, 1 shl 20) }
-                        }
-                        loraCopied++
-                    } catch (_: Throwable) {
-                    }
-                }
-                if (loraCopied > 0) refreshLoraHint()
-
-                if (copied == 0 && loraCopied == 0) return@withContext c.getString(R.string.s_073)
-
-                // 只复制、不在导入时加载：native 加载可能崩（实测过），
-                // 留给用户在「模型」页手动点「加载绘图模型」，崩了也不会连累启动。
-                val parts = buildList {
-                    if (copied > 0) add(c.getString(R.string.v_035, (copied)))
-                    if (loraCopied > 0) add(c.getString(R.string.v_036, (loraCopied)))
-                }.joinToString("、")
-                val names = ggufs.joinToString("、") { it.first }
-                statusText.post {
-                    statusText.text = c.getString(R.string.v_037, (parts), (names)) +
-                        (if (loraCopied > 0) c.getString(R.string.s_195) else "") +
-                        c.getString(R.string.s_027)
-                }
-                // 约定：返回 null = 成功（调用方据此刷新列表并提示）；失败才返回错误文案
-                null
-            } catch (e: Throwable) {
-                c.getString(R.string.v_038, (e.message ?: e.javaClass.simpleName))
+    /** 从单文件导入绘图模型（.gguf）到私有目录。返回 null 表示成功，否则为错误文案。
+     *
+     *  设计决定：Ponko 不支持多文件模型，所以逐个选文件导入（不再整目录导入）。 */
+    suspend fun prepareFromFile(uri: Uri, onStage: (String) -> Unit): String? = withContext(Dispatchers.IO) {
+        try {
+            val name = queryDisplayName(uri)
+            if (name == null || !name.endsWith(".gguf", ignoreCase = true)) {
+                return@withContext c.getString(R.string.s_217)
             }
+            onStage(c.getString(R.string.v_033, name))
+            val root = File(c.filesDir, DIR_NAME).apply { mkdirs() }
+            val dest = File(root, name)
+            c.contentResolver.openInputStream(uri)?.use { ins ->
+                dest.outputStream().use { outs -> ins.copyTo(outs, 1 shl 20) }
+            } ?: return@withContext c.getString(R.string.s_106)
+            statusText.post {
+                statusText.text = c.getString(R.string.s_161) + c.getString(R.string.s_027)
+            }
+            null
+        } catch (e: Throwable) {
+            c.getString(R.string.v_038, (e.message ?: e.javaClass.simpleName))
         }
     }
+
+    /** 从单文件导入本地 LoRA（.safetensors）。返回 null 表示成功。 */
+    suspend fun importLoraFile(uri: Uri, onStage: (String) -> Unit): String? = withContext(Dispatchers.IO) {
+        try {
+            val name = queryDisplayName(uri)
+            if (name == null || !name.endsWith(".safetensors", ignoreCase = true)) {
+                return@withContext c.getString(R.string.s_218)
+            }
+            onStage(c.getString(R.string.v_034, name))
+            val dest = File(loraDir(), name)
+            c.contentResolver.openInputStream(uri)?.use { ins ->
+                dest.outputStream().use { outs -> ins.copyTo(outs, 1 shl 20) }
+            } ?: return@withContext c.getString(R.string.s_106)
+            loraFile = dest
+            refreshLoraHint()
+            null
+        } catch (e: Throwable) {
+            c.getString(R.string.v_038, (e.message ?: e.javaClass.simpleName))
+        }
+    }
+
+    /** 从 content:// URI 取显示文件名 */
+    private fun queryDisplayName(uri: Uri): String? =
+        c.contentResolver.query(uri, null, null, null, null)?.use { cur ->
+            val idx = cur.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            if (idx >= 0 && cur.moveToFirst()) cur.getString(idx) else null
+        }
 
     /** 扫描私有目录里已复制的 gguf 并加载（main=null 时自动挑体积最大的） */
     suspend fun loadExisting(main: File? = null): String? = withContext(Dispatchers.IO) {

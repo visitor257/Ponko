@@ -30,7 +30,7 @@
 <string name="s_027">\nTap \"Load draw model\" on the Models page to start</string>
 <string name="s_028">hf-mirror.com (China mirror)</string>
 <string name="s_029">huggingface.co (official)</string>
-<string name="s_030">GGUF drawing models for stable-diffusion.cpp (Anything V5 / SD1.5, etc.). Just put a .gguf in the folder; once loaded, whatever you type in Chat becomes the positive prompt.</string>
+<string name="s_030">GGUF drawing models for stable-diffusion.cpp (Anything V5 / SD1.5, etc.). Pick a single .gguf file; once loaded, whatever you type in Chat becomes the positive prompt.</string>
 <string name="s_031">↻ Regenerate</string>
 <string name="s_032">1. On the Models page, under \"Chat model\" tap \"Select chat model file\" and pick a .litertlm / .gguf (already-imported ones can be picked from the list)\n</string>
 <string name="s_033">2. Tap \"Load chat model\" to start (first init takes seconds to tens of seconds)</string>
@@ -190,7 +190,7 @@
 <string name="s_187">This is your only chat; deleting it will clear its contents.</string>
 <string name="s_188">This is a drawing model (diffusion) and cannot be used as a chat model. Load it under \"Draw model\" on the Models page.</string>
 <string name="s_189">Select chat model file (.litertlm / .gguf)</string>
-<string name="s_190">Select draw model folder</string>
+<string name="s_190">Select draw model file</string>
 <string name="s_191">Sampler</string>
 <string name="s_192">Steps</string>
 <string name="s_193">Seed</string>
@@ -278,4 +278,8 @@
     <string name="s_215">Could not read the selected image</string>
     <string name="v_061">Reference selected: %1$s×%2$s</string>
 <string name="s_216">e.g. lowres, bad anatomy, bad hands, text, error, worst quality</string>
+    <string name="s_217">Please choose a .gguf drawing model file</string>
+    <string name="s_218">Please choose a .safetensors LoRA file</string>
+    <string name="s_219">Import local LoRA</string>
+    <string name="s_220">LoRA imported</string>
 </resources>

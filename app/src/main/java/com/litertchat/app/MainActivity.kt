@@ -76,7 +76,8 @@ class MainActivity : Activity() {
 
     companion object {
         private const val REQ_PICK_MODEL = 1001
-    private const val REQ_DRAW_TREE = 1002
+    private const val REQ_PICK_DRAW_MODEL = 1002
+    private const val REQ_PICK_LORA = 1003
     }
 
     // ---- palette ----
@@ -593,7 +594,7 @@ class MainActivity : Activity() {
         }
 
         drawCard.addView(
-            actionButton(getString(R.string.s_190)) { pickDrawModelTree() },
+            actionButton(getString(R.string.s_190)) { pickDrawModelFile() },
             matchWrap().apply { topMargin = dp(8) }
         )
 
@@ -658,6 +659,10 @@ class MainActivity : Activity() {
 
         loraCard.addView(
             actionButton(getString(R.string.s_039)) { pickLoraSource() },
+            matchWrap().apply { topMargin = dp(8) }
+        )
+        loraCard.addView(
+            actionButton(getString(R.string.s_219)) { pickLoraFile() },
             matchWrap().apply { topMargin = dp(8) }
         )
         loraCard.addView(
@@ -1035,12 +1040,22 @@ class MainActivity : Activity() {
         startActivityForResult(i, REQ_PICK_MODEL)
     }
 
-    /** 绘图模型：选一个包含 SD GGUF 绘图模型的文件夹（stable-diffusion.cpp 格式） */
-    private fun pickDrawModelTree() {
-        val i = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    /** 绘图模型：选一个 .gguf 文件（stable-diffusion.cpp 格式，单文件） */
+    private fun pickDrawModelFile() {
+        val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
         }
-        startActivityForResult(i, REQ_DRAW_TREE)
+        startActivityForResult(i, REQ_PICK_DRAW_MODEL)
+    }
+
+    /** 本地 LoRA：选一个 .safetensors 文件 */
+    private fun pickLoraFile() {
+        val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+        }
+        startActivityForResult(i, REQ_PICK_LORA)
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
@@ -1049,13 +1064,13 @@ class MainActivity : Activity() {
         if (requestCode == REQ_PICK_MODEL && resultCode == RESULT_OK) {
             data?.data?.let { copyModelToPrivate(it) }
         }
-        if (requestCode == REQ_DRAW_TREE && resultCode == RESULT_OK) {
+        if (requestCode == REQ_PICK_DRAW_MODEL && resultCode == RESULT_OK) {
             val uri = data?.data ?: return
             val dpg = drawPage ?: return
             setBusy(true)
             setStatus(getString(R.string.s_131), C_WARN)
             scope.launch {
-                val err = dpg.prepareFromTree(uri) { stage -> drawModelStatus?.text = stage }
+                val err = dpg.prepareFromFile(uri) { stage -> drawModelStatus?.text = stage }
                 setBusy(false)
                 if (err == null) {
                     // 导入成功：把最新复制的那个默认标为选用
@@ -1066,6 +1081,24 @@ class MainActivity : Activity() {
                     refreshDrawModels()
                 } else {
                     drawModelStatus?.text = err
+                    setStatus(getString(R.string.s_158), C_ERR)
+                    toast(err)
+                }
+            }
+        }
+        if (requestCode == REQ_PICK_LORA && resultCode == RESULT_OK) {
+            val uri = data?.data ?: return
+            val dpg = drawPage ?: return
+            setBusy(true)
+            setStatus(getString(R.string.s_131), C_WARN)
+            scope.launch {
+                val err = dpg.importLoraFile(uri) { stage -> loraStatusTv?.text = stage }
+                setBusy(false)
+                if (err == null) {
+                    setStatus(getString(R.string.s_220), C_OK)
+                    toast(getString(R.string.s_220))
+                    refreshLoraUi()
+                } else {
                     setStatus(getString(R.string.s_158), C_ERR)
                     toast(err)
                 }
