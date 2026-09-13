@@ -16,6 +16,7 @@ import android.view.View
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
@@ -192,8 +193,8 @@ class DrawPage(
         root.addView(tabBar)
 
         // ---- 参数面板 ----
+        // 两个面板先各自建好，最后一起放进可左右滑动的容器
         paramPane = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
-        root.addView(paramPane, matchWrap())
 
         // ---- 模型状态（模型统一在「模型」页选择并加载） ----
         val modelCard = card()
@@ -318,7 +319,6 @@ class DrawPage(
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
         }
-        root.addView(resultPane, matchWrap())
 
         val resultCard = card()
         resultCard.addView(title(c.getString(R.string.s_148)))
@@ -387,6 +387,18 @@ class DrawPage(
         histCard.addView(clearHistBtn, matchWrap(top = 10))
         resultPane.addView(histCard)
         refreshHistory()
+
+        // ---- 参数 / 结果：可左右滑动切换 ----
+        val paneHost = SwipeFrameLayout(c).apply {
+            val lp = { FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT) }
+            addView(paramPane, lp())
+            addView(resultPane, lp())
+            onSwipeLeft = { switchPane(toResult = true) }    // 左划 → 结果
+            onSwipeRight = { switchPane(toResult = false) }  // 右划 → 参数
+        }
+        root.addView(paneHost, matchWrap())
 
         refreshLoraHint()
         refreshQuantText()
@@ -1032,8 +1044,13 @@ class DrawPage(
     /** 切换「参数 / 结果」面板，并高亮当前项 */
     private fun switchPane(toResult: Boolean) {
         if (!::paramPane.isInitialized) return
-        paramPane.visibility = if (toResult) View.GONE else View.VISIBLE
-        resultPane.visibility = if (toResult) View.VISIBLE else View.GONE
+        val show = if (toResult) resultPane else paramPane
+        val hide = if (toResult) paramPane else resultPane
+        hide.visibility = View.GONE
+        show.visibility = View.VISIBLE
+        // 轻微淡入，避免切换生硬
+        show.alpha = 0f
+        show.animate().alpha(1f).setDuration(140).start()
         for ((tv, sel) in listOf(tabParams to !toResult, tabResult to toResult)) {
             tv.setTextColor(if (sel) primary else subText)
             tv.typeface = if (sel) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
