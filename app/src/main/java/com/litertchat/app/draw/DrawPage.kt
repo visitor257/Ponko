@@ -821,17 +821,42 @@ class DrawPage(
     /** 从单文件导入绘图模型（.gguf）到私有目录。返回 null 表示成功，否则为错误文案。
      *
      *  设计决定：Ponko 不支持多文件模型，所以逐个选文件导入（不再整目录导入）。 */
-    suspend fun prepareFromFile(uri: Uri, onStage: (String) -> Unit): String? = withContext(Dispatchers.IO) {
+    suspend fun prepareFromFile(
+        uri: Uri,
+        onStage: (String) -> Unit,
+        onProgress: ((Long, Long) -> Unit)? = null
+    ): String? = withContext(Dispatchers.IO) {
         try {
             val name = queryDisplayName(uri)
             if (name == null || !name.endsWith(".gguf", ignoreCase = true)) {
                 return@withContext c.getString(R.string.s_217)
             }
-            onStage(c.getString(R.string.v_033, name))
+            withContext(Dispatchers.Main) { onStage(c.getString(R.string.v_033, name)) }
             val root = File(c.filesDir, DIR_NAME).apply { mkdirs() }
             val dest = File(root, name)
+            val total = runCatching {
+                c.contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length } ?: -1L
+            }.getOrDefault(-1L)
+            withContext(Dispatchers.Main) { onProgress?.invoke(0L, total) }
             c.contentResolver.openInputStream(uri)?.use { ins ->
-                dest.outputStream().use { outs -> ins.copyTo(outs, 1 shl 20) }
+                dest.outputStream().use { outs ->
+                    val buf = ByteArray(1 shl 20)
+                    var done = 0L
+                    var tick = 0L
+                    while (true) {
+                        val n = ins.read(buf)
+                        if (n < 0) break
+                        outs.write(buf, 0, n)
+                        done += n
+                        if (done - tick >= (1L shl 20)) {
+                            tick = done
+                            val d = done
+                            withContext(Dispatchers.Main) { onProgress?.invoke(d, total) }
+                        }
+                    }
+                    val d = done
+                    withContext(Dispatchers.Main) { onProgress?.invoke(d, total) }
+                }
             } ?: return@withContext c.getString(R.string.s_106)
             statusText.post {
                 statusText.text = c.getString(R.string.s_161) + c.getString(R.string.s_027)
@@ -843,19 +868,44 @@ class DrawPage(
     }
 
     /** 从单文件导入本地 LoRA（.safetensors）。返回 null 表示成功。 */
-    suspend fun importLoraFile(uri: Uri, onStage: (String) -> Unit): String? = withContext(Dispatchers.IO) {
+    suspend fun importLoraFile(
+        uri: Uri,
+        onStage: (String) -> Unit,
+        onProgress: ((Long, Long) -> Unit)? = null
+    ): String? = withContext(Dispatchers.IO) {
         try {
             val name = queryDisplayName(uri)
             if (name == null || !name.endsWith(".safetensors", ignoreCase = true)) {
                 return@withContext c.getString(R.string.s_218)
             }
-            onStage(c.getString(R.string.v_034, name))
+            withContext(Dispatchers.Main) { onStage(c.getString(R.string.v_034, name)) }
             val dest = File(loraDir(), name)
+            val total = runCatching {
+                c.contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length } ?: -1L
+            }.getOrDefault(-1L)
+            withContext(Dispatchers.Main) { onProgress?.invoke(0L, total) }
             c.contentResolver.openInputStream(uri)?.use { ins ->
-                dest.outputStream().use { outs -> ins.copyTo(outs, 1 shl 20) }
+                dest.outputStream().use { outs ->
+                    val buf = ByteArray(1 shl 20)
+                    var done = 0L
+                    var tick = 0L
+                    while (true) {
+                        val n = ins.read(buf)
+                        if (n < 0) break
+                        outs.write(buf, 0, n)
+                        done += n
+                        if (done - tick >= (1L shl 20)) {
+                            tick = done
+                            val d = done
+                            withContext(Dispatchers.Main) { onProgress?.invoke(d, total) }
+                        }
+                    }
+                }
             } ?: return@withContext c.getString(R.string.s_106)
-            loraFile = dest
-            refreshLoraHint()
+            withContext(Dispatchers.Main) {
+                loraFile = dest
+                refreshLoraHint()
+            }
             null
         } catch (e: Throwable) {
             c.getString(R.string.v_038, (e.message ?: e.javaClass.simpleName))

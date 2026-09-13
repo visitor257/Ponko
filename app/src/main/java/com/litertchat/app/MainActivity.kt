@@ -232,6 +232,10 @@ class MainActivity : Activity() {
     private var drawSavedContainer: LinearLayout? = null
     /** 绘图模型的「加载/卸载」二合一按钮 */
     private var drawToggleBtn: TextView? = null
+    /** 绘图模型的「导入」按钮（复制期间禁用） */
+    private var drawImportBtn: TextView? = null
+    /** 绘图模型导入进度条（本地复制时显示） */
+    private var drawProgress: ProgressBar? = null
     /** 当前选定的绘图主模型（绝对路径） */
     private var drawMainPath: String? = null
     /** LoRA 状态文本（模型页） */
@@ -593,10 +597,17 @@ class MainActivity : Activity() {
             }, matchWrap())
         }
 
-        drawCard.addView(
-            actionButton(getString(R.string.s_190)) { pickDrawModelFile() },
-            matchWrap().apply { topMargin = dp(8) }
-        )
+        val importBtn = actionButton(getString(R.string.s_190)) { pickDrawModelFile() }
+        drawImportBtn = importBtn
+        drawCard.addView(importBtn, matchWrap().apply { topMargin = dp(8) })
+
+        drawProgress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            visibility = View.GONE
+            max = 100
+            progressTintList = ColorStateList.valueOf(C_PRIMARY)
+            indeterminateTintList = ColorStateList.valueOf(C_PRIMARY)
+        }
+        drawCard.addView(drawProgress, matchWrap().apply { topMargin = dp(8) })
 
         drawSavedContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -820,6 +831,8 @@ class MainActivity : Activity() {
         tabModels.visibility = if (index == 1) View.VISIBLE else View.GONE
         tabDraw.visibility = if (index == 2) View.VISIBLE else View.GONE
         tabSettings.visibility = if (index == 3) View.VISIBLE else View.GONE
+        // 切到「模型」页时刷新绘图模型 / LoRA 列表，避免导入后状态滞后
+        if (index == 1) { refreshDrawModels(); refreshLoraUi() }
         inputBar.visibility = if (index == 0) View.VISIBLE else View.GONE
         val isChat = index == 0
         appBarMenu.visibility = if (isChat) View.VISIBLE else View.INVISIBLE
@@ -1083,40 +1096,56 @@ class MainActivity : Activity() {
             val uri = data?.data ?: return
             val dpg = drawPage ?: return
             setBusy(true)
+            setDrawBusy(true)
+            showDrawProgress(true)
             setStatus(getString(R.string.s_131), C_WARN)
             scope.launch {
-                val err = dpg.prepareFromFile(uri) { stage -> drawModelStatus?.text = stage }
+                val err = dpg.prepareFromFile(
+                    uri,
+                    onStage = { stage -> drawModelStatus?.text = stage },
+                    onProgress = { done, total -> updateDrawProgress(done, total) }
+                )
                 setBusy(false)
+                setDrawBusy(false)
+                showDrawProgress(false)
                 if (err == null) {
                     // 导入成功：把最新复制的那个默认标为选用
                     dpg.listModels().firstOrNull()?.let { drawMainPath = it.absolutePath }
                     drawModelStatus?.text = dpg.modelSummary()
                     setStatus(getString(R.string.s_161), C_OK)
                     toast(getString(R.string.s_091))
-                    refreshDrawModels()
                 } else {
                     drawModelStatus?.text = err
                     setStatus(getString(R.string.s_158), C_ERR)
                     toast(err)
                 }
+                refreshDrawModels()
             }
         }
         if (requestCode == REQ_PICK_LORA && resultCode == RESULT_OK) {
             val uri = data?.data ?: return
             val dpg = drawPage ?: return
             setBusy(true)
+            setDrawBusy(true)
+            showDrawProgress(true)
             setStatus(getString(R.string.s_131), C_WARN)
             scope.launch {
-                val err = dpg.importLoraFile(uri) { stage -> loraStatusTv?.text = stage }
+                val err = dpg.importLoraFile(
+                    uri,
+                    onStage = { stage -> loraStatusTv?.text = stage },
+                    onProgress = { done, total -> updateDrawProgress(done, total) }
+                )
                 setBusy(false)
+                setDrawBusy(false)
+                showDrawProgress(false)
                 if (err == null) {
                     setStatus(getString(R.string.s_220), C_OK)
                     toast(getString(R.string.s_220))
-                    refreshLoraUi()
                 } else {
                     setStatus(getString(R.string.s_158), C_ERR)
                     toast(err)
                 }
+                refreshLoraUi()
             }
         }
     }
@@ -2509,6 +2538,35 @@ class MainActivity : Activity() {
         loadButton.isEnabled = !b
         loadButton.alpha = if (b) 0.5f else 1f
         // 生成过程中不禁用输入框：可以照常打字（此时发送键是「停止」，只是不发送）
+    }
+
+    /** 导入/复制期间禁用「绘图模型」区的按钮，避免重复触发。 */
+    private fun setDrawBusy(b: Boolean) {
+        drawToggleBtn?.isEnabled = !b
+        drawToggleBtn?.alpha = if (b) 0.5f else 1f
+        drawImportBtn?.isEnabled = !b
+        drawImportBtn?.alpha = if (b) 0.5f else 1f
+    }
+
+    private fun showDrawProgress(show: Boolean) {
+        val bar = drawProgress ?: return
+        if (show) {
+            bar.visibility = View.VISIBLE
+            bar.progress = 0
+            bar.isIndeterminate = false
+        } else {
+            bar.visibility = View.GONE
+        }
+    }
+
+    private fun updateDrawProgress(done: Long, total: Long) {
+        val bar = drawProgress ?: return
+        if (total > 0) {
+            bar.isIndeterminate = false
+            bar.progress = ((done * 100 / total).toInt()).coerceIn(0, 100)
+        } else {
+            bar.isIndeterminate = true
+        }
     }
 
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
