@@ -9,10 +9,12 @@ TOK = re.search(r"ghp_\w+", open(r"C:\Users\Administrator\Desktop\git_repo_tok.t
 REPO = "https://api.github.com/repos/visitor257/Ponko"
 
 DESC = ("Fully offline AI app for Android: on-device chat (.litertlm / .gguf) + "
-        "drawing (stable-diffusion.cpp GGUF). No network, no telemetry - everything stays on device.")
+        "drawing (stable-diffusion.cpp GGUF) + image tagging (ONNX WD14 tagger). "
+        "No network, no telemetry - everything stays on device.")
 
 TOPICS = ["android", "kotlin", "llm", "llama-cpp", "litert-lm", "gguf",
-          "stable-diffusion", "image-generation", "on-device-ai", "offline"]
+          "stable-diffusion", "image-generation", "image-tagging", "onnxruntime",
+          "on-device-ai", "offline"]
 
 
 def req(url, data=None, ctype=None, method=None):
