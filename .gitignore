@@ -34,6 +34,9 @@ desktop.ini
 # 日志
 *.log
 
-# ǩ��˽Կ
+# 签名私钥
 *.jks
 *.keystore
+
+# 提交信息草稿
+.commit_msg.txt
