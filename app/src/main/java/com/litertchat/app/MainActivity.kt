@@ -636,10 +636,10 @@ class MainActivity : Activity() {
             matchWrap().apply { topMargin = dp(10) }
         )
 
-        // ================= LoRA 加速 =================
-        val loraCard = sectionCard()
-        loraCard.addView(pageTitle(getString(R.string.s_021)))
-        loraCard.addView(
+        // ---- 子区块：LoRA 加速（隶属「绘图模型」） ----
+        drawCard.addView(divider(), matchWrap().apply { topMargin = dp(14) })
+        drawCard.addView(subTitle(getString(R.string.s_021)), matchWrap().apply { topMargin = dp(12) })
+        drawCard.addView(
             hintText(getString(R.string.s_017)),
             matchWrap().apply { topMargin = dp(4) }
         )
@@ -649,23 +649,23 @@ class MainActivity : Activity() {
             setTextColor(C_SUBTEXT)
         }
         loraStatusTv = lStatus
-        loraCard.addView(lStatus, matchWrap().apply { topMargin = dp(6) })
+        drawCard.addView(lStatus, matchWrap().apply { topMargin = dp(6) })
 
         loraBox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
         }
-        loraCard.addView(loraBox, matchWrap().apply { topMargin = dp(6) })
+        drawCard.addView(loraBox, matchWrap().apply { topMargin = dp(6) })
 
-        loraCard.addView(
+        drawCard.addView(
             actionButton(getString(R.string.s_039)) { pickLoraSource() },
             matchWrap().apply { topMargin = dp(8) }
         )
-        loraCard.addView(
+        drawCard.addView(
             actionButton(getString(R.string.s_219)) { pickLoraFile() },
             matchWrap().apply { topMargin = dp(8) }
         )
-        loraCard.addView(
+        drawCard.addView(
             smallButton(getString(R.string.s_051)) { confirmDeleteLora() },
             matchWrap().apply { topMargin = dp(10) }
         )
@@ -673,7 +673,6 @@ class MainActivity : Activity() {
         root.addView(card)
         root.addView(chatCard)
         root.addView(drawCard)
-        root.addView(loraCard)
 
         refreshLoraUi()
         refreshDrawModels()
@@ -739,6 +738,22 @@ class MainActivity : Activity() {
         textSize = 15f
         setTextColor(C_TEXT)
         typeface = Typeface.DEFAULT_BOLD
+    }
+
+    /** 分区内的子标题（比 pageTitle 小一号），用于「绘图模型」下的 LoRA / tagger 等子块。 */
+    private fun subTitle(text: String) = TextView(this).apply {
+        this.text = text
+        textSize = 14f
+        setTextColor(C_TEXT)
+        typeface = Typeface.DEFAULT_BOLD
+    }
+
+    /** 卡片内的细分隔线 */
+    private fun divider(): View = View(this).apply {
+        setBackgroundColor(0x1F000000)
+        layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, dp(1)
+        )
     }
 
     private fun hintText(text: String) = TextView(this).apply {
