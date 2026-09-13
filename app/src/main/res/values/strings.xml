@@ -199,8 +199,8 @@
 <string name="s_196">(no log)</string>
 <string name="s_197">(no records)</string>
 <string name="s_198">(read failed)</string>
-<string name="s_199">(🖼 decided to call the draw model)</string>
-<string name="s_200">(🖼 handed to the draw model)</string>
+<string name="s_199">(🖼 decided to call the draw model: %1$s)</string>
+<string name="s_200">(🖼 handed to the draw model: %1$s)</string>
 <string name="s_201">+ New chat</string>
 <string name="s_202">🎨 Generating image…</string>
 <string name="s_203">🖼️ Result</string>

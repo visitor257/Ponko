@@ -106,10 +106,12 @@ class MainActivity : Activity() {
 
     /** 语言模型可用的绘图命令说明（仅当绘图模型与语言模型同时就绪时注入）。 */
     private val drawToolPrompt = """
-        你具备绘图能力，但只有在用户**明确要求生成/画一张图片**时才使用。
-        其他任何情况（闲聊、问答、写代码、翻译等）都正常回答，不要主动画图，也不要展示这个命令。
+        你已接入一个本地绘图模型，可以把画面交给它去画。
+        只有在用户**明确要求生成/画一张图片**时才使用；其他任何情况（闲聊、问答、写代码、翻译等）
+        都正常回答，不要主动画图，也不要展示这个命令。
 
-        需要画图时：先用一两句话回应，然后在回复正文的最后另起一行输出：
+        需要画图时，不要声明自己无法画图、不要推辞、也不要建议对方改用别的工具——
+        直接用一两句话回应，然后在回复正文的最后另起一行输出：
         <draw>画面描述</draw>
 
         画面描述用英文、逗号分隔的关键词（例如 1girl, silver hair, school uniform, cherry blossoms），
@@ -135,8 +137,8 @@ class MainActivity : Activity() {
         // 1) 正文里的命令
         drawCmdRegex.find(answerBuf)?.let { m ->
             val prompt = m.groupValues[1].trim()
-            // 去掉原始标记，换一行说明，避免把 <draw> 写进对话历史
-            answerBuf.replace(m.range.first, m.range.last + 1, getString(R.string.s_200))
+            // 去掉原始标记，换成「已交由绘图模型出图：<提示词>」，既不留 <draw> 进历史，也让用户看得到实际用的提示词
+            answerBuf.replace(m.range.first, m.range.last + 1, getString(R.string.s_200, prompt))
             turn.answer = answerBuf.toString()
             markwonFull.setMarkdown(ai.answer, answerBuf.toString())
             return prompt.ifEmpty { null }
@@ -144,7 +146,7 @@ class MainActivity : Activity() {
         // 2) 思考过程里的命令（思考模式）
         drawCmdRegex.find(thoughtBuf)?.let { m ->
             val prompt = m.groupValues[1].trim()
-            thoughtBuf.replace(m.range.first, m.range.last + 1, getString(R.string.s_199))
+            thoughtBuf.replace(m.range.first, m.range.last + 1, getString(R.string.s_199, prompt))
             turn.thought = thoughtBuf.toString()
             ai.thoughtBody.text = thoughtBuf.toString()
             return prompt.ifEmpty { null }

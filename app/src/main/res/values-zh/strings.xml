@@ -199,8 +199,8 @@
     <string name="s_196">（无日志）</string>
     <string name="s_197">（无记录）</string>
     <string name="s_198">（读取失败）</string>
-    <string name="s_199">（🖼 决定调用绘图模型出图）</string>
-    <string name="s_200">（🖼 已交由绘图模型出图）</string>
+    <string name="s_199">（🖼 决定调用绘图模型出图：%1$s）</string>
+    <string name="s_200">（🖼 已交由绘图模型出图：%1$s）</string>
     <string name="s_201">＋ 新建对话</string>
     <string name="s_202">🎨 正在生成图片…</string>
     <string name="s_203">🖼️ 结果</string>
