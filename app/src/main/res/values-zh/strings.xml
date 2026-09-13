@@ -318,4 +318,7 @@
     <string name="s_253">标签表</string>
     <string name="s_254">加载打标模型</string>
     <string name="s_255">卸载打标模型</string>
+    <string name="s_256">将「%1$s」页当前参数保存为默认值？</string>
+    <string name="s_257">将「%1$s」页参数恢复为默认值？当前设置会被覆盖。</string>
+    <string name="s_258">确定</string>
 </resources>

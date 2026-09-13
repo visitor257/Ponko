@@ -2142,15 +2142,32 @@ class DrawPage(
         }
     }
 
-    /** 参数卡底部的「设为默认值 / 恢复默认」一行 */
+    /** 参数卡底部的「设为默认值 / 恢复默认」一行（点击后需确认） */
     private fun defaultButtonsRow(page: String): LinearLayout {
         val row = LinearLayout(c).apply { orientation = LinearLayout.HORIZONTAL }
-        row.addView(ghostButton(c.getString(R.string.s_248)) { saveDefaults(page) },
+        row.addView(ghostButton(c.getString(R.string.s_248)) { confirmDefaults(page, true) },
             LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        row.addView(ghostButton(c.getString(R.string.s_249)) { applyDefaults(page) },
+        row.addView(ghostButton(c.getString(R.string.s_249)) { confirmDefaults(page, false) },
             LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
                 .apply { leftMargin = dp(8) })
         return row
+    }
+
+    /** 点击后先弹确认框，确认才真正生效（save=true 存为默认，false 恢复默认） */
+    private fun confirmDefaults(page: String, save: Boolean) {
+        val pageName = c.getString(when (page) {
+            "t2i" -> R.string.s_207
+            "i2i" -> R.string.s_208
+            else -> R.string.s_221
+        })
+        android.app.AlertDialog.Builder(act)
+            .setTitle(c.getString(if (save) R.string.s_248 else R.string.s_249))
+            .setMessage(c.getString(if (save) R.string.s_256 else R.string.s_257, pageName))
+            .setPositiveButton(c.getString(R.string.s_258)) { _, _ ->
+                if (save) saveDefaults(page) else applyDefaults(page)
+            }
+            .setNegativeButton(c.getString(R.string.s_066), null)
+            .show()
     }
 
     private fun ghostButton(t: String, onClick: () -> Unit) = Button(c).apply {

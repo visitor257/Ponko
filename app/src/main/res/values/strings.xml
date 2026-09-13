@@ -318,4 +318,7 @@
     <string name="s_253">Tag lists</string>
     <string name="s_254">Load tagger</string>
     <string name="s_255">Unload tagger</string>
+    <string name="s_256">Save the current parameters of the %1$s page as defaults?</string>
+    <string name="s_257">Restore the %1$s page parameters to defaults? Current settings will be overwritten.</string>
+    <string name="s_258">OK</string>
 </resources>
