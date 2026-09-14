@@ -327,4 +327,9 @@
   <string name="s_262">Tagger model (ONNX)</string>
   <string name="s_263">Loaded</string>
   <string name="s_264">Not loaded — tap "Load tagger model" on the Models page</string>
+  <string name="s_265">Tagger model loaded</string>
+  <string name="s_266">Tagger model loaded — ready to tag</string>
+  <string name="s_267">Tagger model imported</string>
+  <string name="s_268">Tag list imported</string>
+  <string name="s_269">Imported — tap "Load tagger model"</string>
 </resources>

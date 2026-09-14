@@ -1327,8 +1327,8 @@ class MainActivity : Activity() {
                 setDrawBusy(false)
                 showDrawProgress(false)
                 if (err == null) {
-                    setStatus(getString(R.string.s_161), C_OK)
-                    toast(getString(R.string.s_091))
+                    setStatus(getString(R.string.s_267), C_OK)
+                    toast(getString(R.string.s_269))
                 } else {
                     setStatus(getString(R.string.s_158), C_ERR)
                     toast(err)
@@ -1353,8 +1353,8 @@ class MainActivity : Activity() {
                 setDrawBusy(false)
                 showDrawProgress(false)
                 if (err == null) {
-                    setStatus(getString(R.string.s_161), C_OK)
-                    toast(getString(R.string.s_091))
+                    setStatus(getString(R.string.s_268), C_OK)
+                    toast(getString(R.string.s_269))
                 } else {
                     setStatus(getString(R.string.s_158), C_ERR)
                     toast(err)
@@ -2823,8 +2823,8 @@ class MainActivity : Activity() {
             setDrawBusy(false)
             showDrawProgress(false)
             if (err == null) {
-                setStatus(getString(R.string.s_161), C_OK)
-                toast(getString(R.string.s_091))
+                setStatus(getString(R.string.s_265), C_OK)
+                toast(getString(R.string.s_266))
             } else {
                 setStatus(getString(R.string.s_158), C_ERR)
                 toast(err)

@@ -327,4 +327,9 @@
   <string name="s_262">打标模型（ONNX）</string>
   <string name="s_263">已加载</string>
   <string name="s_264">未加载 —— 请到「模型」页点「加载打标模型」</string>
+  <string name="s_265">打标模型已加载</string>
+  <string name="s_266">打标模型已加载，可以开始打标</string>
+  <string name="s_267">打标模型已导入</string>
+  <string name="s_268">标签表已导入</string>
+  <string name="s_269">已导入，请点「加载打标模型」</string>
 </resources>
