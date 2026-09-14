@@ -124,7 +124,12 @@ object TaggerEngine {
         val e = env ?: return emptyList()
         val n = inSize
         val buf = preprocess(bitmap, n)
-        val tensor = OnnxTensor.createTensor(e, buf, longArrayOf(1, n.toLong(), n.toLong(), 3))
+        val shape = if (nhwc) {
+            longArrayOf(1, n.toLong(), n.toLong(), 3)
+        } else {
+            longArrayOf(1, 3, n.toLong(), n.toLong())
+        }
+        val tensor = OnnxTensor.createTensor(e, buf, shape)
         val result = s.run(mapOf(inputName to tensor))
         try {
             val out = result.get(0) as OnnxTensor
@@ -152,12 +157,19 @@ object TaggerEngine {
 
     private fun sigmoid(x: Float): Float = 1f / (1f + kotlin.math.exp(-x))
 
-    /** 预处理成 WD14 的输入：白底居中 letterbox → size×size → BGR、[0,1]、NHWC */
+    /**
+     * 预处理：白底居中 letterbox → n×n → **BGR、0~255**。
+     *
+     * 关键：WD14 系模型吃的是 **0~255 的原始像素值**，绝不能除以 255 —— 除了之后模型会把
+     * 彩色图当成低对比度的怪图，稳定输出 monochrome / greyscale / no_humans 这类错误标签。
+     * 颜色通道按 BGR 排列（与训练一致）。nhwc=true 输出交错排列，否则按平面（NCHW）排列。
+     */
     private fun preprocess(src: Bitmap, n: Int): FloatBuffer {
         val scale = n.toFloat() / maxOf(src.width, src.height)
         val dw = maxOf(1, (src.width * scale).toInt())
         val dh = maxOf(1, (src.height * scale).toInt())
-        val scaled = Bitmap.createScaledBitmap(src, dw, dh, true)
+        val scaled = if (dw == src.width && dh == src.height) src
+                     else Bitmap.createScaledBitmap(src, dw, dh, true)
         val square = Bitmap.createBitmap(n, n, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(square)
         canvas.drawColor(Color.WHITE)
@@ -166,14 +178,16 @@ object TaggerEngine {
         val px = IntArray(n * n)
         square.getPixels(px, 0, n, 0, 0, n, n)
         val buf = FloatBuffer.allocate(n * n * 3)
-        for (p in px) {
-            val r = (p shr 16) and 0xFF
-            val g = (p shr 8) and 0xFF
-            val b = p and 0xFF
-            // WD14 系按 BGR 训练，这里保持一致
-            buf.put(b / 255f)
-            buf.put(g / 255f)
-            buf.put(r / 255f)
+        if (nhwc) {
+            for (p in px) {
+                buf.put((p and 0xFF).toFloat())             // B
+                buf.put(((p shr 8) and 0xFF).toFloat())     // G
+                buf.put(((p shr 16) and 0xFF).toFloat())    // R
+            }
+        } else {
+            for (shift in intArrayOf(0, 8, 16)) {           // B / G / R 三个平面
+                for (p in px) buf.put(((p shr shift) and 0xFF).toFloat())
+            }
         }
         buf.rewind()
         if (scaled !== src) runCatching { scaled.recycle() }
