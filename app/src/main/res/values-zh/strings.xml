@@ -303,7 +303,7 @@
     <string name="s_239">已发送至图生图（作为参考图）</string>
     <string name="s_240">已发送至 Tagger（作为输入图）</string>
     <string name="s_241">打标（Tagger）</string>
-    <string name="s_242">导入 WD14 类 ONNX 打标模型（.onnx）与其标签表（selected_tags.csv）。不内置、不下载，文件只留在本地。</string>
+    <string name="s_242">导入 Danbooru 系 ONNX 打标模型（.onnx，如 WD14）与其标签表（selected_tags.csv）。不内置、不下载，文件只留在本地。</string>
     <string name="s_243">选择打标模型 (.onnx)</string>
     <string name="s_244">选择标签表 (.csv)</string>
     <string name="s_245">打标模型未导入</string>
@@ -323,5 +323,8 @@
     <string name="s_258">确定</string>
   <string name="s_259">打标模型尚未加载，请先到「模型」页点「加载打标模型」</string>
   <string name="s_260">通道顺序</string>
-  <string name="s_261">WD14 用 BGR</string>
+  <string name="s_261">WD 系用 BGR，不对就切 RGB</string>
+  <string name="s_262">打标模型（ONNX）</string>
+  <string name="s_263">已加载</string>
+  <string name="s_264">未加载 —— 请到「模型」页点「加载打标模型」</string>
 </resources>

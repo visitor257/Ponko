@@ -44,7 +44,7 @@ The engine is [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.
 
 ## Tagging (Tagger)
 
-- **Fully offline** image-to-tags: import a WD14-style ONNX tagger (`.onnx`) plus its matching tag list (`selected_tags.csv`) — nothing is bundled or downloaded
+- **Fully offline** image-to-tags: import a Danbooru-style ONNX tagger (`.onnx`, e.g. WD14) plus its matching tag list (`selected_tags.csv`) — nothing is bundled or downloaded
 - The "Tagger" page: pick an image → set threshold (default 0.35) / max tags (default 40) → get tags
 - Send the tags to **Text-to-Image / Image-to-Image** (with a confirmation prompt); from the Result view you can also send a generated image to **Image-to-Image** or to **Tagger**
 - Multiple taggers / tag lists can be switched from the list on the Models page; "Load / Unload tagger" loads on demand and frees memory when you are done
@@ -83,7 +83,7 @@ powershell -File tools/build-release.ps1
 - `.gguf` (chat): any GGUF quantized model on HuggingFace; on a phone CPU, **1B–3B at Q4** is recommended
 - `.gguf` (drawing): SD1.5-family models in stable-diffusion.cpp format (e.g. Anything V5)
 - **LoRA**: `lcm-lora-sdv1-5.safetensors` (~130 MB), downloadable in-app; a local `.safetensors` can also be imported directly
-- **Tagger**: the `.onnx` of a WD14 Tagger plus its matching `selected_tags.csv` (the two must go together, e.g. `wd-v1-4-swinv2-tagger-v2`)
+- **Tagger**: the `.onnx` of a Danbooru-style tagger plus its matching tag-list CSV (the two must go together; e.g. WD14's `wd-v1-4-swinv2-tagger-v2` and `selected_tags.csv`)
 
 ## Known limitations
 
@@ -93,7 +93,7 @@ powershell -File tools/build-release.ps1
 - Drawing runs on CPU only: 256×256 with LCM-LoRA at 6 steps takes about a minute; 512×512 is noticeably slower
 - The quantization level is baked into the model file; the app only reads and displays it, never converts
 - The drawing native library is built with `-march=armv8.2-a+dotprod+fp16`, requiring a 64-bit ARM device from 2019 or later
-- Tagging only supports WD14-style ONNX models (Danbooru tags); the `.onnx` and `selected_tags.csv` must be imported as a matching pair
+- Tagging supports Danbooru-style ONNX taggers (WD14 and its derivatives; the tag list must be in `tag_id,name,category,count` format); the `.onnx` and the tag-list CSV must be imported as a matching pair
 - The tagger model is loaded lazily on first use (it holds hundreds of MB of memory) and can be unloaded manually from the Models page
 
 ## License

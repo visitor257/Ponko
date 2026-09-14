@@ -303,7 +303,7 @@
     <string name="s_239">Sent to Image to Image as the reference image</string>
     <string name="s_240">Sent to Tagger as the input image</string>
     <string name="s_241">Tagger</string>
-    <string name="s_242">Import a WD14-style ONNX tagger (.onnx) plus its tag list (selected_tags.csv). Nothing is bundled or downloaded — files stay on device.</string>
+    <string name="s_242">Import a Danbooru-style ONNX tagger (.onnx, e.g. WD14) plus its tag list (selected_tags.csv). Nothing is bundled or downloaded — files stay on device.</string>
     <string name="s_243">Select tagger model (.onnx)</string>
     <string name="s_244">Select tag list (.csv)</string>
     <string name="s_245">Tagger model not imported</string>
@@ -323,5 +323,8 @@
     <string name="s_258">OK</string>
   <string name="s_259">Tagger model is not loaded. Tap "Load tagger model" on the Models page first.</string>
   <string name="s_260">Channel order</string>
-  <string name="s_261">WD14 uses BGR</string>
+  <string name="s_261">WD taggers use BGR; try RGB if wrong</string>
+  <string name="s_262">Tagger model (ONNX)</string>
+  <string name="s_263">Loaded</string>
+  <string name="s_264">Not loaded — tap "Load tagger model" on the Models page</string>
 </resources>

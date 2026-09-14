@@ -43,7 +43,7 @@
 
 ## 打标（Tagger）
 
-- **完全离线**的图像反推标签：导入 WD14 类 ONNX 打标模型（`.onnx`）+ 配套标签表（`selected_tags.csv`），不内置、不下载
+- **完全离线**的图像反推标签：导入 Danbooru 系 ONNX 打标模型（`.onnx`，如 WD14）+ 配套标签表（`selected_tags.csv`），不内置、不下载
 - 参数区「Tagger」页：选图 → 设阈值（默认 0.35）/ 最多标签数（默认 40）→ 输出标签
 - 标签可一键**发送至文生图 / 图生图**（发送前弹确认框）；结果页也可把生成的图**发送至图生图**或**发送至 Tagger**
 - 多份打标模型 / 标签表可在「模型」页列表里点选切换；「加载 / 卸载打标模型」按需加载，用完可卸载释放内存
@@ -82,7 +82,7 @@ powershell -File tools/build-release.ps1
 - `.gguf`（对话）：HuggingFace 上任意 GGUF 量化模型；手机 CPU 上建议 **1B~3B、Q4 量化**
 - `.gguf`（绘图）：stable-diffusion.cpp 格式的 SD1.5 系模型（如 Anything V5）
 - **LoRA**：`lcm-lora-sdv1-5.safetensors`（约 130 MB），App 内可直接下载；本地 `.safetensors` 也可直接导入
-- **打标模型**：WD14 Tagger 的 `.onnx` + 配套 `selected_tags.csv`（两者必须成对，如 `wd-v1-4-swinv2-tagger-v2`）
+- **打标模型**：Danbooru 系 tagger 的 `.onnx` + 配套标签表 CSV（两者必须成对；如 WD14 的 `wd-v1-4-swinv2-tagger-v2` 与 `selected_tags.csv`）
 
 ## 已知限制
 
@@ -92,7 +92,7 @@ powershell -File tools/build-release.ps1
 - 绘图是纯 CPU 推理：256×256 + LCM-LoRA 6 步约 1 分钟，512×512 明显更慢
 - 绘图量化等级写死在模型文件里，App 只读取并显示，不会转换
 - 绘图原生库用 `-march=armv8.2-a+dotprod+fp16` 编译，需要 2019 年后的 64 位 ARM 设备
-- 打标仅支持 WD14 类（Danbooru 标签）ONNX 模型；`.onnx` 与 `selected_tags.csv` 必须配套导入
+- 打标支持 Danbooru 系的 ONNX 打标模型（WD14 及其衍生版本等；标签表需为 `tag_id,name,category,count` 格式）；`.onnx` 与标签表 CSV 必须配套导入
 - 打标首次运行时才加载模型（常驻数百 MB 内存），可在「模型」页手动卸载
 
 ## 许可

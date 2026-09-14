@@ -14,6 +14,7 @@ import android.text.InputType
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
@@ -32,6 +33,8 @@ import android.widget.Spinner
 import android.widget.ArrayAdapter
 import android.widget.TextView
 import android.widget.Toast
+import androidx.viewpager.widget.PagerAdapter
+import androidx.viewpager.widget.ViewPager
 import com.google.ai.edge.litertlm.Backend
 import com.google.ai.edge.litertlm.Content
 import com.litertchat.app.draw.DrawPage
@@ -212,6 +215,12 @@ class MainActivity : Activity() {
     private lateinit var statusDot: View
     private lateinit var tabChat: View
     private lateinit var tabModels: View
+
+    // 模型页：顶部页签 + 左右翻页
+    private lateinit var modelsPager: ViewPager
+    private lateinit var modelsTabChat: TextView
+    private lateinit var modelsTabDraw: TextView
+    private lateinit var modelsTabTag: TextView
     private lateinit var tabSettings: View
     private lateinit var tabDraw: View
     private lateinit var inputBar: View
@@ -511,11 +520,17 @@ class MainActivity : Activity() {
 
     /** 模型页：选择/加载模型 + 后端选择。 */
     private fun buildModelsPage(): View {
-        val sv = ScrollView(this).apply {
-            clipToPadding = false
-            setPadding(dp(12), dp(12), dp(12), dp(12))
+        // 结构对齐绘图页：顶部常驻「运行方式」，下面页签 + ViewPager 左右翻页。
+        // 仍用老版 ViewPager：PagerAdapter 能直接复用已建好的 View，
+        // ViewPager2 内部是 RecyclerView，重复 attach 同一个 View 会崩。
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(0xFFF5F6F8.toInt())
         }
-        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(12), dp(12), 0)
+        }
 
         // ================= 运行方式（对话 / 绘图共用） =================
         val card = sectionCard()
@@ -699,10 +714,10 @@ class MainActivity : Activity() {
             matchWrap().apply { topMargin = dp(10) }
         )
 
-        // ---- 子区块：打标（Tagger） ----
-        drawCard.addView(divider(), matchWrap().apply { topMargin = dp(14) })
-        drawCard.addView(subTitle(getString(R.string.s_241)), matchWrap().apply { topMargin = dp(12) })
-        drawCard.addView(
+        // ================= 打标模型（Tagger）：独立成页 =================
+        val taggerCard = sectionCard()
+        taggerCard.addView(pageTitle(getString(R.string.s_241)))
+        taggerCard.addView(
             hintText(getString(R.string.s_242)),
             matchWrap().apply { topMargin = dp(4) }
         )
@@ -712,33 +727,114 @@ class MainActivity : Activity() {
             setTextColor(C_SUBTEXT)
         }
         taggerStatusTv = tStatus
-        drawCard.addView(tStatus, matchWrap().apply { topMargin = dp(6) })
+        taggerCard.addView(tStatus, matchWrap().apply { topMargin = dp(6) })
 
         taggerOnnxBtn = actionButton(getString(R.string.s_243)) { pickTaggerOnnx() }
-        drawCard.addView(taggerOnnxBtn, matchWrap().apply { topMargin = dp(8) })
+        taggerCard.addView(taggerOnnxBtn, matchWrap().apply { topMargin = dp(8) })
         taggerCsvBtn = actionButton(getString(R.string.s_244)) { pickTaggerCsv() }
-        drawCard.addView(taggerCsvBtn, matchWrap().apply { topMargin = dp(8) })
+        taggerCard.addView(taggerCsvBtn, matchWrap().apply { topMargin = dp(8) })
 
         taggerBox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
         }
-        drawCard.addView(taggerBox, matchWrap().apply { topMargin = dp(6) })
+        taggerCard.addView(taggerBox, matchWrap().apply { topMargin = dp(6) })
 
         taggerLoadBtn = actionButton(getString(R.string.s_254)) { onTaggerToggleClick() }
-        drawCard.addView(taggerLoadBtn, matchWrap().apply { topMargin = dp(8) })
+        taggerCard.addView(taggerLoadBtn, matchWrap().apply { topMargin = dp(8) })
 
-        root.addView(card)
-        root.addView(chatCard)
-        root.addView(drawCard)
+        // ---- 顶部常驻「运行方式」+ 页签 + 左右翻页 ----
+        header.addView(card)
+        root.addView(header)
+
+        val tabBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setBackgroundColor(Color.WHITE)
+            setPadding(dp(16), dp(12), dp(16), 0)
+        }
+        modelsTabChat = tabItem(getString(R.string.s_076))
+        modelsTabDraw = tabItem(getString(R.string.s_155))
+        modelsTabTag = tabItem(getString(R.string.s_241))
+        modelsTabChat.setOnClickListener { switchModelsTab(0) }
+        modelsTabDraw.setOnClickListener { switchModelsTab(1) }
+        modelsTabTag.setOnClickListener { switchModelsTab(2) }
+        for (t in listOf(modelsTabChat, modelsTabDraw, modelsTabTag)) {
+            tabBar.addView(t, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        }
+        root.addView(tabBar)
+
+        modelsPager = ViewPager(this).apply {
+            adapter = ModelsPaneAdapter(
+                listOf(modelsPane(chatCard), modelsPane(drawCard), modelsPane(taggerCard))
+            )
+            addOnPageChangeListener(object : ViewPager.SimpleOnPageChangeListener() {
+                override fun onPageSelected(position: Int) {
+                    highlightModelsTabs(position)
+                }
+            })
+        }
+        root.addView(modelsPager, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
 
         refreshLoraUi()
         refreshDrawModels()
         refreshTaggerUi()
+        switchModelsTab(0)
+        return root
+    }
 
-        sv.addView(root, FrameLayout.LayoutParams(
+    /** 模型页：单个面板包一层可纵向滚动的 ScrollView */
+    private fun modelsPane(inner: View) = ScrollView(this).apply {
+        clipToPadding = false
+        setPadding(dp(12), dp(12), dp(12), dp(12))
+        addView(inner, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
-        return sv
+    }
+
+    /** 模型页顶部页签样式（与绘图页一致） */
+    private fun tabItem(t: String) = TextView(this).apply {
+        text = t
+        textSize = 13.5f
+        gravity = Gravity.CENTER
+        setPadding(0, dp(11), 0, dp(11))
+    }
+
+    /** 切换模型页的「对话模型 / 绘图模型 / 打标模型」 */
+    private fun switchModelsTab(index: Int) {
+        if (::modelsPager.isInitialized) modelsPager.setCurrentItem(index, true)
+        highlightModelsTabs(index)
+        when (index) {
+            0 -> refreshSavedModels()
+            1 -> { refreshDrawModels(); refreshLoraUi() }
+            2 -> refreshTaggerUi()
+        }
+    }
+
+    /** 同步模型页页签高亮；手势翻页时也由它更新 */
+    private fun highlightModelsTabs(selected: Int) {
+        if (!::modelsTabChat.isInitialized) return
+        for ((i, tv) in listOf(modelsTabChat, modelsTabDraw, modelsTabTag).withIndex()) {
+            val sel = i == selected
+            tv.setTextColor(if (sel) C_PRIMARY else C_SUBTEXT)
+            tv.typeface = if (sel) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+            tv.setBackgroundColor(if (sel) 0xFFEDF1FF.toInt() else Color.WHITE)
+        }
+    }
+
+    /** 模型页的翻页适配器：直接复用已建好的三个面板，不重建 */
+    private class ModelsPaneAdapter(private val panes: List<View>) : PagerAdapter() {
+        override fun getCount() = panes.size
+        override fun isViewFromObject(view: View, obj: Any) = view === obj
+        override fun instantiateItem(container: ViewGroup, position: Int): Any {
+            val v = panes[position]
+            (v.parent as? ViewGroup)?.removeView(v)
+            container.addView(v)
+            return v
+        }
+
+        override fun destroyItem(container: ViewGroup, position: Int, obj: Any) {
+            (obj as? View)?.let { container.removeView(it) }
+        }
     }
 
     /** 关于页：角色原图 + 说明。 */
@@ -2670,6 +2766,7 @@ class MainActivity : Activity() {
     private fun refreshTaggerUi() {
         val dpg = drawPage
         taggerStatusTv?.text = dpg?.taggerSummary() ?: getString(R.string.s_245)
+        dpg?.refreshStatus()
         refreshTaggerToggle()
         val box = taggerBox ?: return
         box.removeAllViews()

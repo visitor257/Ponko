@@ -98,7 +98,7 @@ class DrawPage(
         // 打标（Tagger）
         private const val KEY_TAG_THRESHOLD = "tagThreshold"
         private const val KEY_TAG_TOPK = "tagTopK"
-        private const val KEY_TAG_CHAN = "tagChan"   // 0 = BGR（WD14 默认），1 = RGB
+        private const val KEY_TAG_CHAN = "tagChan"   // 0 = BGR（WD 系默认），1 = RGB
     }
 
     private val c: Context get() = act
@@ -147,6 +147,7 @@ class DrawPage(
     // 控件
     private lateinit var statusText: TextView
     private lateinit var quantText: TextView
+    private lateinit var modelCardTitle: TextView
     private lateinit var promptEdit: EditText
     private lateinit var negEdit: EditText
     private lateinit var stepsEdit: EditText
@@ -291,7 +292,8 @@ class DrawPage(
 
         // ---- 模型状态（模型统一在「模型」页选择并加载） ----
         val modelCard = card()
-        modelCard.addView(title(c.getString(R.string.s_164)))
+        modelCardTitle = title(c.getString(R.string.s_164))
+        modelCard.addView(modelCardTitle)
         statusText = body(c.getString(R.string.s_115))
         modelCard.addView(statusText)
         quantText = TextView(c).apply {
@@ -717,6 +719,7 @@ class DrawPage(
             tv.typeface = if (sel) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
             tv.setBackgroundColor(if (sel) 0xFFEDF1FF.toInt() else Color.WHITE)
         }
+        refreshModelCard()
     }
 
     /** 模式子标签样式（比顶部页签略小） */
@@ -1519,8 +1522,25 @@ class DrawPage(
     }
 
     fun refreshStatus() {
-        try { statusText.text = modelSummary() } catch (_: Throwable) {}
-        refreshQuantText()
+        refreshModelCard()
+    }
+
+    /** 顶部模型卡片跟随子页切换：文生图/图生图 显示绘图模型，Tagger 显示打标模型 */
+    private fun refreshModelCard() {
+        if (!::modelCardTitle.isInitialized) return
+        if (mode == 2) {
+            modelCardTitle.text = c.getString(R.string.s_262)
+            statusText.text = taggerSummary()
+            quantText.text = if (taggerLoaded()) {
+                c.getString(R.string.s_263) + " · " + TaggerEngine.backendLabel()
+            } else {
+                c.getString(R.string.s_264)
+            }
+        } else {
+            modelCardTitle.text = c.getString(R.string.s_164)
+            try { statusText.text = modelSummary() } catch (_: Throwable) {}
+            refreshQuantText()
+        }
     }
 
     /** 当前绘图模型的量化等级（始终可见）。

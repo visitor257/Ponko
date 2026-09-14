@@ -13,7 +13,7 @@ import java.nio.FloatBuffer
 /**
  * 图像打标（Tagger）引擎。
  *
- * 用 **ONNX Runtime** 跑用户自己导入的 WD14 系 `.onnx` 打标模型（配 `selected_tags.csv`），
+ * 用 **ONNX Runtime** 跑用户自己导入的 Danbooru 系 `.onnx` 打标模型（如 WD14，配 `selected_tags.csv`），
  * 把一张图反推成 Danbooru 风格的 tag（`1girl, solo, ...`），正好是 SD1.5 / SDXL 动漫模型吃的提示词。
  *
  * 与 sd.cpp 无关：模型不内置、不下载，只读用户导入的本地文件。
@@ -119,7 +119,7 @@ object TaggerEngine {
     /**
      * 打标。返回按分数降序的 (tag, 分数) 列表；threshold 以下被丢弃，最多 topK 个（<=0 表示不限）。
      *
-     * rgbOrder = false 用 BGR（WD14 官方预处理，默认），true 用 RGB（少数重导出模型可能已经
+     * rgbOrder = false 用 BGR（WD 系官方预处理，默认），true 用 RGB（少数重导出模型可能已经
      * 把 BGR 转换烘进模型，那种情况需切成 RGB）。
      */
     fun run(bitmap: Bitmap, threshold: Float, topK: Int, rgbOrder: Boolean = false): List<Pair<String, Float>> {
@@ -163,7 +163,7 @@ object TaggerEngine {
     /**
      * 预处理：白底居中 letterbox → n×n → **BGR、0~255**。
      *
-     * 关键：WD14 系模型吃的是 **0~255 的原始像素值**，绝不能除以 255 —— 除了之后模型会把
+     * 关键：WD 系模型（WD14 等）吃的是 **0~255 的原始像素值**，绝不能除以 255 —— 除了之后模型会把
      * 彩色图当成低对比度的怪图，稳定输出 monochrome / greyscale / no_humans 这类错误标签。
      * 颜色通道按 BGR 排列（与训练一致）。nhwc=true 输出交错排列，否则按平面（NCHW）排列。
      */
