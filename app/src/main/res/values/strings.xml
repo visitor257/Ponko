@@ -321,4 +321,7 @@
     <string name="s_256">Save the current parameters of the %1$s page as defaults?</string>
     <string name="s_257">Restore the %1$s page parameters to defaults? Current settings will be overwritten.</string>
     <string name="s_258">OK</string>
+  <string name="s_259">Tagger model is not loaded. Tap "Load tagger model" on the Models page first.</string>
+  <string name="s_260">Channel order</string>
+  <string name="s_261">WD14 uses BGR</string>
 </resources>

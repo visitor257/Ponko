@@ -321,4 +321,7 @@
     <string name="s_256">将「%1$s」页当前参数保存为默认值？</string>
     <string name="s_257">将「%1$s」页参数恢复为默认值？当前设置会被覆盖。</string>
     <string name="s_258">确定</string>
+  <string name="s_259">打标模型尚未加载，请先到「模型」页点「加载打标模型」</string>
+  <string name="s_260">通道顺序</string>
+  <string name="s_261">WD14 用 BGR</string>
 </resources>

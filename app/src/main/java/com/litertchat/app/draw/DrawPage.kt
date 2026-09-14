@@ -98,6 +98,7 @@ class DrawPage(
         // 打标（Tagger）
         private const val KEY_TAG_THRESHOLD = "tagThreshold"
         private const val KEY_TAG_TOPK = "tagTopK"
+        private const val KEY_TAG_CHAN = "tagChan"   // 0 = BGR（WD14 默认），1 = RGB
     }
 
     private val c: Context get() = act
@@ -232,6 +233,7 @@ class DrawPage(
     private lateinit var taggerProgressBar: ProgressBar
     private lateinit var taggerThresholdEdit: EditText
     private lateinit var taggerTopKEdit: EditText
+    private lateinit var taggerChanSpinner: android.widget.Spinner
     private lateinit var taggerOut: TextView
     private lateinit var taggerSendT2iBtn: Button
     private lateinit var taggerSendI2iBtn: Button
@@ -762,6 +764,10 @@ class DrawPage(
         taggerTopKEdit = smallNumber(loadParam(KEY_TAG_TOPK, prefs().getString("def_tag_topk", null) ?: "40"))
         bindParam(taggerTopKEdit, KEY_TAG_TOPK)
         paramCard.addView(paramRow(c.getString(R.string.s_227), taggerTopKEdit, "1 ~ 300"))
+        taggerChanSpinner = choiceSpinner(listOf("BGR", "RGB"))
+        taggerChanSpinner.setSelection(loadInt(KEY_TAG_CHAN, 0).coerceIn(0, 1), false)
+        taggerChanSpinner.onItemSelectedListener = persistSpinner(KEY_TAG_CHAN)
+        paramCard.addView(paramRow(c.getString(R.string.s_260), taggerChanSpinner, c.getString(R.string.s_261)))
         paramCard.addView(defaultButtonsRow("tag"), matchWrap(top = 10))
         box.addView(paramCard)
 
@@ -860,10 +866,10 @@ class DrawPage(
             var err: String? = null
             var list: List<Pair<String, Float>>? = null
             withContext(Dispatchers.IO) {
-                err = ensureTaggerLoaded()
+                err = taggerReadyError()
                 if (err == null) {
                     list = try {
-                        TaggerEngine.run(bmp, threshold, topK)
+                        TaggerEngine.run(bmp, threshold, topK, rgbOrder = taggerChanSpinner.selectedItemPosition == 1)
                     } catch (t: Throwable) {
                         err = t.message ?: t.javaClass.simpleName
                         null
@@ -899,6 +905,20 @@ class DrawPage(
             TaggerEngine.loadedWithGpu() == useGpu) return null
         val threads = Runtime.getRuntime().availableProcessors().coerceIn(2, 8)
         return TaggerEngine.load(model, csv, useGpu, threads)
+    }
+
+    /**
+     * 手动模式：不自动加载。已加载且模型/标签表/后端都与当前选择一致时才放行，
+     * 否则提示用户到「模型」页点「加载打标模型」。
+     */
+    private fun taggerReadyError(): String? {
+        val model = taggerModelFile() ?: return c.getString(R.string.s_228)
+        val csv = taggerCsvFile() ?: return c.getString(R.string.s_228)
+        if (!TaggerEngine.isLoaded()) return c.getString(R.string.s_259)
+        val (mName, cName) = TaggerEngine.fileNames()
+        if (mName != model.name || cName != csv.name || TaggerEngine.loadedWithGpu() != useGpu)
+            return c.getString(R.string.s_259)
+        return null
     }
 
     /** 把打标结果发送到目标页（0=文生图 1=图生图），发送前弹确认 */
@@ -2057,6 +2077,9 @@ class DrawPage(
             e.putInt(KEY_I2I_SAMPLER, i2iSamplerSpinner.selectedItemPosition)
             e.putInt(KEY_I2I_SCHEDULER, i2iSchedulerSpinner.selectedItemPosition)
         }
+        if (::taggerChanSpinner.isInitialized) {
+            e.putInt(KEY_TAG_CHAN, taggerChanSpinner.selectedItemPosition)
+        }
         e.apply()
     }
 
@@ -2105,6 +2128,7 @@ class DrawPage(
             "tag" -> {
                 e.putString("def_tag_threshold", taggerThresholdEdit.text.toString())
                 e.putString("def_tag_topk", taggerTopKEdit.text.toString())
+                e.putInt("def_tag_chan", taggerChanSpinner.selectedItemPosition)
             }
         }
         e.apply()
@@ -2138,6 +2162,7 @@ class DrawPage(
             "tag" -> {
                 taggerThresholdEdit.setText(prefs().getString("def_tag_threshold", null) ?: "0.35")
                 taggerTopKEdit.setText(prefs().getString("def_tag_topk", null) ?: "40")
+                taggerChanSpinner.setSelection(prefs().getInt("def_tag_chan", 0).coerceIn(0, 1), false)
             }
         }
     }

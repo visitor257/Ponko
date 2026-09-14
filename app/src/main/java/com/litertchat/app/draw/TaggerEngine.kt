@@ -118,12 +118,15 @@ object TaggerEngine {
 
     /**
      * 打标。返回按分数降序的 (tag, 分数) 列表；threshold 以下被丢弃，最多 topK 个（<=0 表示不限）。
+     *
+     * rgbOrder = false 用 BGR（WD14 官方预处理，默认），true 用 RGB（少数重导出模型可能已经
+     * 把 BGR 转换烘进模型，那种情况需切成 RGB）。
      */
-    fun run(bitmap: Bitmap, threshold: Float, topK: Int): List<Pair<String, Float>> {
+    fun run(bitmap: Bitmap, threshold: Float, topK: Int, rgbOrder: Boolean = false): List<Pair<String, Float>> {
         val s = session ?: return emptyList()
         val e = env ?: return emptyList()
         val n = inSize
-        val buf = preprocess(bitmap, n)
+        val buf = preprocess(bitmap, n, rgbOrder)
         val shape = if (nhwc) {
             longArrayOf(1, n.toLong(), n.toLong(), 3)
         } else {
@@ -164,7 +167,7 @@ object TaggerEngine {
      * 彩色图当成低对比度的怪图，稳定输出 monochrome / greyscale / no_humans 这类错误标签。
      * 颜色通道按 BGR 排列（与训练一致）。nhwc=true 输出交错排列，否则按平面（NCHW）排列。
      */
-    private fun preprocess(src: Bitmap, n: Int): FloatBuffer {
+    private fun preprocess(src: Bitmap, n: Int, rgbOrder: Boolean): FloatBuffer {
         val scale = n.toFloat() / maxOf(src.width, src.height)
         val dw = maxOf(1, (src.width * scale).toInt())
         val dh = maxOf(1, (src.height * scale).toInt())
@@ -178,15 +181,15 @@ object TaggerEngine {
         val px = IntArray(n * n)
         square.getPixels(px, 0, n, 0, 0, n, n)
         val buf = FloatBuffer.allocate(n * n * 3)
+        // BGR（默认）：B,G,R；RGB：R,G,B。shift 依次对应当前顺序的三个通道
+        val shifts = if (rgbOrder) intArrayOf(16, 8, 0) else intArrayOf(0, 8, 16)
         if (nhwc) {
             for (p in px) {
-                buf.put((p and 0xFF).toFloat())             // B
-                buf.put(((p shr 8) and 0xFF).toFloat())     // G
-                buf.put(((p shr 16) and 0xFF).toFloat())    // R
+                for (sh in shifts) buf.put(((p shr sh) and 0xFF).toFloat())
             }
         } else {
-            for (shift in intArrayOf(0, 8, 16)) {           // B / G / R 三个平面
-                for (p in px) buf.put(((p shr shift) and 0xFF).toFloat())
+            for (sh in shifts) {                              // 三个平面
+                for (p in px) buf.put(((p shr sh) and 0xFF).toFloat())
             }
         }
         buf.rewind()
