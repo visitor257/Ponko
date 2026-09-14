@@ -234,6 +234,10 @@ class DrawPage(
     private lateinit var taggerThresholdEdit: EditText
     private lateinit var taggerTopKEdit: EditText
     private lateinit var taggerChanSpinner: android.widget.Spinner
+
+    /** 参数 / 结果两个面板的 ScrollView（跳转后用来回到顶部） */
+    private lateinit var paramScroll: ScrollView
+    private lateinit var resultScroll: ScrollView
     private lateinit var taggerOut: TextView
     private lateinit var taggerSendT2iBtn: Button
     private lateinit var taggerSendI2iBtn: Button
@@ -537,7 +541,9 @@ class DrawPage(
         // 用老版 ViewPager 而不是 ViewPager2：它的 PagerAdapter 原生支持直接复用
         // 已有的 View；ViewPager2 内部是 RecyclerView，重复 attach 同一个 View 会崩。
         pager = ViewPager(c).apply {
-            adapter = PaneAdapter(listOf(scrollWrap(paramPane), scrollWrap(resultPane)))
+            paramScroll = scrollWrap(paramPane)
+            resultScroll = scrollWrap(resultPane)
+            adapter = PaneAdapter(listOf(paramScroll, resultScroll))
             addOnPageChangeListener(object : ViewPager.SimpleOnPageChangeListener() {
                 override fun onPageSelected(position: Int) {
                     highlightTabs(toResult = position == 1)
@@ -936,10 +942,12 @@ class DrawPage(
                 if (target == 0) {
                     promptEdit.setText(text)
                     switchMode(0)
+                    scrollTop(paramScroll)
                     toast(c.getString(R.string.s_231))
                 } else {
                     i2iPromptEdit.setText(text)
                     switchMode(1)
+                    scrollTop(paramScroll)
                     toast(c.getString(R.string.s_232))
                 }
             }
@@ -957,6 +965,7 @@ class DrawPage(
         applyPickedImage(b)
         switchMode(1)
         switchPane(toResult = false)
+        scrollTop(paramScroll)
         toast(c.getString(R.string.s_239))
     }
 
@@ -970,6 +979,7 @@ class DrawPage(
         applyTaggerImage(b)
         switchMode(2)
         switchPane(toResult = false)
+        scrollTop(paramScroll)
         toast(c.getString(R.string.s_240))
     }
 
@@ -1973,6 +1983,12 @@ class DrawPage(
             tv.typeface = if (sel) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
             tv.setBackgroundColor(if (sel) 0xFFEDF1FF.toInt() else Color.WHITE)
         }
+    }
+
+    /** 让某个面板回到最顶处（等布局完成后执行，避免刚切页时高度还是 0） */
+    private fun scrollTop(s: ScrollView?) {
+        s ?: return
+        s.post { s.smoothScrollTo(0, 0) }
     }
 
     /** 给面板包一层可纵向滚动的 ScrollView（翻页控件需要一个确定高度的子项） */
