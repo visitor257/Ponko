@@ -27,6 +27,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -45,21 +46,31 @@ GIT = shutil.which("git") or "git"
 NEEDS_SHELL = GIT.lower().endswith((".cmd", ".bat"))
 
 
-def api(method, path, data=None):
+def api(method, path, data=None, attempts=5):
+    """请求 GitHub API。网络抖动（IncompleteRead / 连接重置等）自动重试。"""
     url = "https://api.github.com" + path
     body = json.dumps(data).encode() if data is not None else None
-    req = urllib.request.Request(url, data=body, method=method)
-    req.add_header("Authorization", "token " + TK)
-    req.add_header("Accept", "application/vnd.github+json")
-    req.add_header("User-Agent", "ponko-push")
-    if body:
-        req.add_header("Content-Type", "application/json")
-    try:
-        with urllib.request.urlopen(req, timeout=90) as r:
-            return json.loads(r.read().decode())
-    except urllib.error.HTTPError as e:
-        print("!! HTTP", e.code, e.read().decode()[:800])
-        raise
+    last = None
+    for i in range(attempts):
+        req = urllib.request.Request(url, data=body, method=method)
+        req.add_header("Authorization", "token " + TK)
+        req.add_header("Accept", "application/vnd.github+json")
+        req.add_header("User-Agent", "ponko-push")
+        req.add_header("Connection", "close")
+        if body:
+            req.add_header("Content-Type", "application/json")
+        try:
+            with urllib.request.urlopen(req, timeout=90) as r:
+                raw = r.read()
+            return json.loads(raw.decode())
+        except urllib.error.HTTPError as e:
+            print("!! HTTP", e.code, e.read().decode()[:800])
+            raise
+        except Exception as e:
+            last = e
+            print(".. 第 %d/%d 次请求失败：%s: %s" % (i + 1, attempts, type(e).__name__, e))
+            time.sleep(2 + 3 * i)
+    raise last
 
 
 def git(*args):
