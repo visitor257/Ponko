@@ -5,6 +5,7 @@ import android.app.AlertDialog
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Color
+import android.graphics.Matrix
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
@@ -12,8 +13,10 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.SystemClock
 import android.text.InputType
+import android.view.GestureDetector
 import android.view.Gravity
 import android.view.MotionEvent
+import android.view.ScaleGestureDetector
 import android.view.View
 import android.view.ViewGroup
 import android.view.animation.AccelerateInterpolator
@@ -2757,21 +2760,161 @@ class MainActivity : Activity() {
     }
 
     /** 在 AI 气泡里插入图片；点图弹确认框再存相册（以前点一下就存，容易误触） */
-    /** 全屏查看：点图放大，点任意处关闭。 */
+    /** 全屏看图：双指缩放、拖动、双击放大；未放大时点图关闭，右上角 ✕ 随时关闭。 */
     private fun showImageFullscreen(bmp: Bitmap) {
-        val iv = ImageView(this).apply {
-            setImageBitmap(bmp)
-            scaleType = ImageView.ScaleType.FIT_CENTER
+        val dlg = android.app.Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
+        val iv = ZoomImageView(this).apply { setImageBitmap(bmp) }
+        iv.onTapAtFit = { dlg.dismiss() }
+        val close = TextView(this).apply {
+            text = "✕"
+            textSize = 18f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            background = rounded(0x66000000, 20)
+            isClickable = true
+            setOnClickListener { dlg.dismiss() }
         }
-        val wrap = FrameLayout(this).apply {
+        val root = FrameLayout(this).apply {
             setBackgroundColor(Color.BLACK)
             addView(iv, FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+            addView(close, FrameLayout.LayoutParams(dp(36), dp(36)).apply {
+                gravity = Gravity.TOP or Gravity.END
+                topMargin = dp(36)
+                rightMargin = dp(16)
+            })
         }
-        val dlg = android.app.Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
-        wrap.setOnClickListener { dlg.dismiss() }
-        dlg.setContentView(wrap)
+        dlg.setContentView(root)
         dlg.show()
+    }
+
+    /** 图片长按菜单：保存到相册 / 引用 / 发送至图生图 / 发送至 Tagger。 */
+    private fun showImageMenu(bmp: Bitmap, name: String) {
+        val items = arrayOf(
+            getString(R.string.s_045),
+            getString(R.string.s_291),
+            getString(R.string.s_225),
+            getString(R.string.s_238)
+        )
+        AlertDialog.Builder(this)
+            .setTitle(getString(R.string.s_293))
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> saveImageToGallery(bmp, name)
+                    1 -> quoteImage(bmp)
+                    2 -> { drawPage?.sendImageToI2i(bmp); switchTab(2) }
+                    else -> { drawPage?.sendImageToTagger(bmp); switchTab(2) }
+                }
+            }
+            .setNegativeButton(getString(R.string.s_066), null)
+            .show()
+    }
+
+    /** 引用：把图片直接放进输入栏待发送附件（不落盘，等同于在输入栏选了这张图）。 */
+    private fun quoteImage(bmp: Bitmap) {
+        if (engine == null && llamaModel == null) { toast(getString(R.string.s_273)); return }
+        if (!visionOk) { toast(getString(R.string.s_272)); return }
+        if (pendingImages.size >= MAX_ATTACH) { toast(getString(R.string.s_279)); return }
+        addPendingImage(bmp, bitmapToJpeg(bmp))
+        switchTab(0)
+        toast(getString(R.string.s_292))
+    }
+
+    /** 全屏看图用的 ImageView：双指缩放 + 拖动 + 双击放大，缩放范围 1x~8x。 */
+    private class ZoomImageView(ctx: android.content.Context) : ImageView(ctx) {
+        private val mtx = Matrix()
+        private var base = 1f
+        private var cur = 1f
+        private var lastX = 0f
+        private var lastY = 0f
+        private var down = false
+        var onTapAtFit: (() -> Unit)? = null
+
+        private val scaleDet = ScaleGestureDetector(ctx,
+            object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+                override fun onScale(det: ScaleGestureDetector): Boolean {
+                    val want = (cur * det.scaleFactor).coerceIn(1f, 8f)
+                    val r = want / cur
+                    if (r == 1f) return true
+                    cur = want
+                    mtx.postScale(r, r, det.focusX, det.focusY)
+                    clamp()
+                    imageMatrix = mtx
+                    return true
+                }
+            })
+
+        private val tapDet = GestureDetector(ctx, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: MotionEvent): Boolean = true
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                if (cur <= 1.01f) onTapAtFit?.invoke()
+                return true
+            }
+            override fun onDoubleTap(e: MotionEvent): Boolean {
+                val want = if (cur > 1.05f) 1f else 2.5f
+                val r = want / cur
+                cur = want
+                mtx.postScale(r, r, e.x, e.y)
+                clamp()
+                imageMatrix = mtx
+                return true
+            }
+        })
+
+        init { setScaleType(ImageView.ScaleType.MATRIX) }
+
+        override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
+            super.onSizeChanged(w, h, ow, oh)
+            reset()
+        }
+
+        /** 回到「适配并居中」状态 */
+        fun reset() {
+            val d = drawable ?: return
+            val vw = width.toFloat()
+            val vh = height.toFloat()
+            val dw = d.intrinsicWidth.toFloat()
+            val dh = d.intrinsicHeight.toFloat()
+            if (vw <= 0f || vh <= 0f || dw <= 0f || dh <= 0f) return
+            base = minOf(vw / dw, vh / dh)
+            cur = 1f
+            mtx.reset()
+            mtx.postScale(base, base)
+            mtx.postTranslate((vw - dw * base) / 2f, (vh - dh * base) / 2f)
+            imageMatrix = mtx
+        }
+
+        /** 缩放后把图拉回可视范围，避免拖出去找不回来 */
+        private fun clamp() {
+            if (cur <= 1.01f) { reset(); return }
+            val d = drawable ?: return
+            val v = FloatArray(9)
+            mtx.getValues(v)
+            val sw = d.intrinsicWidth * base * cur
+            val sh = d.intrinsicHeight * base * cur
+            v[Matrix.MTRANS_X] = if (sw <= width) (width - sw) / 2f else v[Matrix.MTRANS_X].coerceIn(width - sw, 0f)
+            v[Matrix.MTRANS_Y] = if (sh <= height) (height - sh) / 2f else v[Matrix.MTRANS_Y].coerceIn(height - sh, 0f)
+            mtx.setValues(v)
+        }
+
+        override fun onTouchEvent(ev: MotionEvent): Boolean {
+            scaleDet.onTouchEvent(ev)
+            tapDet.onTouchEvent(ev)
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN -> { lastX = ev.x; lastY = ev.y; down = true }
+                MotionEvent.ACTION_MOVE -> {
+                    if (down && cur > 1.01f && !scaleDet.isInProgress) {
+                        mtx.postTranslate(ev.x - lastX, ev.y - lastY)
+                        clamp()
+                        imageMatrix = mtx
+                    }
+                    lastX = ev.x
+                    lastY = ev.y
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> down = false
+            }
+            return true
+        }
     }
 
     private fun attachImageBubble(ai: AiArea, bmp: Bitmap, name: String) {
@@ -2782,14 +2925,7 @@ class MainActivity : Activity() {
             isFocusable = false
             setPadding(0, dp(6), 0, 0)
             setOnClickListener { showImageFullscreen(bmp) }
-            setOnLongClickListener {
-                AlertDialog.Builder(this@MainActivity)
-                    .setMessage(getString(R.string.s_170))
-                    .setPositiveButton(getString(R.string.s_044)) { _, _ -> saveImageToGallery(bmp, name) }
-                    .setNegativeButton(getString(R.string.s_066), null)
-                    .show()
-                true
-            }
+            setOnLongClickListener { showImageMenu(bmp, name); true }
         }
         ai.root.addView(iv, matchWrap())
         ai.root.addView(TextView(this).apply {
@@ -2836,6 +2972,8 @@ class MainActivity : Activity() {
         val attachBmps = pendingImages.map { it.first }
         val attachJpegs = pendingImages.map { it.second }
         if (text.isEmpty() && attachJpegs.isEmpty()) return
+        // 生成过程中不允许发起新的一轮（选图/引用可以在生成中进行，发送不行）
+        if (busy) { toast(getString(R.string.s_133)); return }
 
         // 带图发送：模型必须支持图像输入（.litertlm 多模态模型，或挂了 mmproj 的 gguf 模型）
         if (attachJpegs.isNotEmpty()) {
@@ -3219,14 +3357,7 @@ class MainActivity : Activity() {
                     isClickable = true
                     setOnClickListener { showImageFullscreen(b) }
                     setOnLongClickListener {
-                        AlertDialog.Builder(this@MainActivity)
-                            .setMessage(getString(R.string.s_170))
-                            .setPositiveButton(getString(R.string.s_044)) { _, _ ->
-                                saveImageToGallery(b, "ponko_${System.currentTimeMillis()}.png")
-                            }
-                            .setNegativeButton(getString(R.string.s_066), null)
-                            .show()
-                        true
+                        showImageMenu(b, "ponko_${System.currentTimeMillis()}.png"); true
                     }
                 }, LinearLayout.LayoutParams(w, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
                     leftMargin = dp(6)

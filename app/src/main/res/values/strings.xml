@@ -353,4 +353,7 @@
 <string name="s_288">Delete this mmproj file %1$s?</string>
 <string name="s_289">Imported mmproj (tap to select, long-press to delete)</string>
 <string name="s_290">mmproj switched — reload the model to apply</string>
+<string name="s_291">Quote (add to input bar)</string>
+<string name="s_292">Added to the input bar</string>
+<string name="s_293">Image</string>
 </resources>

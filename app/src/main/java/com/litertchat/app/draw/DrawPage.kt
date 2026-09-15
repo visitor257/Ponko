@@ -986,6 +986,24 @@ class DrawPage(
         toast(c.getString(R.string.s_240))
     }
 
+    /** 外部图片 → 图生图参考图（并切到图生图页）。供对话里的图片长按菜单调用。 */
+    fun sendImageToI2i(b: Bitmap) {
+        applyPickedImage(b)
+        switchMode(1)
+        switchPane(toResult = false)
+        scrollTop(paramScroll)
+        toast(c.getString(R.string.s_239))
+    }
+
+    /** 外部图片 → Tagger 输入图（并切到 Tagger 页）。供对话里的图片长按菜单调用。 */
+    fun sendImageToTagger(b: Bitmap) {
+        applyTaggerImage(b)
+        switchMode(2)
+        switchPane(toResult = false)
+        scrollTop(paramScroll)
+        toast(c.getString(R.string.s_240))
+    }
+
     // ---- 打标模型文件（模型页导入，这里只读） ----
 
     /** 打标目录：filesDir/tagger */
