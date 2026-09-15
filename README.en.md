@@ -1,10 +1,10 @@
 # Ponko
 
-> The name comes from the Japanese 「ポンコツ」(ponkotsu) — "scrap heap". Not the sharpest brain, but you can swap in the best model whenever you like.
+> The name comes from the Japanese 「ポンコツ」(ponkotsu) - "scrap heap". Not the sharpest brain, but you can swap in the best model whenever you like.
 
 English · [中文](README.md)
 
-A **fully offline** Android app for local AI: chat with LLMs, generate images, and tag them.
+A **fully offline** Android app for local AI: chat with LLMs (**image input included**), generate images, and tag them.
 
 ## Chat
 
@@ -15,44 +15,66 @@ Two model formats are supported:
 | `.litertlm` | Google LiteRT-LM | CPU / GPU / NPU backends, thinking channel, multimodal extension |
 | `.gguf` | llama.cpp | Multi-threaded CPU, in-session KV prefix reuse (no re-prefill on long chats) |
 
-- **Model management**: pick a model file from local storage; it is copied into the app's private directory and can be reused anytime. View / delete models from the Models page.
+- **Model management**: pick a model file from local storage; it is copied into the app's private directory and can be reused anytime. The Models page has a run-mode selector (CPU / GPU) on top and three sub-pages below (**Chat model / Draw model / Tagger model**, swipe to switch), where each kind of model can be viewed, selected or deleted.
 - **Multiple conversations**: create / switch / delete chats. History is persisted on-device (`sessions.json`).
 - **Separate thinking**: reasoning and answer are shown apart and collapsible; the thinking toggle works for both formats.
 - **Markdown rendering**: headings, bold/italic, strikethrough, ordered/unordered lists, inline code and code blocks, quotes, dividers, tables, tappable links.
 - **Streaming UX**: token-by-token output; auto-follow scrolling that pauses the moment you scroll up, with a floating "back to bottom" button; interrupt anytime, and keep typing while generating.
 - **Regenerate**: one tap to rerun, with a random seed so results differ.
+- **Image input (multimodal)**: the "+" button left of the input box opens an upward drawer with **Take photo / Gallery**, up to 4 images per message. Images appear inline in the bubble: **tap to view fullscreen (pinch-zoom / pan / double-tap)** and **long-press** for a menu: Save to gallery / Quote (put it into the input bar) / Send to Image-to-Image / Send to Tagger
+  - `.litertlm`: needs a **multimodal model** (e.g. Gemma 3n). The app probes the model and tells you right away if it has no vision input
+  - `.gguf`: needs a **vision model plus its matching `mmproj` file**. Import and select the mmproj on the Models page, Chat model card, and **pick the mmproj before loading the model**
 
 ## Drawing
 
 The engine is [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp), reading **GGUF** Stable Diffusion models.
 
 > The sd.cpp source lives in `app/src/main/cpp/sd/` and is compiled **on the fly** by NDK + CMake during
-> the build (no prebuilt `.so` checked in), so after editing C++ you just run `assembleRelease` —
+> the build (no prebuilt `.so` checked in), so after editing C++ you just run `assembleRelease` -
 > there is no way to ship a stale native library by accident.
 
 - **Three modes**: the parameters area is split into **Text-to-Image / Image-to-Image / Tagger** sub-pages
   - **Text to image**: enter a prompt and generate
-  - **Image to image**: pick a reference photo from your gallery as the base, then use the prompt and the "denoise strength" (0.05–0.99) to restyle / change background / refine; the output size auto-aligns to the reference (multiple of 64)
+  - **Image to image**: pick a reference photo from your gallery as the base, then use the prompt and the "denoise strength" (0.05-0.99) to restyle / change background / refine; the output size auto-aligns to the reference (multiple of 64)
   - **Tagger**: reverse an image into Danbooru-style tags (see below)
 - **Parameter defaults**: every parameter page has "Set as default" / "Restore defaults" (each asks for confirmation); Text-to-Image and Image-to-Image keep **separate default sets for LoRA on/off**, and toggling the LoRA switch applies the matching set
-- **Generation history**: the Result view keeps the last 30 images of this run — browse, delete one, or clear all. **In-memory only; gone when the app is closed.**
-- **Parameters**: width/height (multiples of 64), steps, CFG, seed, sampler, scheduler — all adjustable and **remembered across restarts** (prompts are not).
-- **LoRA**: one-tap in-app download of LCM-LoRA (official HuggingFace / hf-mirror), cutting 20 steps down to 4–8. You can also **import a local LoRA** (a single `.safetensors`), and switch between multiple LoRAs from the list.
+- **Generation history**: the Result view keeps the last 30 images of this run - browse, delete one, or clear all. **In-memory only; gone when the app is closed.**
+- **Parameters**: width/height (multiples of 64), steps, CFG, seed, sampler, scheduler - all adjustable and **remembered across restarts** (prompts are not).
+- **LoRA**: one-tap in-app download of LCM-LoRA (official HuggingFace / hf-mirror), cutting 20 steps down to 4-8. You can also **import a local LoRA** (a single `.safetensors`), and switch between multiple LoRAs from the list.
 - **Model import**: the drawing model is imported as a **single `.gguf` file**.
-- **Draw from chat**: when both a chat model and a draw model are loaded, just say "draw me …" and the draw model is invoked.
+- **Draw from chat**: when both a chat model and a draw model are loaded, just say "draw me ..." and the draw model is invoked.
 - The "Parameters" / "Result" views can be swiped left/right; save images to the gallery from the Result view.
 
 ## Tagging (Tagger)
 
-- **Fully offline** image-to-tags: import a Danbooru-style ONNX tagger (`.onnx`, e.g. WD14) plus its matching tag list (`selected_tags.csv`) — nothing is bundled or downloaded
+- **Fully offline** image-to-tags: import a Danbooru-style ONNX tagger (`.onnx`, e.g. WD14) plus its matching tag list (`selected_tags.csv`) - nothing is bundled or downloaded
 - The "Tagger" page: pick an image → set threshold (default 0.35) / max tags (default 40) → get tags
 - Send the tags to **Text-to-Image / Image-to-Image** (with a confirmation prompt); from the Result view you can also send a generated image to **Image-to-Image** or to **Tagger**
 - Multiple taggers / tag lists can be switched from the list on the Models page; "Load / Unload tagger" loads on demand and frees memory when you are done
 - Backend follows the Models page run mode: CPU, or NNAPI when GPU is selected
 
+## Permissions
+
+The app declares **only three permissions** and none of them is sensitive: taking a photo, picking an image and saving to the gallery require **no storage access permission at all**.
+
+| What | Permission | Why |
+| --- | --- | --- |
+| Take photo | **No `CAMERA`** | Uses `ACTION_IMAGE_CAPTURE`, delegating to the system camera app: the photo is taken there and only the result comes back. Declaring `CAMERA` without holding the grant would actually make this throw `SecurityException`, so it is intentionally left undeclared |
+| Pick an image (gallery / files) | **No storage read permission** | Uses the system file picker `ACTION_GET_CONTENT`: the app only receives a temporary read grant for the **single file the user taps** (`content://`), not for storage as a whole - hence no `READ_MEDIA_IMAGES` / `READ_EXTERNAL_STORAGE` |
+| Save an image to the gallery | **Not needed on Android 10+** | Writes through `MediaStore` into the app's own media entry, which the platform allows without a permission |
+| Save an image / take a photo | **Needed on Android 9 and below** | These need `WRITE_EXTERNAL_STORAGE` (declared with `maxSdkVersion="28"`, so it only applies on Android 9 or older), and the app **only prompts on Android 9, at the first save/photo**; on Android 10+ it is never requested |
+| Downloading LoRA | `INTERNET`, `ACCESS_NETWORK_STATE` | Used only by the manual LCM-LoRA download (HuggingFace / hf-mirror) on the LoRA card. **No download, no network** - everything else works fully offline |
+| Models / chats / images | **No permission** | Everything lives in the app's private directory (`filesDir/`), the app sandbox |
+
+- The `content://` grant returned by the camera or gallery is **temporary**, so imported files are copied into the private directory right away (this is why picking a model copies it)
+- The `IMAGE_CAPTURE` entry under `<queries>` is an Android 11+ package-visibility declaration, not a permission
+- No location, contacts, microphone, notification or background-execution permission is requested
+
 ## Languages
 
-All UI strings are externalized (`res/values` = English, `res/values-zh` = Chinese) and **follow the system language** automatically — no setting needed.
+All UI strings are externalized (`res/values` = English, `res/values-zh` = Chinese) and **follow the system language** automatically - no setting needed.
+
+The fourth tab is an **About** page: version, app intro, notes on the thinking mode, license and third-party component list, author and project link.
 
 ## Building
 
@@ -73,14 +95,14 @@ powershell -File tools/build-release.ps1
 ```
 
 - `minSdk 28` / `targetSdk 36`, **arm64-v8a only** (native library constraint; a real device is required, emulators won't run it)
-- The first full compile of sd.cpp + ggml takes about 8–9 minutes; with C++ unchanged, incremental builds take ~10 seconds
+- The first full compile of sd.cpp + ggml takes about 8-9 minutes; with C++ unchanged, incremental builds take ~10 seconds
 - Main dependencies: `com.google.ai.edge.litertlm:litertlm-android:0.17.0`, `net.ladenthin:llama-android:5.1.0`, `com.microsoft.onnxruntime:onnxruntime-android:1.22.0`, `io.noties.markwon:*:4.6.2`
 - Built by CMake: `libstable-diffusion.so` (sd.cpp itself), `libponko_sd.so` (JNI bridge)
 
 ## Where to get models
 
 - `.litertlm`: the `litert-community` / `google` organizations on HuggingFace (Gemma family, etc.)
-- `.gguf` (chat): any GGUF quantized model on HuggingFace; on a phone CPU, **1B–3B at Q4** is recommended
+- `.gguf` (chat): any GGUF quantized model on HuggingFace; on a phone CPU, **1B-3B at Q4** is recommended
 - `.gguf` (drawing): SD1.5-family models in stable-diffusion.cpp format (e.g. Anything V5)
 - **LoRA**: `lcm-lora-sdv1-5.safetensors` (~130 MB), downloadable in-app; a local `.safetensors` can also be imported directly
 - **Tagger**: the `.onnx` of a Danbooru-style tagger plus its matching tag-list CSV (the two must go together; e.g. WD14's `wd-v1-4-swinv2-tagger-v2` and `selected_tags.csv`)
@@ -95,12 +117,14 @@ powershell -File tools/build-release.ps1
 - The drawing native library is built with `-march=armv8.2-a+dotprod+fp16`, requiring a 64-bit ARM device from 2019 or later
 - Tagging supports Danbooru-style ONNX taggers (WD14 and its derivatives; the tag list must be in `tag_id,name,category,count` format); the `.onnx` and the tag-list CSV must be imported as a matching pair
 - The tagger model is loaded lazily on first use (it holds hundreds of MB of memory) and can be unloaded manually from the Models page
+- On **Android 9**, saving to the gallery / taking a photo requires the storage permission (prompted on first use); denying it makes those actions fail (Android 10+ is unaffected)
+- Image input is capped at 4 images per message; a `.gguf` vision model must be paired with its matching `mmproj`, selected before the model is loaded
 
 ## License
 
 - **Code**: [MIT](LICENSE)
-- **Artwork** (app icon, character portrait, original drawing): © the author, all rights reserved, **not covered by the MIT license** — see [NOTICE](NOTICE)
-- **Third-party components**: distributed under their own licenses — see [NOTICE](NOTICE) for the full list
+- **Artwork** (app icon, character portrait, original drawing): © the author, all rights reserved, **not covered by the MIT license** - see [NOTICE](NOTICE)
+- **Third-party components**: distributed under their own licenses - see [NOTICE](NOTICE) for the full list
 
 ## Third-party components
 

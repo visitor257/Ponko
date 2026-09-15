@@ -3,6 +3,7 @@ package com.litertchat.app
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Matrix
@@ -100,6 +101,7 @@ class MainActivity : Activity() {
         private const val REQ_PICK_CHAT_IMAGE = 1007
         private const val MAX_ATTACH = 4
         private const val REQ_PICK_MMPROJ = 1008
+        private const val REQ_PERM_STORAGE = 1009
     }
 
     // ---- palette ----
@@ -137,6 +139,8 @@ class MainActivity : Activity() {
     private val pendingImages = ArrayList<kotlin.Pair<Bitmap, ByteArray>>()
     /** 拍照时预创建的 MediaStore URI */
     private var pendingCameraUri: Uri? = null
+    /** 安卓 9 及以下等拿到存储权限后再执行的动作（仅这些机型用得到） */
+    private var pendingStorageAction: (() -> Unit)? = null
 
     /** 当前处于绘图模式：对话页的输入会被当作正面提示词去生成图片 */
     /** 让语言模型「调用」绘图模型时使用的命令标记。 */
@@ -1327,7 +1331,34 @@ class MainActivity : Activity() {
             .start()
     }
 
-    private fun takePhoto() {
+    /** 安卓 9 及以下写相册/拍照需要运行时 WRITE_EXTERNAL_STORAGE；安卓 10+ 走 MediaStore，免权限，直接执行。 */
+    private fun withLegacyStorage(action: () -> Unit) {
+        if (Build.VERSION.SDK_INT > Build.VERSION_CODES.P ||
+            checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+        ) {
+            action()
+            return
+        }
+        pendingStorageAction = action
+        requestPermissions(arrayOf(android.Manifest.permission.WRITE_EXTERNAL_STORAGE), REQ_PERM_STORAGE)
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQ_PERM_STORAGE) return
+        val act = pendingStorageAction
+        pendingStorageAction = null
+        if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) act?.invoke()
+        else toast(getString(R.string.s_294))
+    }
+
+    private fun takePhoto() = withLegacyStorage { doTakePhoto() }
+
+    private fun doTakePhoto() {
         val uri = try {
             contentResolver.insert(
                 MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
@@ -2936,7 +2967,9 @@ class MainActivity : Activity() {
         }, matchWrap())
     }
 
-    private fun saveImageToGallery(bmp: Bitmap, name: String) {
+    private fun saveImageToGallery(bmp: Bitmap, name: String) = withLegacyStorage { doSaveImageToGallery(bmp, name) }
+
+    private fun doSaveImageToGallery(bmp: Bitmap, name: String) {
         scope.launch {
             val ok = withContext(Dispatchers.IO) {
                 try {
