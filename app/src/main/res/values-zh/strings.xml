@@ -353,4 +353,7 @@
   <string name="s_288">删除该 mmproj 文件 %1$s？</string>
   <string name="s_289">已导入的 mmproj（点击选择，长按删除）</string>
   <string name="s_290">已切换 mmproj，重新加载模型后生效</string>
+  <string name="s_291">引用（添加到输入栏）</string>
+  <string name="s_292">已添加到输入栏</string>
+  <string name="s_293">图片</string>
 </resources>

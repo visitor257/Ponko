@@ -155,6 +155,13 @@ def main():
     except Exception as e:
         print("检查已有 release 出错（忽略）:", e)
 
+    # 同名 tag 已存在时 GitHub 会沿用旧 tag（不会移到新的 target_commitish），先删掉
+    try:
+        req(api + "/git/refs/tags/" + TAG, method="DELETE").read()
+        print("删除已存在的 tag:", TAG)
+    except Exception as e:
+        print("删除 tag（不存在则忽略）:", e)
+
     payload = json.dumps({
         "tag_name": TAG,
         "target_commitish": _head_sha(),
