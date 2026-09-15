@@ -356,4 +356,5 @@
   <string name="s_291">引用（添加到输入栏）</string>
   <string name="s_292">已添加到输入栏</string>
   <string name="s_293">图片</string>
+  <string name="s_294">安卓 9 及以下需要存储权限，无法保存到相册</string>
 </resources>
