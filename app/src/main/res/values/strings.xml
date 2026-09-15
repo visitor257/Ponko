@@ -141,8 +141,8 @@
 <string name="s_138">Clear history</string>
 <string name="s_139">Clear the current chat?</string>
 <string name="s_140">Source code: MIT License\nArtwork (app icon, character art, original drawing): © the author, all rights reserved, not covered by MIT.\nThird-party components (each © its authors): LiteRT-LM (Apache-2.0), llama.cpp (MIT), stable-diffusion.cpp (MIT), ggml (MIT), Markwon (Apache-2.0), ONNX Runtime (MIT), commonmark-java (BSD-2-Clause), Jackson/Gson (Apache-2.0), SLF4J (MIT), Kotlin/AndroidX (Apache-2.0). The sources of stable-diffusion.cpp and ggml are distributed with this project under app/src/main/cpp/; ONNX Runtime bundles extra third-party components (see licenses/onnxruntime-ThirdPartyNotices.txt); the native runtimes also statically link XNNPACK, protobuf, re2, cpuinfo, zlib and more. See the repository NOTICE and the licenses/ directory for the full list and licenses.</string>
-<string name="s_141">Tap the image to save it to your gallery</string>
-<string name="s_142">Version 1.3.0</string>
+<string name="s_141">Tap to enlarge, long-press to save to your gallery</string>
+<string name="s_142">Version 1.3.1</string>
 <string name="s_143">Generating (tap ■ to interrupt)…</string>
 <string name="s_144">Generating, please wait</string>
 <string name="s_145">Generation error</string>
@@ -332,4 +332,25 @@
   <string name="s_267">Tagger model imported</string>
   <string name="s_268">Tag list imported</string>
   <string name="s_269">Imported — tap "Load tagger model"</string>
+  <string name="s_270">Take photo</string>
+  <string name="s_271">Gallery</string>
+  <string name="s_272">This model does not support image input. Use a multimodal .litertlm model, or pick a matching mmproj file for a vision gguf model.</string>
+  <string name="s_273">Load a model first to send images</string>
+  <string name="s_274">No camera app available</string>
+  <string name="s_275">Could not read the image</string>
+  <string name="s_276">Image input is only supported by .litertlm multimodal models</string>
+  <string name="s_277">Could not create the photo file</string>
+  <string name="s_278">Photo</string>
+<string name="s_279">Up to 4 images per message</string>
+<string name="s_280">Vision projector (mmproj)</string>
+<string name="s_281">A multimodal gguf model needs its matching mmproj file (usually named mmproj-*.gguf). Reload the model after selecting it.</string>
+<string name="s_282">Select mmproj file</string>
+<string name="s_283">No mmproj selected (text-only gguf is unaffected)</string>
+<string name="s_284">mmproj selected: %1$s</string>
+<string name="s_285">That is not an mmproj file (needs .gguf)</string>
+<string name="s_286">mmproj copied: %1$s</string>
+<string name="s_287">No mmproj (text-only)</string>
+<string name="s_288">Delete this mmproj file %1$s?</string>
+<string name="s_289">Imported mmproj (tap to select, long-press to delete)</string>
+<string name="s_290">mmproj switched — reload the model to apply</string>
 </resources>

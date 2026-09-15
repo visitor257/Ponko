@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
@@ -15,6 +16,8 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.AccelerateInterpolator
+import android.view.animation.DecelerateInterpolator
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
@@ -27,7 +30,9 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.PopupWindow
 import android.widget.ProgressBar
+import android.widget.HorizontalScrollView
 import android.widget.ScrollView
 import android.widget.Spinner
 import android.widget.ArrayAdapter
@@ -36,7 +41,9 @@ import android.widget.Toast
 import androidx.viewpager.widget.PagerAdapter
 import androidx.viewpager.widget.ViewPager
 import com.google.ai.edge.litertlm.Backend
+import com.google.ai.edge.litertlm.Capabilities
 import com.google.ai.edge.litertlm.Content
+import com.google.ai.edge.litertlm.Contents
 import com.litertchat.app.draw.DrawPage
 import com.litertchat.app.draw.GgufProbe
 import com.google.ai.edge.litertlm.Conversation
@@ -51,6 +58,8 @@ import net.ladenthin.llama.LlamaIterator
 import net.ladenthin.llama.LlamaModel
 import net.ladenthin.llama.parameters.InferenceParameters
 import net.ladenthin.llama.parameters.ModelParameters
+import net.ladenthin.llama.value.ChatMessage
+import net.ladenthin.llama.value.ContentPart
 import net.ladenthin.llama.value.Pair
 import io.noties.markwon.Markwon
 import io.noties.markwon.ext.strikethrough.StrikethroughPlugin
@@ -66,6 +75,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.io.File
 
 /**
@@ -83,6 +93,10 @@ class MainActivity : Activity() {
     private const val REQ_PICK_LORA = 1003
     private const val REQ_TAGGER_ONNX = 1004
     private const val REQ_TAGGER_CSV = 1005
+        private const val REQ_TAKE_PHOTO = 1006
+        private const val REQ_PICK_CHAT_IMAGE = 1007
+        private const val MAX_ATTACH = 4
+        private const val REQ_PICK_MMPROJ = 1008
     }
 
     // ---- palette ----
@@ -104,7 +118,22 @@ class MainActivity : Activity() {
     private var engine: Engine? = null
     private var conversation: Conversation? = null
     private var modelPath: String? = null
+    /** 多模态 gguf 需要的视觉投影文件（mmproj），在加载模型时挂上；null = 纯文字。 */
+    private var mmprojPath: String? = null
+    private var mmprojStatusTv: TextView? = null
+    private var mmprojContainer: LinearLayout? = null
     private var busy = false
+
+    /** 当前加载的 .litertlm 模型是否支持图像输入（读模型自带 Capabilities，失败按不支持处理）。 */
+    private var visionOk = false
+    /** 输入栏「＋」附件按钮；待发送图片的预览条与缩略图 */
+    private lateinit var attachButton: TextView
+    private lateinit var attachPreviewStrip: HorizontalScrollView
+    private lateinit var attachPreviewBox: LinearLayout
+    /** 已选好、等待随下一条消息发出的图片（原图 + 预压好的 JPEG 字节），最多 MAX_ATTACH 张 */
+    private val pendingImages = ArrayList<kotlin.Pair<Bitmap, ByteArray>>()
+    /** 拍照时预创建的 MediaStore URI */
+    private var pendingCameraUri: Uri? = null
 
     /** 当前处于绘图模式：对话页的输入会被当作正面提示词去生成图片 */
     /** 让语言模型「调用」绘图模型时使用的命令标记。 */
@@ -177,6 +206,8 @@ class MainActivity : Activity() {
         var thought: String = "",
         /** 绘图轮次：生成图在本地的文件名（filesDir/chatimg/ 下），非绘图轮为 null */
         var image: String? = null,
+        /** 用户这一轮发出的图片文件名（filesDir/chatimg/ 下），无图片为 null */
+        var userImage: String? = null,
     )
 
     /** 一个独立对话，拥有自己的完整历史。 */
@@ -281,6 +312,8 @@ class MainActivity : Activity() {
     private var drawerOpen = false
     private val drawerWidthDp = 280
     private var scrollPending = false
+    /** 程序自身贴底滚动期间为 true，避免被当成「用户划走」而关掉跟随。 */
+    private var programmaticScroll = false
     /** Auto-scroll only while locked to the bottom; scrolling up unlocks it. */
     private var autoFollow = true
 
@@ -467,7 +500,10 @@ class MainActivity : Activity() {
         // 滚动规则：只看「距离底部的距离」，不看滚动方向（方向判在可选中文本上是不可靠的）。
         //   距底在阈值（约 15 行正文）以内 → 视为已在底部：隐藏「回到底部」按钮，并恢复自动跟随；
         //   超过阈值 → 停止自动跟随，显示「回到底部」按钮。
-        scrollView.setOnScrollChangeListener { _, _, _, _, _ -> refreshFollowState() }
+        scrollView.setOnScrollChangeListener { _, _, _, _, _ ->
+            // 自己主动贴底的滚动不算「用户往上划」
+            if (!programmaticScroll) refreshFollowState()
+        }
         return chatWrap
     }
 
@@ -586,6 +622,25 @@ class MainActivity : Activity() {
             visibility = View.GONE
         }
         chatCard.addView(savedContainer, matchWrap().apply { topMargin = dp(6) })
+
+        // ---- gguf 多模态：视觉投影文件（mmproj）----
+        chatCard.addView(divider(), matchWrap().apply { topMargin = dp(10) })
+        chatCard.addView(subTitle(getString(R.string.s_280)), matchWrap().apply { topMargin = dp(10) })
+        chatCard.addView(hintText(getString(R.string.s_281)), matchWrap().apply { topMargin = dp(4) })
+        mmprojStatusTv = TextView(this).apply {
+            text = getString(R.string.s_283)
+            textSize = 12f
+            setTextColor(C_SUBTEXT)
+        }
+        chatCard.addView(mmprojStatusTv, matchWrap().apply { topMargin = dp(6) })
+        mmprojContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+        }
+        chatCard.addView(mmprojContainer, matchWrap().apply { topMargin = dp(6) })
+        chatCard.addView(actionButton(getString(R.string.s_282)) { pickMmprojFile() },
+            matchWrap().apply { topMargin = dp(8) })
+        refreshMmprojUi()
 
         loadButton = actionButton(getString(R.string.s_060)) { toggleLoad() }
         chatCard.addView(loadButton, matchWrap().apply { topMargin = dp(8) })
@@ -804,7 +859,7 @@ class MainActivity : Activity() {
         if (::modelsPager.isInitialized) modelsPager.setCurrentItem(index, true)
         highlightModelsTabs(index)
         when (index) {
-            0 -> refreshSavedModels()
+            0 -> { refreshSavedModels(); refreshMmprojUi() }
             1 -> { refreshDrawModels(); refreshLoraUi() }
             2 -> refreshTaggerUi()
         }
@@ -1121,6 +1176,19 @@ class MainActivity : Activity() {
         }
         bar.addView(thinkCheck, matchWrap())
 
+        // 待发送图片预览条（横向可滚动，每张一个小缩略图 + 右上角 ×）
+        attachPreviewStrip = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            visibility = View.GONE
+            setPadding(0, dp(2), 0, dp(6))
+        }
+        attachPreviewBox = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        attachPreviewStrip.addView(attachPreviewBox)
+        bar.addView(attachPreviewStrip, matchWrap())
+
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.BOTTOM
@@ -1142,6 +1210,17 @@ class MainActivity : Activity() {
         }
         row.addView(inputEdit, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
 
+        attachButton = TextView(this).apply {
+            text = "＋"
+            textSize = 20f
+            setTextColor(C_PRIMARY)
+            gravity = Gravity.CENTER
+            background = rounded(C_PRIMARY_SOFT, 22)
+            isClickable = true
+            setOnClickListener { onAttachClick() }
+        }
+        row.addView(attachButton, LinearLayout.LayoutParams(dp(44), dp(44)).apply { leftMargin = dp(8) })
+
         sendButton = TextView(this).apply {
             text = "↑"
             textSize = 19f
@@ -1154,6 +1233,208 @@ class MainActivity : Activity() {
         row.addView(sendButton, LinearLayout.LayoutParams(dp(44), dp(44)).apply { leftMargin = dp(8) })
         bar.addView(row, matchWrap())
         return bar
+    }
+
+    // ================= 聊天发图（.litertlm 多模态） =================
+
+    /** 探测 .litertlm 模型是否支持图像输入；任何异常都按「不支持」处理。 */
+    private fun probeVision(path: String): Boolean = try {
+        Capabilities(path).use { it.inputModalities().vision }
+    } catch (_: Throwable) {
+        false
+    }
+
+    private fun onAttachClick() {
+        // 生成过程中也允许先把图备好（发送仍会被 busy 拦住）
+        if (engine == null && llamaModel == null) { toast(getString(R.string.s_273)); return }
+        if (!visionOk) { toast(getString(R.string.s_272)); return }
+        if (pendingImages.size >= MAX_ATTACH) { toast(getString(R.string.s_279)); return }
+        showAttachDrawer()
+    }
+
+    /** 「＋」抽屉：贴着输入栏向上展开，可选拍照 / 图库。 */
+    private fun showAttachDrawer() {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = rounded(Color.WHITE, 14)
+            elevation = dp(8).toFloat()
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+        }
+        // 外面再套一层留 8dp 余量：给阴影和缩放动画留空间，避免被弹窗边界裁掉
+        val outer = FrameLayout(this).apply {
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+            addView(box, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT
+            ))
+        }
+
+        fun mkItem(icon: String, label: String, onClick: () -> Unit): TextView =
+            TextView(this).apply {
+                text = "$icon  $label"
+                textSize = 14.5f
+                setTextColor(C_TEXT)
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(16), dp(12), dp(16), dp(12))
+                isClickable = true
+                setOnClickListener { onClick() }
+            }
+
+        val popup = PopupWindow(outer, dp(150) + dp(16), ViewGroup.LayoutParams.WRAP_CONTENT, true).apply {
+            isOutsideTouchable = true
+            // 透明背景：真正的外观画在 box 上，这样手动缩放动画才不会被窗口背景挡住
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        }
+
+        // 收起：先播完动画再 dismiss
+        fun close(action: () -> Unit) {
+            box.animate().alpha(0f).scaleY(0.75f)
+                .setDuration(120)
+                .setInterpolator(AccelerateInterpolator())
+                .withEndAction {
+                    popup.dismiss()
+                    action()
+                }
+                .start()
+        }
+
+        box.addView(mkItem("📷", getString(R.string.s_270)) { close { takePhoto() } }, matchWrap())
+        box.addView(mkItem("🖼", getString(R.string.s_271)) { close { pickChatImage() } }, matchWrap())
+
+        // 先手动量一次，在 show 之前就把动画初值设好（否则会闪一帧全尺寸）
+        box.measure(
+            View.MeasureSpec.makeMeasureSpec(dp(150), View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+        )
+        box.pivotY = box.measuredHeight.toFloat()
+        box.alpha = 0f
+        box.scaleY = 0.72f
+
+        // 向上展开：弹窗底边贴在输入栏上沿
+        val loc = IntArray(2)
+        inputBar.getLocationOnScreen(loc)
+        val screenH = resources.displayMetrics.heightPixels
+        popup.showAtLocation(
+            inputBar, Gravity.BOTTOM or Gravity.END, dp(10) - dp(8), screenH - loc[1] + dp(6)
+        )
+
+        // 入场动画：从底部往上长出来 + 淡入（不依赖 PopupWindow 的系统窗口动画）
+        box.animate().alpha(1f).scaleY(1f)
+            .setDuration(200)
+            .setInterpolator(DecelerateInterpolator())
+            .start()
+    }
+
+    private fun takePhoto() {
+        val uri = try {
+            contentResolver.insert(
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                ContentValues().apply {
+                    put(MediaStore.Images.Media.DISPLAY_NAME, "ponko_${System.currentTimeMillis()}.jpg")
+                    put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                }
+            )
+        } catch (_: Throwable) {
+            null
+        }
+        if (uri == null) { toast(getString(R.string.s_277)); return }
+        pendingCameraUri = uri
+        try {
+            startActivityForResult(
+                Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
+                    putExtra(MediaStore.EXTRA_OUTPUT, uri)
+                },
+                REQ_TAKE_PHOTO
+            )
+        } catch (_: Throwable) {
+            toast(getString(R.string.s_274))
+        }
+    }
+
+    private fun pickChatImage() {
+        startActivityForResult(
+            Intent(Intent.ACTION_GET_CONTENT).apply {
+                type = "image/*"
+                addCategory(Intent.CATEGORY_OPENABLE)
+                putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+            },
+            REQ_PICK_CHAT_IMAGE
+        )
+    }
+
+    /** 解码图片并按最长边下采样，避免大图直接吃内存。 */
+    private fun decodeChatImage(uri: Uri): Bitmap? = try {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+        val maxDim = maxOf(bounds.outWidth, bounds.outHeight)
+        var sample = 1
+        while (maxDim / sample > 1280) sample *= 2
+        val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+        contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
+    } catch (_: Throwable) {
+        null
+    }
+
+    private fun addPendingImage(bmp: Bitmap, jpeg: ByteArray) {
+        if (pendingImages.size >= MAX_ATTACH) {
+            toast(getString(R.string.s_279))
+            return
+        }
+        pendingImages.add(kotlin.Pair(bmp, jpeg))
+        rebuildAttachPreview()
+    }
+
+    private fun removePendingImage(index: Int) {
+        if (index in pendingImages.indices) pendingImages.removeAt(index)
+        rebuildAttachPreview()
+    }
+
+    private fun clearPendingImages() {
+        pendingImages.clear()
+        rebuildAttachPreview()
+    }
+
+    /** 重建预览条：横向一排缩略图，每张右上角一个 × 撤掉。 */
+    private fun rebuildAttachPreview() {
+        attachPreviewBox.removeAllViews()
+        for (i in pendingImages.indices) {
+            val chip = FrameLayout(this)
+            chip.addView(ImageView(this).apply {
+                setImageBitmap(pendingImages[i].first)
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                background = rounded(Color.rgb(243, 245, 249), 10)
+            }, FrameLayout.LayoutParams(dp(56), dp(56)))
+            chip.addView(TextView(this).apply {
+                text = "×"
+                textSize = 13f
+                setTextColor(Color.WHITE)
+                gravity = Gravity.CENTER
+                background = rounded(C_ERR, 10)
+                isClickable = true
+                setOnClickListener { removePendingImage(i) }
+            }, FrameLayout.LayoutParams(dp(20), dp(20)).apply {
+                gravity = Gravity.TOP or Gravity.END
+            })
+            attachPreviewBox.addView(chip, LinearLayout.LayoutParams(dp(60), dp(56)).apply {
+                rightMargin = dp(6)
+            })
+        }
+        attachPreviewStrip.visibility = if (pendingImages.isEmpty()) View.GONE else View.VISIBLE
+    }
+
+    /** Bitmap → JPEG 字节（作为 Content.ImageBytes 送给 LiteRT-LM）。 */
+    private fun bitmapToJpeg(bmp: Bitmap, quality: Int = 88): ByteArray {
+        val out = ByteArrayOutputStream()
+        bmp.compress(Bitmap.CompressFormat.JPEG, quality, out)
+        return out.toByteArray()
+    }
+
+    /** 用户发的图片也落盘（JPEG），随会话一起恢复。 */
+    private fun writeChatJpeg(bmp: Bitmap, name: String): Boolean = try {
+        val dir = File(filesDir, "chatimg").apply { mkdirs() }
+        File(dir, name).outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 88, it) }
+        true
+    } catch (_: Throwable) {
+        false
     }
 
     // ================= small view factories =================
@@ -1212,6 +1493,15 @@ class MainActivity : Activity() {
         startActivityForResult(i, REQ_PICK_MODEL)
     }
 
+    /** gguf 多模态：选一个 mmproj（视觉投影）文件，.gguf */
+    private fun pickMmprojFile() {
+        val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+        }
+        startActivityForResult(i, REQ_PICK_MMPROJ)
+    }
+
     /** 绘图模型：选一个 .gguf 文件（stable-diffusion.cpp 格式，单文件） */
     private fun pickDrawModelFile() {
         val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
@@ -1253,6 +1543,41 @@ class MainActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == REQ_PICK_MODEL && resultCode == RESULT_OK) {
             data?.data?.let { copyModelToPrivate(it) }
+        }
+        if (requestCode == REQ_PICK_MMPROJ && resultCode == RESULT_OK) {
+            data?.data?.let { copyMmprojToPrivate(it) }
+        }
+        if (requestCode == REQ_PICK_CHAT_IMAGE && resultCode == RESULT_OK) {
+            val uris = ArrayList<Uri>()
+            val clip = data?.clipData
+            if (clip != null) {
+                for (i in 0 until clip.itemCount) clip.getItemAt(i).uri?.let { uris.add(it) }
+            } else {
+                data?.data?.let { uris.add(it) }
+            }
+            if (uris.isEmpty()) return
+            scope.launch {
+                var added = 0
+                for (u in uris) {
+                    if (pendingImages.size >= MAX_ATTACH) { toast(getString(R.string.s_279)); break }
+                    val bmp = withContext(Dispatchers.IO) { decodeChatImage(u) } ?: continue
+                    val jpeg = withContext(Dispatchers.IO) { bitmapToJpeg(bmp) }
+                    addPendingImage(bmp, jpeg)
+                    added++
+                }
+                if (added == 0 && pendingImages.isEmpty()) toast(getString(R.string.s_275))
+            }
+        }
+        if (requestCode == REQ_TAKE_PHOTO) {
+            val uri = pendingCameraUri
+            pendingCameraUri = null
+            if (resultCode != RESULT_OK || uri == null) return
+            scope.launch {
+                val bmp = withContext(Dispatchers.IO) { decodeChatImage(uri) }
+                if (bmp == null) { toast(getString(R.string.s_275)); return@launch }
+                val jpeg = withContext(Dispatchers.IO) { bitmapToJpeg(bmp) }
+                addPendingImage(bmp, jpeg)
+            }
         }
         if (requestCode == REQ_PICK_DRAW_MODEL && resultCode == RESULT_OK) {
             val uri = data?.data ?: return
@@ -1412,6 +1737,124 @@ class MainActivity : Activity() {
                 withContext(Dispatchers.Main) { progressBar.visibility = View.GONE; setBusy(false) }
             }
         }
+    }
+
+    /** mmproj 同样只能读真实路径，先复制到私有目录。 */
+    private fun copyMmprojToPrivate(uri: Uri) {
+        val name = queryDisplayName(uri) ?: "mmproj_${System.currentTimeMillis()}.gguf"
+        if (!name.endsWith(".gguf", ignoreCase = true)) {
+            toast(getString(R.string.s_285))
+            return
+        }
+        setBusy(true)
+        setStatus(getString(R.string.s_130), C_WARN)
+        progressBar.visibility = View.VISIBLE
+        progressBar.progress = 0
+        scope.launch(Dispatchers.IO) {
+            try {
+                val dir = File(filesDir, "mmproj").apply { mkdirs() }
+                val dest = File(dir, name)
+                if (!dest.exists()) {
+                    val input = contentResolver.openInputStream(uri)
+                        ?: throw IllegalStateException(getString(R.string.s_111))
+                    val total = contentResolver.openAssetFileDescriptor(uri, "r")?.length ?: -1L
+                    input.use { ins ->
+                        dest.outputStream().use { outs ->
+                            val buf = ByteArray(1 shl 16)
+                            var copied = 0L
+                            while (true) {
+                                val n = ins.read(buf)
+                                if (n < 0) break
+                                outs.write(buf, 0, n)
+                                copied += n
+                                if (total > 0) {
+                                    val pct = (copied * 100 / total).toInt()
+                                    withContext(Dispatchers.Main) { progressBar.progress = pct }
+                                }
+                            }
+                        }
+                    }
+                }
+                withContext(Dispatchers.Main) {
+                    mmprojPath = dest.absolutePath
+                    refreshMmprojUi()
+                    setStatus(getString(R.string.s_286, (dest.name)), C_OK)
+                }
+            } catch (e: Throwable) {
+                withContext(Dispatchers.Main) {
+                    setStatus(getString(R.string.s_072), C_ERR)
+                    toast(getString(R.string.v_004, (e.message)))
+                }
+            } finally {
+                withContext(Dispatchers.Main) { progressBar.visibility = View.GONE; setBusy(false) }
+            }
+        }
+    }
+
+    /** 刷新 mmproj：顶部状态文案 + 已导入 mmproj 的可选列表（含「不使用」）。 */
+    private fun refreshMmprojUi() {
+        val f = mmprojPath?.let { File(it) }
+        mmprojStatusTv?.text = if (f != null && f.isFile) {
+            getString(R.string.s_284, (f.name))
+        } else {
+            getString(R.string.s_283)
+        }
+        val box = mmprojContainer ?: return
+        box.removeAllViews()
+        val dir = File(filesDir, "mmproj")
+        val files = dir.listFiles { x -> x.isFile && x.name.endsWith(".gguf", ignoreCase = true) }
+            ?.sortedByDescending { it.lastModified() } ?: emptyList()
+        if (files.isEmpty()) {
+            box.visibility = View.GONE
+            return
+        }
+        box.visibility = View.VISIBLE
+        box.addView(TextView(this).apply {
+            text = getString(R.string.s_289)
+            textSize = 12f
+            setTextColor(C_SUBTEXT)
+        }, matchWrap())
+        // 「不使用」项：让用户随时退回纯文字 gguf
+        box.addView(mmprojChip(getString(R.string.s_287), mmprojPath == null, null))
+        for (x in files) {
+            box.addView(mmprojChip(x.name, x.absolutePath == mmprojPath, x))
+        }
+    }
+
+    /** 一个 mmproj 选项：点击切换选择，长按删除（「不使用」项没有文件，不能删）。 */
+    private fun mmprojChip(label: String, selected: Boolean, file: File?): TextView {
+        val chip = TextView(this).apply {
+            text = label
+            textSize = 12.5f
+            setTextColor(if (selected) C_PRIMARY else C_TEXT)
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            background = rounded(if (selected) C_PRIMARY_SOFT else Color.rgb(247, 248, 251), 10,
+                strokeDp = if (selected) 1 else 0, strokeColor = C_PRIMARY)
+            isClickable = true
+        }
+        chip.setOnClickListener {
+            val want = file?.absolutePath
+            if (want == mmprojPath) return@setOnClickListener
+            mmprojPath = want
+            refreshMmprojUi()
+            // mmproj 是加载模型时挂上去的，已经加载的模型要重新加载才生效
+            if (llamaModel != null) toast(getString(R.string.s_290))
+        }
+        if (file != null) chip.setOnLongClickListener { confirmDeleteMmproj(file); true }
+        return chip
+    }
+
+    /** 删除一个已导入的 mmproj；正在用的会同时取消选择。 */
+    private fun confirmDeleteMmproj(f: File) {
+        AlertDialog.Builder(this)
+            .setMessage(getString(R.string.s_288, (f.name)))
+            .setPositiveButton(getString(R.string.s_258)) { _, _ ->
+                runCatching { f.delete() }
+                if (mmprojPath == f.absolutePath) mmprojPath = null
+                refreshMmprojUi()
+            }
+            .setNegativeButton(getString(R.string.s_066), null)
+            .show()
     }
 
     // ================= saved models =================
@@ -1756,9 +2199,14 @@ class MainActivity : Activity() {
                         .setParallel(1)
                         .setKeep(64)
                         .setGpuLayers(0)
+                    // 多模态 gguf：挂上 mmproj（视觉投影）后模型才有图像输入能力
+                    val mp = mmprojPath?.let { File(it) }?.takeIf { it.isFile }
+                    if (mp != null) params.setMmproj(mp.absolutePath)
                     val m = LlamaModel(params)
+                    val vok = try { m.supportsVision() } catch (_: Throwable) { false }
                     withContext(Dispatchers.Main) {
                         llamaModel = m
+                        visionOk = vok
                         engine = null
                         conversation = null
                         convThinking = null
@@ -1767,9 +2215,16 @@ class MainActivity : Activity() {
                     }
                 } else {
                     val backend: Backend = if (backendName == "GPU") Backend.GPU() else Backend.CPU()
+                    // 先读模型自带的 Capabilities：是否为多模态（图文）模型
+                    val vok = probeVision(path)
+                    // 坑：EngineConfig.visionBackend 默认是 null，运行时就不会创建 vision executor，
+                    // 发图时直接报 "Vision executor should not be null, please TryLoadingVisionExecutor() first."；
+                    // 所以探测到多模态时必须显式传入 visionBackend（并同时放开 maxNumImages）。
                     val cfg = EngineConfig(
                         modelPath = path,
                         backend = backend,
+                        visionBackend = if (vok) backend else null,
+                        maxNumImages = if (vok) MAX_ATTACH else null,
                         cacheDir = cacheDir.absolutePath,
                     )
                     val eng = Engine(cfg)
@@ -1780,6 +2235,7 @@ class MainActivity : Activity() {
                         llamaModel = null
                         conversation = conv
                         convThinking = thinking
+                        visionOk = vok
                         convDrawCapable = canDrawFromChat
                         setStatus(getString(R.string.v_015, (backendName)), C_OK)
                     }
@@ -1816,6 +2272,7 @@ class MainActivity : Activity() {
         llamaModel = null
         conversation = null
         convThinking = null
+        visionOk = false
         drawPage?.llmLoaded = false
         loadButton.text = getString(R.string.s_060)
         loadButton.background = rounded(C_PRIMARY, 12)
@@ -1967,6 +2424,48 @@ class MainActivity : Activity() {
         return p
     }
 
+    /**
+     * gguf 多模态推理参数：最后一条 user 消息带图片（ContentPart.imageBytes）。
+     * 只有本回合真的要发图才走这里；纯文字路径保持不变，避免影响 KV 前缀复用。
+     */
+    private fun buildMultimodalParams(
+        s: ChatSession,
+        images: List<ByteArray>,
+        maxTurns: Int = 24,
+    ): InferenceParameters {
+        val turns = s.turns.takeLast(maxTurns)
+        val msgs = mutableListOf<ChatMessage>()
+        for ((ti, t) in turns.withIndex()) {
+            if (ti == turns.size - 1) {
+                val parts = ArrayList<ContentPart>()
+                val body = if (canDrawFromChat) t.user + "\n\n" + drawToolPrompt else t.user
+                if (body.isNotEmpty()) parts.add(ContentPart.text(body))
+                images.forEach { parts.add(ContentPart.imageBytes(it, "image/jpeg")) }
+                msgs += ChatMessage.userMultimodal(*parts.toTypedArray())
+            } else {
+                msgs += ChatMessage("user", t.user)
+            }
+            if (t.answer.isNotEmpty()) msgs += ChatMessage("assistant", t.answer)
+        }
+        var p = InferenceParameters.empty()
+            .withMessages(msgs)
+            .withCachePrompt(true)
+            .withSlotId(0)
+            .withNPredict(2048)
+            .withTemperature(0.7f)
+            .withTopK(40)
+            .withTopP(0.9f)
+            .withRepeatPenalty(1.1f)
+            .withSeed((System.nanoTime() and 0x7FFFFFFF).toInt())
+        p = if (thinkCheck.isChecked) {
+            p.withReasoningBudgetTokens(-1)
+        } else {
+            p.withReasoningBudgetTokens(0)
+                .withChatTemplateKwargs(mapOf("enable_thinking" to "false"))
+        }
+        return p
+    }
+
     /** 用某个对话的文本历史构建 LiteRT 会话配置。 */
     private fun configFor(s: ChatSession, thinking: Boolean): ConversationConfig {
         val msgs = mutableListOf<Message>()
@@ -2077,7 +2576,12 @@ class MainActivity : Activity() {
     }
 
     private fun renderTurn(t: QaTurn) {
-        addUserBubble(t.user)
+        val names = t.userImage?.split("|")?.filter { it.isNotEmpty() } ?: emptyList()
+        if (names.isEmpty()) {
+            addUserBubble(t.user)
+        } else {
+            addUserBubble(t.user, names.mapNotNull { readChatImage(it) })
+        }
         val ai = addAiArea { regenerate(t) }
         val imgName = t.image
         if (imgName != null) {
@@ -2114,7 +2618,7 @@ class MainActivity : Activity() {
                 for (t in s.turns) {
                     ts.put(
                         JSONObject().put("u", t.user).put("a", t.answer).put("th", t.thought)
-                            .put("img", t.image ?: "")
+                            .put("img", t.image ?: "").put("uimg", t.userImage ?: "")
                     )
                 }
                 o.put("turns", ts)
@@ -2146,7 +2650,8 @@ class MainActivity : Activity() {
                                 val t = ts.getJSONObject(j)
                                 s.turns += QaTurn(
                                     t.optString("u"), t.optString("a"), t.optString("th"),
-                                    t.optString("img").ifEmpty { null }
+                                    t.optString("img").ifEmpty { null },
+                                    t.optString("uimg").ifEmpty { null }
                                 )
                             }
                         }
@@ -2252,6 +2757,23 @@ class MainActivity : Activity() {
     }
 
     /** 在 AI 气泡里插入图片；点图弹确认框再存相册（以前点一下就存，容易误触） */
+    /** 全屏查看：点图放大，点任意处关闭。 */
+    private fun showImageFullscreen(bmp: Bitmap) {
+        val iv = ImageView(this).apply {
+            setImageBitmap(bmp)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+        }
+        val wrap = FrameLayout(this).apply {
+            setBackgroundColor(Color.BLACK)
+            addView(iv, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        }
+        val dlg = android.app.Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
+        wrap.setOnClickListener { dlg.dismiss() }
+        dlg.setContentView(wrap)
+        dlg.show()
+    }
+
     private fun attachImageBubble(ai: AiArea, bmp: Bitmap, name: String) {
         val iv = ImageView(this).apply {
             setImageBitmap(bmp)
@@ -2259,12 +2781,14 @@ class MainActivity : Activity() {
             isClickable = true
             isFocusable = false
             setPadding(0, dp(6), 0, 0)
-            setOnClickListener {
+            setOnClickListener { showImageFullscreen(bmp) }
+            setOnLongClickListener {
                 AlertDialog.Builder(this@MainActivity)
                     .setMessage(getString(R.string.s_170))
                     .setPositiveButton(getString(R.string.s_044)) { _, _ -> saveImageToGallery(bmp, name) }
                     .setNegativeButton(getString(R.string.s_066), null)
                     .show()
+                true
             }
         }
         ai.root.addView(iv, matchWrap())
@@ -2309,7 +2833,15 @@ class MainActivity : Activity() {
 
     private fun doSend() {
         val text = inputEdit.text.toString().trim()
-        if (text.isEmpty()) return
+        val attachBmps = pendingImages.map { it.first }
+        val attachJpegs = pendingImages.map { it.second }
+        if (text.isEmpty() && attachJpegs.isEmpty()) return
+
+        // 带图发送：模型必须支持图像输入（.litertlm 多模态模型，或挂了 mmproj 的 gguf 模型）
+        if (attachJpegs.isNotEmpty()) {
+            if (engine == null && llamaModel == null) { toast(getString(R.string.s_273)); return }
+            if (!visionOk) { toast(getString(R.string.s_272)); return }
+        }
 
         // 绘图模式：把输入当作正面提示词，按绘图页的参数（除正面提示词外）生成
         val dpg = drawPage
@@ -2341,10 +2873,22 @@ class MainActivity : Activity() {
 
         val turn = QaTurn(text)
         current.turns += turn
-        if (current.title == getString(R.string.s_109)) current.title = text.take(18)
+        if (current.title == getString(R.string.s_109)) {
+            current.title = (if (text.isNotEmpty()) text else getString(R.string.s_278)).take(18)
+        }
+
+        if (attachJpegs.isNotEmpty()) {
+            val names = ArrayList<String>()
+            for ((idx, pair) in pendingImages.withIndex()) {
+                val nm = "u_${System.currentTimeMillis()}_$idx.jpg"
+                if (writeChatJpeg(pair.first, nm)) names.add(nm)
+            }
+            if (names.isNotEmpty()) turn.userImage = names.joinToString("|")
+            clearPendingImages()
+        }
 
         inputEdit.setText("")
-        addUserBubble(text)
+        addUserBubble(text, attachBmps)
         jumpToBottom()
         setBusy(true)
         setStoppingUi(true)
@@ -2387,7 +2931,12 @@ class MainActivity : Activity() {
                 if (isGgufRun && lm != null) {
                     // generateChat 会套用模型自带的对话模板；cache_prompt=true + 固定 slot
                     // 让 llama.cpp 复用上一轮已算好的 KV 前缀，长对话不再重复 prefill。
-                    val params = buildInferenceParams(current)
+                    // 本回合带图 → 走多模态消息（ContentPart）；否则沿用原来的纯文字路径
+                    val params = if (attachJpegs.isNotEmpty()) {
+                        buildMultimodalParams(current, attachJpegs)
+                    } else {
+                        buildInferenceParams(current)
+                    }
 
                     // GGUF 模型的思考内容混在正文流里（<|channel>thought…<channel|> 或 … ），
                     // 用状态机把两路分开：思考进折叠区，正文走 Markdown 渲染。
@@ -2461,8 +3010,17 @@ class MainActivity : Activity() {
                 }
                 // Flow emits INCREMENTAL chunks (not snapshots): accumulate.
                 // Reasoning text arrives on channels["thought"], answer text in contents.
+                // 有图 → Contents(文本 + 若干图像字节)；无图 → Contents(纯文本)。
+                val items = ArrayList<Content>()
+                if (text.isNotEmpty()) items.add(Content.Text(text))
+                attachJpegs.forEach { items.add(Content.ImageBytes(it)) }
+                val ask: Contents = if (items.size == 1 && items[0] is Content.Text) {
+                    Contents.of(text)
+                } else {
+                    Contents.of(items)
+                }
                 conv!!.sendMessageAsync(
-                    text,
+                    ask,
                     thinkingConfig = ThinkingConfig(
                         enableThinking = thinkCheck.isChecked,
                         thinkingTokenBudget = 2048,
@@ -2646,7 +3204,42 @@ class MainActivity : Activity() {
         return AiArea(wrap, thoughtBox, thoughtHeader, thoughtBody, answer, regenButton)
     }
 
-    private fun addUserBubble(text: String) {
+    private fun addUserBubble(text: String, images: List<Bitmap> = emptyList()) {
+        if (images.isNotEmpty()) {
+            val strip = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.END
+            }
+            val w = if (images.size == 1) dp(160) else dp(112)
+            for (b in images) {
+                strip.addView(ImageView(this).apply {
+                    setImageBitmap(b)
+                    adjustViewBounds = true
+                    scaleType = ImageView.ScaleType.FIT_CENTER
+                    isClickable = true
+                    setOnClickListener { showImageFullscreen(b) }
+                    setOnLongClickListener {
+                        AlertDialog.Builder(this@MainActivity)
+                            .setMessage(getString(R.string.s_170))
+                            .setPositiveButton(getString(R.string.s_044)) { _, _ ->
+                                saveImageToGallery(b, "ponko_${System.currentTimeMillis()}.png")
+                            }
+                            .setNegativeButton(getString(R.string.s_066), null)
+                            .show()
+                        true
+                    }
+                }, LinearLayout.LayoutParams(w, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                    leftMargin = dp(6)
+                })
+            }
+            chatContainer.addView(strip, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(8) })
+        }
+        if (text.isEmpty()) {
+            scrollToBottom()
+            return
+        }
         val tv = TextView(this).apply {
             this.text = text
             textSize = 15.5f
@@ -2686,16 +3279,30 @@ class MainActivity : Activity() {
         if (scrollPending) return
         scrollPending = true
         scrollView.post {
+            scrollPending = false
+            // 排队期间用户可能已经往上划了：再确认一次，别把他拽回去
+            if (!force && !autoFollow) {
+                refreshFollowState()
+                return@post
+            }
             // 滚动到底不应影响输入框焦点（用户可能正在打字）
             val hadFocus = inputEdit.hasFocus()
-            scrollView.fullScroll(View.FOCUS_DOWN)
-            scrollPending = false
-            refreshFollowState()
+            programmaticScroll = true
+            scrollView.getChildAt(0)?.let { scrollView.scrollTo(0, it.height) }
+            programmaticScroll = false
+            autoFollow = true
+            refreshJumpButton()
             if (hadFocus && !inputEdit.hasFocus()) inputEdit.requestFocus()
         }
     }
 
-    /** 「回到底部」判定阈值：正文 15 行的高度左右。 */
+    /**
+     * 自动跟随阈值：只有基本贴底（十几像素内）才继续自动跟随。
+     * 不能像以前那样用 15 行——用户往上划一点就被拽回底部，等于根本没法滚动。
+     */
+    private val followThresholdPx: Int by lazy { dp(12) }
+
+    /** 「回到底部」按钮的显示阈值：离底部超过 15 行左右才出现。 */
     private val jumpThresholdPx: Int by lazy {
         val line = (16f * resources.displayMetrics.scaledDensity * 1.4f).toInt() + dp(3)
         line * 15
@@ -2707,9 +3314,11 @@ class MainActivity : Activity() {
         return (child.height - (scrollView.scrollY + scrollView.height)).coerceAtLeast(0)
     }
 
-    /** 按「距底部距离」统一更新自动跟随状态与「回到底部」按钮。 */
+    /** 按「距底部距离」更新自动跟随状态与「回到底部」按钮。 */
     private fun refreshFollowState() {
-        autoFollow = distanceToBottom() <= jumpThresholdPx
+        // 用户往上划走后就停止自动跟随（读者优先），不再把他拽回底部；
+        // 只有他自己划回到贴底附近，才恢复跟随。
+        autoFollow = distanceToBottom() <= followThresholdPx
         refreshJumpButton()
     }
 

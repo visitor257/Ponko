@@ -9,4 +9,10 @@
         <item name="android:textColorPrimary">#FF1C202A</item>
         <item name="android:textColorHint">#FF9AA4B5</item>
     </style>
+
+    <!-- 「＋」抽屉：从输入栏向上展开 / 收回 -->
+    <style name="PonkoDrawerAnim">
+        <item name="android:windowEnterAnimation">@anim/pop_in</item>
+        <item name="android:windowExitAnimation">@anim/pop_out</item>
+    </style>
 </resources>
