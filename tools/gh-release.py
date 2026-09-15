@@ -134,11 +134,13 @@ def req(url, data=None, ctype=None, method=None, timeout=180):
 
 
 def _head_sha():
-    """返回本地 HEAD 的完整 sha，避免 GitHub 用远端 main 的旧 HEAD 打 tag。"""
-    import subprocess
-    r = subprocess.run('git rev-parse HEAD', cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                       capture_output=True, encoding="utf-8", errors="replace", shell=True)
-    return r.stdout.strip().splitlines()[0]
+    """取远端 main 的当前 HEAD。
+
+    注意：push-via-api.py 是通过 Git Data API 重建提交的，远端 sha 与本地并不相同，
+    本地 sha 在远端根本不存在，不能拿来当 target_commitish（tag 会建失败）。
+    """
+    r = req("https://api.github.com/repos/" + REPO + "/git/ref/heads/main")
+    return json.loads(r.read())["object"]["sha"]
 
 
 def main():
