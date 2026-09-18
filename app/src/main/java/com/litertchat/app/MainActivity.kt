@@ -102,6 +102,29 @@ class MainActivity : Activity() {
         private const val MAX_ATTACH = 4
         private const val REQ_PICK_MMPROJ = 1008
         private const val REQ_PERM_STORAGE = 1009
+        private const val REQ_PICK_FILE = 1010
+        /** 单条消息最多能带的文件数（本地模型上下文有限，文件比图片更吃 token） */
+        private const val MAX_FILES = 2
+        /** 超过这个字节数就不当文本文件读，避免把内存吃爆 */
+        private const val MAX_FILE_BYTES = 4 * 1024 * 1024
+
+        // ---- 对话模型参数（模型页 · 对话模型 里可调，这里只是内置默认值）----
+        private const val KEY_CHAT_CTX = "chatCtx"
+        private const val KEY_CHAT_MAXOUT = "chatMaxOut"
+        private const val KEY_CHAT_TEMP = "chatTemp"
+        private const val KEY_CHAT_TOPK = "chatTopK"
+        private const val KEY_CHAT_TOPP = "chatTopP"
+        private const val KEY_CHAT_REP = "chatRep"
+        private const val KEY_CHAT_BUDGET = "chatBudget"
+        private const val KEY_CHAT_SEED = "chatSeed"
+        private const val DEF_CHAT_CTX = 4096
+        private const val DEF_CHAT_MAXOUT = 2048
+        private const val DEF_CHAT_TEMP = 0.7f
+        private const val DEF_CHAT_TOPK = 40
+        private const val DEF_CHAT_TOPP = 0.9f
+        private const val DEF_CHAT_REP = 1.1f
+        private const val DEF_CHAT_BUDGET = 2048
+        private const val DEF_CHAT_SEED = -1
     }
 
     // ---- palette ----
@@ -127,6 +150,22 @@ class MainActivity : Activity() {
     private var mmprojPath: String? = null
     private var mmprojStatusTv: TextView? = null
     private var mmprojContainer: LinearLayout? = null
+
+    // ---- 对话参数（模型页 · 对话模型）----
+    private var chatParamsDirty = false
+    /** 回填参数到输入框时临时屏蔽 TextWatcher，免得多字段被互相覆盖 */
+    private var chatUiLoading = false
+    /** 当前真正加载进内存的模型路径（判断参数改动要不要重建会话） */
+    private var loadedModelPath: String? = null
+    private var chatParamsOwnerTv: TextView? = null
+    private var chatCtxEdit: EditText? = null
+    private var chatMaxOutEdit: EditText? = null
+    private var chatTempEdit: EditText? = null
+    private var chatTopKEdit: EditText? = null
+    private var chatTopPEdit: EditText? = null
+    private var chatRepEdit: EditText? = null
+    private var chatBudgetEdit: EditText? = null
+    private var chatSeedEdit: EditText? = null
     private var busy = false
 
     /** 当前加载的 .litertlm 模型是否支持图像输入（读模型自带 Capabilities，失败按不支持处理）。 */
@@ -137,6 +176,20 @@ class MainActivity : Activity() {
     private lateinit var attachPreviewBox: LinearLayout
     /** 已选好、等待随下一条消息发出的图片（原图 + 预压好的 JPEG 字节），最多 MAX_ATTACH 张 */
     private val pendingImages = ArrayList<kotlin.Pair<Bitmap, ByteArray>>()
+
+    /** 待发送的文本文件（已解析出文字），最多 MAX_FILES 个 */
+    private val pendingFiles = ArrayList<PendingFile>()
+
+    /** 用户选的文件：文件名 + 原始字节数 + 解析出的正文（可能已截断） */
+    private class PendingFile(
+        val name: String,
+        val bytes: Long,
+        var text: String,
+        var truncated: Boolean,
+    )
+
+    /** 文件读取结果：成功给 file，失败给 error（可直接显示的文案） */
+    private class FileRead(val file: PendingFile?, val error: String?)
     /** 拍照时预创建的 MediaStore URI */
     private var pendingCameraUri: Uri? = null
     /** 安卓 9 及以下等拿到存储权限后再执行的动作（仅这些机型用得到） */
@@ -215,7 +268,14 @@ class MainActivity : Activity() {
         var image: String? = null,
         /** 用户这一轮发出的图片文件名（filesDir/chatimg/ 下），无图片为 null */
         var userImage: String? = null,
-    )
+        /** 用户这一轮发出的文件名（| 分隔），无文件为 null */
+        var userFile: String? = null,
+    ) {
+        /** 本轮文件的正文块（含表头与结尾指令）：进本次推理、不进对话历史 */
+        var fileText: String? = null
+        /** 本轮文件的原始内容（JSON：文件名/字节数/正文/是否截断），用于「重新生成」还原附件 */
+        var fileStore: String? = null
+    }
 
     /** 一个独立对话，拥有自己的完整历史。 */
     private class ChatSession(var id: Long, var title: String) {
@@ -649,6 +709,7 @@ class MainActivity : Activity() {
             matchWrap().apply { topMargin = dp(8) })
         refreshMmprojUi()
 
+        // 加载按钮放在对话参数之上（参数按模型分别保存，先选/先加载模型更顺手）
         loadButton = actionButton(getString(R.string.s_060)) { toggleLoad() }
         chatCard.addView(loadButton, matchWrap().apply { topMargin = dp(8) })
 
@@ -659,6 +720,44 @@ class MainActivity : Activity() {
             progressTintList = ColorStateList.valueOf(C_PRIMARY)
         }
         chatCard.addView(progressBar, matchWrap().apply { topMargin = dp(8) })
+
+        // ---- 对话参数：上下文/采样等，模型页直接可调 ----
+        chatCard.addView(divider(), matchWrap().apply { topMargin = dp(12) })
+        chatCard.addView(subTitle(getString(R.string.s_303)), matchWrap().apply { topMargin = dp(10) })
+        chatCard.addView(hintText(getString(R.string.s_304)), matchWrap().apply { topMargin = dp(4) })
+        chatParamsOwnerTv = TextView(this).apply {
+            textSize = 11.5f
+            setTextColor(C_PRIMARY)
+        }
+        chatCard.addView(chatParamsOwnerTv, matchWrap().apply { topMargin = dp(4) })
+        chatCard.addView(
+            twoCols(
+                numField(getString(R.string.s_305), chatCtx().toString(), getString(R.string.s_313)) { chatCtxEdit = it },
+                numField(getString(R.string.s_306), chatMaxOut().toString(), getString(R.string.s_315)) { chatMaxOutEdit = it },
+            ),
+            matchWrap().apply { topMargin = dp(8) })
+        chatCard.addView(
+            twoCols(
+                numField(getString(R.string.s_307), chatTemp().toString(), "") { chatTempEdit = it },
+                numField(getString(R.string.s_308), chatTopK().toString(), "") { chatTopKEdit = it },
+            ),
+            matchWrap().apply { topMargin = dp(8) })
+        chatCard.addView(
+            twoCols(
+                numField(getString(R.string.s_309), chatTopP().toString(), "") { chatTopPEdit = it },
+                numField(getString(R.string.s_310), chatRep().toString(), getString(R.string.s_315)) { chatRepEdit = it },
+            ),
+            matchWrap().apply { topMargin = dp(8) })
+        chatCard.addView(
+            twoCols(
+                numField(getString(R.string.s_311), chatBudget().toString(), getString(R.string.s_316)) { chatBudgetEdit = it },
+                numField(getString(R.string.s_312), chatSeed().toString(), getString(R.string.s_314)) { chatSeedEdit = it },
+            ),
+            matchWrap().apply { topMargin = dp(8) })
+        chatCard.addView(smallButton(getString(R.string.s_249)) { resetChatParams() },
+            matchWrap().apply { topMargin = dp(8) })
+        // 建完界面后按当前选中的模型回填一次参数
+        loadChatParamsIntoUi()
 
         // ================= 绘图模型 =================
         val drawCard = sectionCard()
@@ -909,6 +1008,7 @@ class MainActivity : Activity() {
 
         card.addView(pageTitle(getString(R.string.s_048)))
         card.addView(hintText(getString(R.string.s_142)))
+        card.addView(hintText(getString(R.string.s_322, installedAt())))
         val portrait = ImageView(this).apply {
             setImageResource(R.drawable.about_portrait)
             adjustViewBounds = true
@@ -1252,10 +1352,9 @@ class MainActivity : Activity() {
     }
 
     private fun onAttachClick() {
-        // 生成过程中也允许先把图备好（发送仍会被 busy 拦住）
+        // 生成过程中也允许先把附件备好（发送仍会被 busy 拦住）
+        // 注意：这里只管「模型加载了没」——文本文件任何模型都能读，不该被「必须多模态」挡住
         if (engine == null && llamaModel == null) { toast(getString(R.string.s_273)); return }
-        if (!visionOk) { toast(getString(R.string.s_272)); return }
-        if (pendingImages.size >= MAX_ATTACH) { toast(getString(R.string.s_279)); return }
         showAttachDrawer()
     }
 
@@ -1306,6 +1405,7 @@ class MainActivity : Activity() {
 
         box.addView(mkItem("📷", getString(R.string.s_270)) { close { takePhoto() } }, matchWrap())
         box.addView(mkItem("🖼", getString(R.string.s_271)) { close { pickChatImage() } }, matchWrap())
+        box.addView(mkItem("📄", getString(R.string.s_295)) { close { pickChatFile() } }, matchWrap())
 
         // 先手动量一次，在 show 之前就把动画初值设好（否则会闪一帧全尺寸）
         box.measure(
@@ -1395,6 +1495,68 @@ class MainActivity : Activity() {
         )
     }
 
+    /** 选本地文件（文本类），支持多选；解析出的文字随下一条消息发给模型。 */
+    private fun pickChatFile() {
+        startActivityForResult(
+            Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "*/*"
+                putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+            },
+            REQ_PICK_FILE
+        )
+    }
+
+    /** 最多读 MAX_FILE_BYTES 字节；超了返回 null（不当文本文件处理）。 */
+    private fun readAllCapped(ins: java.io.InputStream): ByteArray? {
+        val buf = ByteArrayOutputStream()
+        val chunk = ByteArray(64 * 1024)
+        var total = 0
+        while (true) {
+            val n = ins.read(chunk)
+            if (n <= 0) break
+            total += n
+            if (total > MAX_FILE_BYTES) return null
+            buf.write(chunk, 0, n)
+        }
+        return buf.toByteArray()
+    }
+
+    /**
+     * 把一个文件读成文字：二进制文件直接拒；UTF-8 解不出来就按 GBK 再试（中文 txt 常见）；
+     * 超过 MAX_FILE_CHARS 就按行截断——本地模型只有 4096 上下文，整篇塞进去会把对话挤没。
+     */
+    private fun readTextFile(uri: Uri): FileRead {
+        val raw = try {
+            contentResolver.openInputStream(uri)?.use { ins -> readAllCapped(ins) }
+        } catch (_: Throwable) {
+            null
+        } ?: return FileRead(null, getString(R.string.s_296))
+        if (raw.isEmpty()) return FileRead(null, getString(R.string.s_296))
+        // PDF：先把话说清楚，别让用户以为 App 坏了
+        if (raw.size >= 4 && raw[0] == '%'.code.toByte() && raw[1] == 'P'.code.toByte() &&
+            raw[2] == 'D'.code.toByte() && raw[3] == 'F'.code.toByte()
+        ) {
+            return FileRead(null, getString(R.string.s_301))
+        }
+        // 前 4KB 里出现 NUL 就当成二进制（zip/apk/exe/图片都过不了这一关）
+        for (i in 0 until minOf(raw.size, 4096)) {
+            if (raw[i] == 0.toByte()) return FileRead(null, getString(R.string.s_296))
+        }
+        val text = try {
+            Charsets.UTF_8.newDecoder()
+                .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+                .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+                .decode(java.nio.ByteBuffer.wrap(raw)).toString()
+        } catch (_: Throwable) {
+            try { String(raw, charset("GBK")) } catch (_: Throwable) { return FileRead(null, getString(R.string.s_296)) }
+        }
+        val clean = text.replace("\u0000", "")
+        val body = fitTokens(clean, maxFileTokens())
+        val truncated = body.length < clean.length
+        return FileRead(PendingFile(queryDisplayName(uri) ?: "file.txt", raw.size.toLong(), body, truncated), null)
+    }
+
     /** 解码图片并按最长边下采样，避免大图直接吃内存。 */
     private fun decodeChatImage(uri: Uri): Bitmap? = try {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -1427,6 +1589,25 @@ class MainActivity : Activity() {
         rebuildAttachPreview()
     }
 
+    private fun addPendingFile(f: PendingFile) {
+        if (pendingFiles.size >= MAX_FILES) {
+            toast(getString(R.string.s_297))
+            return
+        }
+        pendingFiles.add(f)
+        rebuildAttachPreview()
+    }
+
+    private fun removePendingFile(index: Int) {
+        if (index in pendingFiles.indices) pendingFiles.removeAt(index)
+        rebuildAttachPreview()
+    }
+
+    private fun clearPendingFiles() {
+        pendingFiles.clear()
+        rebuildAttachPreview()
+    }
+
     /** 重建预览条：横向一排缩略图，每张右上角一个 × 撤掉。 */
     private fun rebuildAttachPreview() {
         attachPreviewBox.removeAllViews()
@@ -1452,7 +1633,37 @@ class MainActivity : Activity() {
                 rightMargin = dp(6)
             })
         }
-        attachPreviewStrip.visibility = if (pendingImages.isEmpty()) View.GONE else View.VISIBLE
+        // 文件 chip：文件名 + 字数（截断时标注），右上角 × 撤掉
+        for (i in pendingFiles.indices) {
+            val f = pendingFiles[i]
+            val chip = FrameLayout(this)
+            chip.addView(TextView(this).apply {
+                text = "📄 ${f.name}\n${f.text.length} ${getString(R.string.s_298)}" +
+                    if (f.truncated) " · ${getString(R.string.s_299)}" else ""
+                textSize = 11f
+                setTextColor(C_TEXT)
+                maxLines = 2
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                background = rounded(Color.rgb(243, 245, 249), 10)
+                setPadding(dp(8), dp(8), dp(8), dp(8))
+            }, FrameLayout.LayoutParams(dp(124), dp(56)))
+            chip.addView(TextView(this).apply {
+                text = "×"
+                textSize = 13f
+                setTextColor(Color.WHITE)
+                gravity = Gravity.CENTER
+                background = rounded(C_ERR, 10)
+                isClickable = true
+                setOnClickListener { removePendingFile(i) }
+            }, FrameLayout.LayoutParams(dp(20), dp(20)).apply {
+                gravity = Gravity.TOP or Gravity.END
+            })
+            attachPreviewBox.addView(chip, LinearLayout.LayoutParams(dp(128), dp(56)).apply {
+                rightMargin = dp(6)
+            })
+        }
+        attachPreviewStrip.visibility =
+            if (pendingImages.isEmpty() && pendingFiles.isEmpty()) View.GONE else View.VISIBLE
     }
 
     /** Bitmap → JPEG 字节（作为 Content.ImageBytes 送给 LiteRT-LM）。 */
@@ -1469,6 +1680,254 @@ class MainActivity : Activity() {
         true
     } catch (_: Throwable) {
         false
+    }
+
+    /**
+     * 把待发文件拼成一段文字，随本轮消息一起送给模型。
+     * 只发本轮、不进历史：本地模型 4096 上下文，文件留在历史里几轮就把对话挤没了。
+     */
+    private fun buildFileBlock(files: List<PendingFile>): String {
+        if (files.isEmpty()) return ""
+        val sb = StringBuilder()
+        for (f in files) {
+            sb.append("【文件：").append(f.name)
+            if (f.truncated) sb.append("（已截断，以下为前 ").append(f.text.length).append(" 字）")
+            sb.append("】\n")
+            sb.append(f.text.trim())
+            sb.append("\n【文件结束】\n")
+        }
+        sb.append(getString(R.string.s_300))
+        return sb.toString().trim()
+    }
+
+    /** 把待发文件的原始内容编码成 JSON 存进轮次，供「重新生成」还原附件 */
+    private fun encodeFiles(files: List<PendingFile>): String? {
+        if (files.isEmpty()) return null
+        return try {
+            val arr = JSONArray()
+            for (f in files) {
+                arr.put(
+                    JSONObject().put("n", f.name).put("b", f.bytes)
+                        .put("t", f.text).put("tr", f.truncated)
+                )
+            }
+            arr.toString()
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    /** 把轮次里存的文件还原到附件条，返回还原成功的个数 */
+    private fun restoreFiles(store: String?): Int {
+        if (store.isNullOrEmpty()) return 0
+        var n = 0
+        try {
+            val arr = JSONArray(store)
+            for (i in 0 until arr.length()) {
+                if (pendingFiles.size >= MAX_FILES) break
+                val o = arr.getJSONObject(i)
+                val body = o.optString("t")
+                if (body.isEmpty()) continue
+                pendingFiles.add(
+                    PendingFile(o.optString("n"), o.optLong("b"), body, o.optBoolean("tr"))
+                )
+                n++
+            }
+        } catch (_: Throwable) {
+        }
+        rebuildAttachPreview()
+        return n
+    }
+
+    /** 安装/更新时间（用来确认装的是哪一版） */
+    private fun installedAt(): String = try {
+        val pi = packageManager.getPackageInfo(packageName, 0)
+        java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
+            .format(java.util.Date(pi.lastUpdateTime))
+    } catch (_: Throwable) {
+        ""
+    }
+
+    /** 粗估 token 数：CJK/全角字符按 1，其余按 0.3。只用来做预算裁剪，不追求精确 */
+    private fun estTokens(s: String): Float {
+        var t = 0f
+        for (c in s) t += if (c.code in 0x1100..0xFFFF) 1f else 0.3f
+        return t
+    }
+
+    /** 把文本裁到估算 token 不超过 maxTokens（尽量切在行尾） */
+    private fun fitTokens(text: String, maxTokens: Int): String {
+        if (estTokens(text) <= maxTokens) return text
+        var acc = 0f
+        var cut = text.length
+        for (i in text.indices) {
+            acc += if (text[i].code in 0x1100..0xFFFF) 1f else 0.3f
+            if (acc > maxTokens) {
+                cut = i
+                break
+            }
+        }
+        var body = text.substring(0, cut)
+        val nl = body.lastIndexOf('\n')
+        if (nl > cut / 2) body = body.substring(0, nl)
+        return body
+    }
+
+    /**
+     * 估算 LiteRT 会话的输入 token：系统提示 + 历史 + 本轮要发的内容。
+     * 历史里之前发过的文件正文也还留在引擎的上下文里，所以一并算上。
+     */
+    private fun estimateConversationTokens(s: ChatSession, extra: String, dropLast: Boolean): Float {
+        var t = 0f
+        if (canDrawFromChat) t += estTokens(drawToolPrompt) + 12f
+        val upto = if (dropLast) s.turns.size - 1 else s.turns.size
+        for (i in 0 until maxOf(upto, 0)) {
+            val tt = s.turns[i]
+            t += estTokens(tt.user) + estTokens(tt.answer) + 12f
+            tt.fileText?.let { t += estTokens(it) }
+        }
+        t += estTokens(extra) + 12f
+        return t
+    }
+
+    /** 判断是不是「上下文塞不下」这类错误（LiteRT Status Code 3 / llama.cpp 的 context 满） */
+    private fun isContextOverflow(e: Throwable): Boolean {
+        val m = (e.message ?: "").lowercase()
+        return m.contains("too long") || m.contains("maximum number of tokens") ||
+            m.contains("out of context") ||
+            (m.contains("context") && (m.contains("full") || m.contains("exceed")))
+    }
+
+    // ================= 对话模型参数（模型页可调） =================
+
+    private fun chatPrefs() = getSharedPreferences("ponko", MODE_PRIVATE)
+
+    /** 参数按「模型文件」分别保存；没选模型时用不带后缀的一套当默认 */
+    private fun chatModelName(): String? = modelPath?.let { File(it).name }?.ifEmpty { null }
+
+    private fun chatKey(base: String): String {
+        val n = chatModelName()
+        return if (n == null) base else "$base#$n"
+    }
+
+    /** 上下文长度（token）：LiteRT 建引擎 / llama.cpp 建模型时用，改了要重新加载模型 */
+    private fun chatCtx(): Int = chatPrefs().getInt(chatKey(KEY_CHAT_CTX), DEF_CHAT_CTX).coerceIn(512, 262144)
+    /** 单次最多生成多少 token（只对 gguf 生效，litertlm 没这个开关） */
+    private fun chatMaxOut(): Int = chatPrefs().getInt(chatKey(KEY_CHAT_MAXOUT), DEF_CHAT_MAXOUT).coerceIn(64, 65536)
+    private fun chatTemp(): Float = chatPrefs().getFloat(chatKey(KEY_CHAT_TEMP), DEF_CHAT_TEMP).coerceIn(0f, 2f)
+    private fun chatTopK(): Int = chatPrefs().getInt(chatKey(KEY_CHAT_TOPK), DEF_CHAT_TOPK).coerceIn(0, 500)
+    private fun chatTopP(): Float = chatPrefs().getFloat(chatKey(KEY_CHAT_TOPP), DEF_CHAT_TOPP).coerceIn(0.01f, 1f)
+    private fun chatRep(): Float = chatPrefs().getFloat(chatKey(KEY_CHAT_REP), DEF_CHAT_REP).coerceIn(0.5f, 2f)
+    /** 思考预算（token），0 = 不限 */
+    private fun chatBudget(): Int = chatPrefs().getInt(chatKey(KEY_CHAT_BUDGET), DEF_CHAT_BUDGET).coerceIn(0, 65536)
+    /** 随机种子，-1 = 每次都换 */
+    private fun chatSeed(): Int = chatPrefs().getInt(chatKey(KEY_CHAT_SEED), DEF_CHAT_SEED)
+
+    /** 输入侧 token 预算：上下文留 1/4 给输出 */
+    private fun inputTokenBudget(): Int = chatCtx() - chatCtx() / 4
+
+    /** 单个文件最多占的估算 token，跟着上下文缩放 */
+    private fun maxFileTokens(): Int = (chatCtx() / 4).coerceIn(600, 8000)
+
+    /** 思考预算：0 表示不限（两个后端都用 -1 表示不限） */
+    private fun thinkBudgetOrUnlimited(): Int = if (chatBudget() > 0) chatBudget() else -1
+
+    /** 模型页输入即存盘（存到当前模型名下）；空值/非法值回落到默认，范围裁剪在读取时做 */
+    private fun saveChatParams() {
+        if (chatUiLoading) return
+        fun i(ed: EditText?, def: Int) = ed?.text?.toString()?.trim()?.toIntOrNull() ?: def
+        fun f(ed: EditText?, def: Float) = ed?.text?.toString()?.trim()?.toFloatOrNull() ?: def
+        chatPrefs().edit()
+            .putInt(chatKey(KEY_CHAT_CTX), i(chatCtxEdit, DEF_CHAT_CTX))
+            .putInt(chatKey(KEY_CHAT_MAXOUT), i(chatMaxOutEdit, DEF_CHAT_MAXOUT))
+            .putFloat(chatKey(KEY_CHAT_TEMP), f(chatTempEdit, DEF_CHAT_TEMP))
+            .putInt(chatKey(KEY_CHAT_TOPK), i(chatTopKEdit, DEF_CHAT_TOPK))
+            .putFloat(chatKey(KEY_CHAT_TOPP), f(chatTopPEdit, DEF_CHAT_TOPP))
+            .putFloat(chatKey(KEY_CHAT_REP), f(chatRepEdit, DEF_CHAT_REP))
+            .putInt(chatKey(KEY_CHAT_BUDGET), i(chatBudgetEdit, DEF_CHAT_BUDGET))
+            .putInt(chatKey(KEY_CHAT_SEED), i(chatSeedEdit, DEF_CHAT_SEED))
+            .apply()
+        // 采样参数要在下次发送前重建会话才生效；只有改的正是「已加载的那个模型」时才需要
+        chatParamsDirty = modelPath != null && modelPath == loadedModelPath
+    }
+
+    /** 把当前模型的参数回填到模型页的输入框（建界面 / 切模型时调） */
+    private fun loadChatParamsIntoUi() {
+        chatUiLoading = true
+        chatCtxEdit?.setText(chatCtx().toString())
+        chatMaxOutEdit?.setText(chatMaxOut().toString())
+        chatTempEdit?.setText(chatTemp().toString())
+        chatTopKEdit?.setText(chatTopK().toString())
+        chatTopPEdit?.setText(chatTopP().toString())
+        chatRepEdit?.setText(chatRep().toString())
+        chatBudgetEdit?.setText(chatBudget().toString())
+        chatSeedEdit?.setText(chatSeed().toString())
+        chatUiLoading = false
+        val n = chatModelName()
+        chatParamsOwnerTv?.text =
+            if (n == null) getString(R.string.s_319) else getString(R.string.s_318, n)
+    }
+
+    /** 把当前模型的参数恢复成内置默认值（上下文等要重新加载模型才生效） */
+    private fun resetChatParams() {
+        chatUiLoading = true
+        chatPrefs().edit()
+            .putInt(chatKey(KEY_CHAT_CTX), DEF_CHAT_CTX)
+            .putInt(chatKey(KEY_CHAT_MAXOUT), DEF_CHAT_MAXOUT)
+            .putFloat(chatKey(KEY_CHAT_TEMP), DEF_CHAT_TEMP)
+            .putInt(chatKey(KEY_CHAT_TOPK), DEF_CHAT_TOPK)
+            .putFloat(chatKey(KEY_CHAT_TOPP), DEF_CHAT_TOPP)
+            .putFloat(chatKey(KEY_CHAT_REP), DEF_CHAT_REP)
+            .putInt(chatKey(KEY_CHAT_BUDGET), DEF_CHAT_BUDGET)
+            .putInt(chatKey(KEY_CHAT_SEED), DEF_CHAT_SEED)
+            .apply()
+        chatUiLoading = false
+        loadChatParamsIntoUi()
+        chatParamsDirty = modelPath != null && modelPath == loadedModelPath
+        toast(getString(R.string.s_317))
+    }
+
+    /** 参数格：小标题 + 数字输入 + 说明；keep 用来把输入框存进字段 */
+    private fun numField(label: String, def: String, hint: String, keep: (EditText) -> Unit): LinearLayout {
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        box.addView(TextView(this).apply {
+            text = label
+            textSize = 11.5f
+            setTextColor(C_SUBTEXT)
+        }, matchWrap())
+        val ed = EditText(this).apply {
+            setText(def)
+            textSize = 13f
+            setTextColor(C_TEXT)
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER or
+                android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL or
+                android.text.InputType.TYPE_NUMBER_FLAG_SIGNED
+            setBackgroundColor(0xFFF2F3F5.toInt())
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            isSingleLine = true
+        }
+        // 监听放在 setText 之后，避免建界面时误触发存盘
+        ed.addTextChangedListener(object : android.text.TextWatcher {
+            override fun afterTextChanged(s: android.text.Editable?) = saveChatParams()
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+        })
+        keep(ed)
+        box.addView(ed, matchWrap().apply { topMargin = dp(4) })
+        box.addView(TextView(this).apply {
+            text = hint
+            textSize = 10.5f
+            setTextColor(C_SUBTEXT)
+            setPadding(0, dp(3), 0, 0)
+        }, matchWrap())
+        return box
+    }
+
+    /** 一行放两格参数 */
+    private fun twoCols(a: View, b: View): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        addView(a, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(5) })
+        addView(b, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(5) })
     }
 
     // ================= small view factories =================
@@ -1611,6 +2070,28 @@ class MainActivity : Activity() {
                 if (bmp == null) { toast(getString(R.string.s_275)); return@launch }
                 val jpeg = withContext(Dispatchers.IO) { bitmapToJpeg(bmp) }
                 addPendingImage(bmp, jpeg)
+            }
+        }
+        if (requestCode == REQ_PICK_FILE && resultCode == RESULT_OK) {
+            val uris = ArrayList<Uri>()
+            data?.clipData?.let { clip ->
+                for (i in 0 until clip.itemCount) clip.getItemAt(i).uri?.let { uris.add(it) }
+            }
+            if (uris.isEmpty()) data?.data?.let { uris.add(it) }
+            if (uris.isEmpty()) return
+            scope.launch {
+                var err: String? = null
+                for (u in uris) {
+                    if (pendingFiles.size >= MAX_FILES) { toast(getString(R.string.s_297)); break }
+                    val r = withContext(Dispatchers.IO) { readTextFile(u) }
+                    val f = r.file
+                    if (f == null) {
+                        if (err == null) err = r.error
+                        continue
+                    }
+                    addPendingFile(f)
+                }
+                if (err != null) toast(err)
             }
         }
         if (requestCode == REQ_PICK_DRAW_MODEL && resultCode == RESULT_OK) {
@@ -1760,6 +2241,7 @@ class MainActivity : Activity() {
                     modelInfoText.text = getString(R.string.v_002, (dest.name), (fmtSize(dest.length())))
                     setStatus(getString(R.string.s_093), C_WARN)
                     refreshSavedModels()
+                    loadChatParamsIntoUi()
                     toast(getString(R.string.v_003, (dest.name)))
                 }
             } catch (e: Throwable) {
@@ -2183,6 +2665,8 @@ class MainActivity : Activity() {
         modelInfoText.text = getString(R.string.v_013, (f.name), (fmtSize(f.length())))
         setStatus(getString(R.string.s_096), C_WARN)
         refreshSavedModels()
+        // 参数是按模型分别保存的，切换模型时把该模型那套回填到输入框
+        loadChatParamsIntoUi()
     }
 
     private fun confirmDeleteModel(f: File) {
@@ -2200,6 +2684,7 @@ class MainActivity : Activity() {
                     modelInfoText.text = getString(R.string.s_120)
                 }
                 refreshSavedModels()
+                loadChatParamsIntoUi()
                 toast(getString(R.string.s_086))
             }
             .setNegativeButton(getString(R.string.s_066), null)
@@ -2226,7 +2711,9 @@ class MainActivity : Activity() {
                     val cpus = Runtime.getRuntime().availableProcessors().coerceIn(2, 8)
                     val params = ModelParameters()
                         .setModel(path)
-                        .setCtxSize(4096)
+                        // 上下文长度与最大输出都从模型页读（默认 4096 / 2048）
+                        .setCtxSize(chatCtx())
+                        .setPredict(chatMaxOut())
                         .setThreads(cpus)
                         .setThreadsBatch(cpus)
                         .setBatchSize(512)
@@ -2241,6 +2728,7 @@ class MainActivity : Activity() {
                     withContext(Dispatchers.Main) {
                         llamaModel = m
                         visionOk = vok
+                        loadedModelPath = path
                         engine = null
                         conversation = null
                         convThinking = null
@@ -2256,6 +2744,8 @@ class MainActivity : Activity() {
                     // 所以探测到多模态时必须显式传入 visionBackend（并同时放开 maxNumImages）。
                     val cfg = EngineConfig(
                         modelPath = path,
+                        // 上下文长度（token）：模型页可调；调大能装更多历史，但更吃内存
+                        maxNumTokens = chatCtx(),
                         backend = backend,
                         visionBackend = if (vok) backend else null,
                         maxNumImages = if (vok) MAX_ATTACH else null,
@@ -2267,6 +2757,7 @@ class MainActivity : Activity() {
                     withContext(Dispatchers.Main) {
                         engine = eng
                         llamaModel = null
+                        loadedModelPath = path
                         conversation = conv
                         convThinking = thinking
                         visionOk = vok
@@ -2304,6 +2795,7 @@ class MainActivity : Activity() {
         try { llamaModel?.close() } catch (_: Throwable) {}
         engine = null
         llamaModel = null
+        loadedModelPath = null
         conversation = null
         convThinking = null
         visionOk = false
@@ -2428,10 +2920,11 @@ class MainActivity : Activity() {
         // 「Invalid role: system」。这份 msgs 只用于本次推理，不落历史。
         val turns = s.turns.takeLast(maxTurns)
         for ((ti, t) in turns.withIndex()) {
-            val userText = if (canDrawFromChat && ti == turns.size - 1) {
-                t.user + "\n\n" + drawToolPrompt
-            } else {
-                t.user
+            var userText = t.user
+            if (ti == turns.size - 1) {
+                // 本轮发送的文件正文只在这一轮出现（不进历史，免得撑爆 4096 上下文）
+                t.fileText?.let { if (it.isNotEmpty()) userText += "\n\n" + it }
+                if (canDrawFromChat) userText += "\n\n" + drawToolPrompt
             }
             msgs += Pair("user", userText)
             if (t.answer.isNotEmpty()) msgs += Pair("assistant", t.answer)
@@ -2441,16 +2934,16 @@ class MainActivity : Activity() {
             .withMessages(null, msgs)
             .withCachePrompt(true)
             .withSlotId(0)
-            .withNPredict(2048)
-            .withTemperature(0.7f)
-            .withTopK(40)
-            .withTopP(0.9f)
-            .withRepeatPenalty(1.1f)
-            // 每次生成都换随机种子，否则「重新生成」会得到一模一样的回答
-            .withSeed((System.nanoTime() and 0x7FFFFFFF).toInt())
-        // 思考开关：开 = 不限推理预算；关 = 压到 0，并给模板传 enable_thinking=false（哪个机制生效都行）
+            .withNPredict(chatMaxOut())
+            .withTemperature(chatTemp())
+            .withTopK(chatTopK())
+            .withTopP(chatTopP())
+            .withRepeatPenalty(chatRep())
+            // 种子 -1 = 每次换随机，否则「重新生成」会得到一模一样的回答
+            .withSeed(if (chatSeed() < 0) (System.nanoTime() and 0x7FFFFFFF).toInt() else chatSeed())
+        // 思考开关：开 = 用模型页的思考预算（0=不限）；关 = 压到 0，并给模板传 enable_thinking=false
         p = if (thinkCheck.isChecked) {
-            p.withReasoningBudgetTokens(-1)
+            p.withReasoningBudgetTokens(thinkBudgetOrUnlimited())
         } else {
             p.withReasoningBudgetTokens(0)
                 .withChatTemplateKwargs(mapOf("enable_thinking" to "false"))
@@ -2472,7 +2965,9 @@ class MainActivity : Activity() {
         for ((ti, t) in turns.withIndex()) {
             if (ti == turns.size - 1) {
                 val parts = ArrayList<ContentPart>()
-                val body = if (canDrawFromChat) t.user + "\n\n" + drawToolPrompt else t.user
+                var body = t.user
+                t.fileText?.let { if (it.isNotEmpty()) body += "\n\n" + it }
+                if (canDrawFromChat) body += "\n\n" + drawToolPrompt
                 if (body.isNotEmpty()) parts.add(ContentPart.text(body))
                 images.forEach { parts.add(ContentPart.imageBytes(it, "image/jpeg")) }
                 msgs += ChatMessage.userMultimodal(*parts.toTypedArray())
@@ -2485,14 +2980,14 @@ class MainActivity : Activity() {
             .withMessages(msgs)
             .withCachePrompt(true)
             .withSlotId(0)
-            .withNPredict(2048)
-            .withTemperature(0.7f)
-            .withTopK(40)
-            .withTopP(0.9f)
-            .withRepeatPenalty(1.1f)
-            .withSeed((System.nanoTime() and 0x7FFFFFFF).toInt())
+            .withNPredict(chatMaxOut())
+            .withTemperature(chatTemp())
+            .withTopK(chatTopK())
+            .withTopP(chatTopP())
+            .withRepeatPenalty(chatRep())
+            .withSeed(if (chatSeed() < 0) (System.nanoTime() and 0x7FFFFFFF).toInt() else chatSeed())
         p = if (thinkCheck.isChecked) {
-            p.withReasoningBudgetTokens(-1)
+            p.withReasoningBudgetTokens(thinkBudgetOrUnlimited())
         } else {
             p.withReasoningBudgetTokens(0)
                 .withChatTemplateKwargs(mapOf("enable_thinking" to "false"))
@@ -2501,24 +2996,45 @@ class MainActivity : Activity() {
     }
 
     /** 用某个对话的文本历史构建 LiteRT 会话配置。 */
-    private fun configFor(s: ChatSession, thinking: Boolean): ConversationConfig {
+    private fun configFor(
+        s: ChatSession,
+        thinking: Boolean,
+        dropLast: Boolean = false,
+        reserveTokens: Int = 900,
+    ): ConversationConfig {
         val msgs = mutableListOf<Message>()
         // 两种模型都就绪时，告知语言模型它可以用 <draw> 命令调绘图模型
         if (canDrawFromChat) msgs += Message.system(drawToolPrompt)
-        for (t in s.turns) {
+        // 历史按预算裁剪：LiteRT 上下文只有 4096，全塞进去 native 会直接报输入过长。
+        // 从最新一轮往前装，装不下的老对话丢掉（界面上还在，只是不再喂给模型）。
+        var budget = inputTokenBudget() -
+            (if (canDrawFromChat) estTokens(drawToolPrompt).toInt() else 0) - reserveTokens
+        val upto = if (dropLast) s.turns.size - 1 else s.turns.size
+        val keep = ArrayList<QaTurn>()
+        for (i in upto - 1 downTo 0) {
+            val t = s.turns[i]
+            val cost = estTokens(t.user).toInt() + estTokens(t.answer).toInt() + 12
+            // 至少保留最新一轮（哪怕它自己就超预算），否则模型会完全不看上下文
+            if (cost > budget && keep.isNotEmpty()) break
+            budget -= cost
+            keep.add(0, t)
+        }
+        for (t in keep) {
             msgs += Message.user(t.user)
             if (t.answer.isNotEmpty()) msgs += Message.model(t.answer)
         }
         return ConversationConfig(
             initialMessages = msgs,
             // 每次重建会话都换随机种子，否则「重新生成」会得到一模一样的回答
+            // 采样参数来自模型页（改参数后 doSend 会重建会话来生效）
             samplerConfig = SamplerConfig(
-                seed = (System.nanoTime() and 0x7FFFFFFF).toInt(),
-                topP = 0.9,
-                temperature = 0.7,
-                topK = 40,
+                // 种子 -1 = 每次换随机，否则「重新生成」会得到一模一样的回答
+                seed = if (chatSeed() < 0) (System.nanoTime() and 0x7FFFFFFF).toInt() else chatSeed(),
+                topP = chatTopP().toDouble(),
+                temperature = chatTemp().toDouble(),
+                topK = chatTopK(),
             ),
-            thinkingConfig = ThinkingConfig(enableThinking = thinking, thinkingTokenBudget = 2048),
+            thinkingConfig = ThinkingConfig(enableThinking = thinking, thinkingTokenBudget = thinkBudgetOrUnlimited()),
         )
     }
 
@@ -2528,17 +3044,17 @@ class MainActivity : Activity() {
      * 会话跑起来后仅改 per-call 的 ThinkingConfig 不会生效（尤其是 关→开），
      * 所以必须按新模式重建会话；历史通过 initialMessages 保留。
      */
-    private fun rebuildConversation(silent: Boolean = false) {
+    private fun rebuildConversation(silent: Boolean = false, dropLast: Boolean = false) {
         val eng = engine ?: return
         val thinking = thinkCheck.isChecked
         try { conversation?.close() } catch (_: Throwable) {}
         conversation = try {
-            eng.createConversation(configFor(current, thinking))
+            eng.createConversation(configFor(current, thinking, dropLast = dropLast))
         } catch (e: Throwable) {
             toast(getString(R.string.v_017, (e.message)))
             eng.createConversation(
                 ConversationConfig(
-                    thinkingConfig = ThinkingConfig(enableThinking = thinking, thinkingTokenBudget = 2048)
+                    thinkingConfig = ThinkingConfig(enableThinking = thinking, thinkingTokenBudget = thinkBudgetOrUnlimited())
                 )
             )
         }
@@ -2590,10 +3106,23 @@ class MainActivity : Activity() {
         val idx = current.turns.indexOf(turn)
         if (idx < 0) return
         val text = turn.user
+        // 忠实重发：这一轮带的图片与文件要一起还原，否则「重新生成」会退化成纯文字提问
+        val imgNames = turn.userImage?.split("|")?.filter { it.isNotEmpty() } ?: emptyList()
+        val imgPairs = imgNames.mapNotNull { n ->
+            readChatImage(n)?.let { bmp -> bmp to bitmapToJpeg(bmp) }
+        }
+        val fNames = turn.userFile?.split("|")?.filter { it.isNotEmpty() } ?: emptyList()
         val dropped = current.turns.size - idx - 1
         while (current.turns.size > idx) current.turns.removeAt(current.turns.size - 1)
         restoreSession(showHint = false)
         if (dropped > 0) toast(getString(R.string.v_018, (dropped)))
+        clearPendingImages()
+        clearPendingFiles()
+        for (p in imgPairs) addPendingImage(p.first, p.second)
+        // 文件：把上一轮的原始内容还原到附件条（走和正常发送完全一样的路径）
+        val restored = restoreFiles(turn.fileStore)
+        if (restored > 0) toast(getString(R.string.s_320, (restored)))
+        else if (fNames.isNotEmpty()) toast(getString(R.string.s_321))
         inputEdit.setText(text)
         doSend()
     }
@@ -2611,10 +3140,11 @@ class MainActivity : Activity() {
 
     private fun renderTurn(t: QaTurn) {
         val names = t.userImage?.split("|")?.filter { it.isNotEmpty() } ?: emptyList()
+        val files = t.userFile?.split("|")?.filter { it.isNotEmpty() } ?: emptyList()
         if (names.isEmpty()) {
-            addUserBubble(t.user)
+            addUserBubble(t.user, emptyList(), files)
         } else {
-            addUserBubble(t.user, names.mapNotNull { readChatImage(it) })
+            addUserBubble(t.user, names.mapNotNull { readChatImage(it) }, files)
         }
         val ai = addAiArea { regenerate(t) }
         val imgName = t.image
@@ -2653,6 +3183,8 @@ class MainActivity : Activity() {
                     ts.put(
                         JSONObject().put("u", t.user).put("a", t.answer).put("th", t.thought)
                             .put("img", t.image ?: "").put("uimg", t.userImage ?: "")
+                            .put("ufile", t.userFile ?: "").put("utext", t.fileText ?: "")
+                            .put("fstore", t.fileStore ?: "")
                     )
                 }
                 o.put("turns", ts)
@@ -2682,11 +3214,16 @@ class MainActivity : Activity() {
                         if (ts != null) {
                             for (j in 0 until ts.length()) {
                                 val t = ts.getJSONObject(j)
-                                s.turns += QaTurn(
+                                val turn = QaTurn(
                                     t.optString("u"), t.optString("a"), t.optString("th"),
                                     t.optString("img").ifEmpty { null },
-                                    t.optString("uimg").ifEmpty { null }
+                                    t.optString("uimg").ifEmpty { null },
+                                    t.optString("ufile").ifEmpty { null }
                                 )
+                                // 文件正文也读回来，这样重启后「重新生成」也能带上文件
+                                turn.fileText = t.optString("utext").ifEmpty { null }
+                                turn.fileStore = t.optString("fstore").ifEmpty { null }
+                                s.turns += turn
                             }
                         }
                         sessions += s
@@ -3004,7 +3541,15 @@ class MainActivity : Activity() {
         val text = inputEdit.text.toString().trim()
         val attachBmps = pendingImages.map { it.first }
         val attachJpegs = pendingImages.map { it.second }
-        if (text.isEmpty() && attachJpegs.isEmpty()) return
+        // 用户这一轮带的文件：附件条里有就正常发（「重新生成」也会先把上一轮的文件还原回附件条）
+        if (text.isEmpty() && attachJpegs.isEmpty() && pendingFiles.isEmpty()) return
+        // 文件是「文字」，任何模型都能读，不受多模态限制
+        val fileBlock = buildFileBlock(pendingFiles)
+        val fileNames = pendingFiles.map { it.name }
+        val sendText =
+            if (fileBlock.isEmpty()) text
+            else if (text.isEmpty()) fileBlock
+            else text + "\n\n" + fileBlock
         // 生成过程中不允许发起新的一轮（选图/引用可以在生成中进行，发送不行）
         if (busy) { toast(getString(R.string.s_133)); return }
 
@@ -3044,8 +3589,15 @@ class MainActivity : Activity() {
 
         val turn = QaTurn(text)
         current.turns += turn
+        if (fileNames.isNotEmpty()) {
+            turn.userFile = fileNames.joinToString("|")
+            turn.fileText = fileBlock
+            // 把文件原始内容存进这一轮，方便「重新生成」把附件还原回附件条
+            turn.fileStore = encodeFiles(pendingFiles)
+        }
         if (current.title == getString(R.string.s_109)) {
-            current.title = (if (text.isNotEmpty()) text else getString(R.string.s_278)).take(18)
+            val fallback = if (fileNames.isNotEmpty()) fileNames.first() else getString(R.string.s_278)
+            current.title = (if (text.isNotEmpty()) text else fallback).take(18)
         }
 
         if (attachJpegs.isNotEmpty()) {
@@ -3057,9 +3609,10 @@ class MainActivity : Activity() {
             if (names.isNotEmpty()) turn.userImage = names.joinToString("|")
             clearPendingImages()
         }
+        clearPendingFiles()
 
         inputEdit.setText("")
-        addUserBubble(text, attachBmps)
+        addUserBubble(text, attachBmps, fileNames)
         jumpToBottom()
         setBusy(true)
         setStoppingUi(true)
@@ -3183,18 +3736,29 @@ class MainActivity : Activity() {
                 // Reasoning text arrives on channels["thought"], answer text in contents.
                 // 有图 → Contents(文本 + 若干图像字节)；无图 → Contents(纯文本)。
                 val items = ArrayList<Content>()
-                if (text.isNotEmpty()) items.add(Content.Text(text))
+                if (sendText.isNotEmpty()) items.add(Content.Text(sendText))
                 attachJpegs.forEach { items.add(Content.ImageBytes(it)) }
                 val ask: Contents = if (items.size == 1 && items[0] is Content.Text) {
-                    Contents.of(text)
+                    Contents.of(sendText)
                 } else {
                     Contents.of(items)
+                }
+                // LiteRT 的会话是【增量累积】的：历史 + 本轮一旦超过模型上下文（4096），
+                // native 直接抛 "Input token ids are too long"，这一轮就废了。
+                // 所以发送前自己估一把：超预算就重建会话——configFor 会按预算裁掉最老的对话，
+                // 把上下文让给当前这一轮（dropLast=true 是因为本轮马上就要作为新消息发出去）。
+                if (chatParamsDirty ||
+                    estimateConversationTokens(current, sendText, dropLast = true) > inputTokenBudget()
+                ) {
+                    rebuildConversation(silent = true, dropLast = true)
+                    conv = conversation
+                    chatParamsDirty = false
                 }
                 conv!!.sendMessageAsync(
                     ask,
                     thinkingConfig = ThinkingConfig(
                         enableThinking = thinkCheck.isChecked,
-                        thinkingTokenBudget = 2048,
+                        thinkingTokenBudget = thinkBudgetOrUnlimited(),
                     ),
                 ).collect { msg ->
                     val delta = extractText(msg)
@@ -3244,6 +3808,12 @@ class MainActivity : Activity() {
                     // 主动中断：native 被打断后常抛异常（task not found 等），
                     // 按「已中断」处理，保留已经输出到界面上的内容
                     cancelled = true
+                } else if (isContextOverflow(e)) {
+                    // 上下文塞不下：给能操作的提示，别甩一串 Status Code 给用户
+                    ai.answer.text = getString(R.string.s_302)
+                    ai.answer.setTextColor(C_ERR)
+                    setStatus(getString(R.string.s_145), C_ERR)
+                    toast(getString(R.string.s_302))
                 } else {
                     ai.answer.text = getString(R.string.v_024, (e.message))
                     ai.answer.setTextColor(C_ERR)
@@ -3375,7 +3945,30 @@ class MainActivity : Activity() {
         return AiArea(wrap, thoughtBox, thoughtHeader, thoughtBody, answer, regenButton)
     }
 
-    private fun addUserBubble(text: String, images: List<Bitmap> = emptyList()) {
+    private fun addUserBubble(text: String, images: List<Bitmap> = emptyList(), files: List<String> = emptyList()) {
+        if (files.isNotEmpty()) {
+            val strip = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.END
+            }
+            for (nm in files) {
+                strip.addView(TextView(this).apply {
+                    // 注意要写 this.text：本函数的 text 参数会把 TextView.text 遮住
+                    this.text = "📄 $nm"
+                    textSize = 12f
+                    setTextColor(C_TEXT)
+                    maxLines = 1
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                    background = rounded(C_PRIMARY_SOFT, 12)
+                    setPadding(dp(10), dp(6), dp(10), dp(6))
+                }, LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { leftMargin = dp(6) })
+            }
+            chatContainer.addView(strip, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(8) })
+        }
         if (images.isNotEmpty()) {
             val strip = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -3572,10 +4165,19 @@ class MainActivity : Activity() {
         }
     }
 
-    /** 按当前是否已加载切换按钮文案 */
+    /** 按当前是否已加载切换按钮文案与配色（与「对话/绘图」一致：未加载=蓝底，已加载=浅底） */
     private fun refreshTaggerToggle() {
-        taggerLoadBtn?.text = getString(
-            if (drawPage?.taggerLoaded() == true) R.string.s_255 else R.string.s_254)
+        val b = taggerLoadBtn ?: return
+        if (drawPage?.taggerLoaded() == true) {
+            b.text = getString(R.string.s_255)
+            b.background = rounded(Color.rgb(246, 247, 250), 12,
+                strokeDp = 1, strokeColor = Color.rgb(219, 224, 234))
+            b.setTextColor(C_TEXT)
+        } else {
+            b.text = getString(R.string.s_254)
+            b.background = rounded(C_PRIMARY, 12)
+            b.setTextColor(Color.WHITE)
+        }
     }
 
     /** 加载 / 卸载打标模型（多个打标模型之间切换用） */

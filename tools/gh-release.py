@@ -10,54 +10,50 @@ import urllib.request
 REPO = "visitor257/Ponko"
 TOKFILE = r"C:\Users\Administrator\Desktop\git_repo_tok.txt"
 APK = r"C:\Users\Administrator\.qclaw\workspace-agent-e522fb09\LiteRT-Chat\app\build\outputs\apk\release\Ponko-release.apk"
-TAG = "v1.3.1"
-NAME = "Ponko v1.3.1"
+TAG = "v1.4.0"
+NAME = "Ponko v1.4.0"
 
-BODY = """Ponko v1.3.1 - Fully offline AI app for Android: chat (now with image input) + drawing + tagging.
+BODY = """Ponko v1.4.0 - Offline-capable AI app for Android: chat (image + file input) + drawing + tagging.
 
-All inference runs on-device. No network, no telemetry; your data stays on your phone.
+All inference runs on-device: apart from the optional in-app LoRA download, no feature needs the network. No telemetry; your data stays on your phone.
 See the [README](https://github.com/visitor257/Ponko#readme).
 
-## v1.3.1 Highlights
-- **Chat: send images (multimodal input)**
-  - New **+** button left of the send button opens an upward drawer with **Camera / Gallery**
-  - Up to **4 images** per message; picked images are re-encoded to JPEG and kept locally
-  - Your images show as thumbnails in the bubble and are restored from the local history
-  - `.litertlm` multimodal models (e.g. Gemma 3n) work out of the box
-  - `.gguf` vision models work once you import the matching **mmproj** file on the Models page
-  - Text-only models are rejected with a clear hint instead of failing
-- **gguf vision support (mmproj)**
-  - Pick a vision projector (`mmproj-*.gguf`) on the Models page; it is attached with `setMmproj()` when the model loads
-  - Imported mmproj files are listed and **switchable**, with a **No mmproj (text-only)** option to go back
-  - Long-press an entry to delete it; reload the model after switching
-- **Full-screen image viewer**
-  - Tap any chat image (yours or the one the model drew) to view it full-screen; tap anywhere to close
-  - Long-press to save it to the gallery
-- **Fixes**
-  - You can pick an image while the model is still generating (sending still waits for the current answer)
-  - Scrolling up to read history is no longer yanked back to the bottom while the model streams
-- Version 1.3.0 -> 1.3.1 (versionCode 6)
+## v1.4.0 Highlights
+- **Chat: send text files**
+  - Third item in the "+" drawer: **File**; up to 2 files per message
+  - Text-like files only (`.txt` / `.md` / `.json` / `.csv` / `.log` / `.xml` / source code ...); UTF-8 / GBK auto-detected, binary files rejected, PDF not supported yet
+  - The text is trimmed to the context budget and sent with that one message (never kept in the history); the file name shows in the bubble
+- **Chat parameters (saved per model)**
+  - Context size, max output, temperature, Top-K, Top-P, repeat penalty, thinking budget, random seed
+  - **Saved per model**, written as you type; context size and max output apply after reloading the model
+- **Regenerate keeps the attachments**
+  - Regenerating a turn now carries its images and files along (restored into the attachment strip above the input box) instead of silently dropping them
+- **Context handling**
+  - The app estimates tokens, trims older turns and file text to fit the model context, and gives an actionable hint instead of a raw error when something still does not fit
+- **About page**: now also shows the install time
+- Version 1.3.1 -> 1.4.0 (versionCode 7)
 
 ## Chat
 - Two backends: LiteRT-LM (`.litertlm`) + llama.cpp (`.gguf`)
 - **Image input**: `.litertlm` multimodal models, or `.gguf` vision models with a matching mmproj
+- **File input**: text-like files, up to 2 per message
 - Multiple conversations, history persisted locally
 - Reasoning and answer shown separately, collapsible; the thinking toggle works for both formats
 - Streaming Markdown rendering (headings / lists / tables / code / links)
-- Keep typing while generating; interrupt and continue; one-tap "regenerate" (random seed)
+- Keep typing while generating; interrupt and continue; one-tap "regenerate" (keeps images and files)
 - Auto-follow scroll, pause on scroll-up, jump-to-bottom button
 
 ## Drawing
 - Built-in custom stable-diffusion.cpp, loads SD1.5-family GGUF models, pure CPU
-- Text-to-image + image-to-image
-- LCM-LoRA acceleration: one-tap download in-app (Hugging Face official / hf-mirror), cuts 20 steps to 4-8
+- Text-to-image + image-to-image (denoise strength 0.05-0.99, output size auto-aligned to the reference)
+- Per-page parameter defaults with confirmation (separate sets for LoRA on/off)
+- LCM-LoRA acceleration: one-tap download in-app (Hugging Face official / hf-mirror), cuts 20 steps to 4-8; local LoRA import supported
 - Generate from chat: when both an LLM and an SD model are loaded, just say "draw a ..."
-- Width / height / steps / CFG / seed / sampler / scheduler all adjustable
-- **Image tagging (Tagger)**: offline ONNX tagger (WD14-style), tags can be forwarded to T2I / I2I
+- **Image tagging (Tagger)**: on-device ONNX tagger (WD14-style), tags can be forwarded to T2I / I2I
 
 ## Install
 - arm64-v8a only (64-bit ARM devices), minSdk 28 (Android 9+)
-- v1.3.1 (versionCode 6) installs over v1.3 / v1.2; uninstall older debug builds or v1.0 first (different signing key)
+- v1.4.0 (versionCode 7) installs over v1.3.x / v1.2; uninstall older debug builds or v1.0 first (different signing key)
 - Model files are not bundled: import chat models (`.litertlm` / `.gguf`), a drawing model (SD1.5 GGUF) and, optionally, a tagger (`.onnx` + `.csv`) from the in-app "Models" page
 
 ## License
@@ -65,50 +61,46 @@ Code is MIT; art assets (icons, artwork) are all rights reserved. Third-party co
 
 ---
 
-Ponko v1.3.1 —— 本地 AI App（Android）：聊天（可发图）+ 绘图 + 打标
+Ponko v1.4.0 —— 本地 AI App（Android）：聊天（可发图、可发文件）+ 绘图 + 打标
 
-所有推理都在本机离线运行，不联网、无遥测，你的数据只留在设备本地。
+所有推理都在本机完成：除了「手动下载 LoRA」，其余功能都不需要联网；无遥测，数据只留在设备本地。
 
-### v1.3.1 亮点
-- **聊天发送图片（多模态输入）**
-  - 发送键左边新增「**+**」按钮，向上展开抽屉：**拍照 / 图库**
-  - 一条消息最多 **4 张图**；选中的图会重新编码为 JPEG 存在本机
-  - 你发的图会在气泡里显示缩略图，并随本地历史一起恢复
-  - `.litertlm` 多模态模型（如 Gemma 3n）直接可用
-  - `.gguf` 视觉模型：在模型页导入配套的 **mmproj** 文件后即可发图
-  - 纯文字模型会被明确拦下并提示，不会报错崩溃
-- **gguf 视觉模型（mmproj）**
-  - 在模型页选择视觉投影文件（`mmproj-*.gguf`），加载模型时经 `setMmproj()` 挂载
-  - 已导入的 mmproj 以列表呈现，**可切换**，并有「**不使用 mmproj（纯文字）**」一项可以退回
-  - 长按可删除；切换后重新加载模型生效
-- **图片全屏查看**
-  - 点击聊天里的任意图片（你发的、模型画的）即可全屏查看，点任意处关闭
-  - 长按保存到相册
-- **修复**
-  - 模型生成过程中也能先选好图片（发送仍会等当前回答结束）
-  - 上滑看历史时，不再被流式输出拽回底部
-- 版本 1.3.0 -> 1.3.1（versionCode 6）
+### v1.4.0 亮点
+- **聊天发送文件（纯文本类）**
+  - 「＋」抽屉里的第三项：**文件**；一条消息最多 2 个
+  - 只支持文本类文件（`.txt` / `.md` / `.json` / `.csv` / `.log` / `.xml` / 代码等）；UTF-8 / GBK 自动识别，二进制文件直接拒收，PDF 暂不支持
+  - 正文按上下文预算截断后随那一条消息发送（不进历史），气泡上显示文件名
+- **对话参数（按模型分别保存）**
+  - 上下文长度、最大输出、温度、Top-K、Top-P、重复惩罚、思考预算、随机种子
+  - **按模型分别保存**，输入即存；上下文长度与最大输出需重新加载模型生效
+- **重新生成不再丢附件**
+  - 重新生成某一轮时，会把这一轮的图片与文件一起还原到输入框上方的附件条，不再默默丢掉
+- **上下文超限处理**
+  - 自动估算 token、裁剪更早的对话与文件正文；实在放不下时给出可操作提示，而不是甩一个原始报错
+- **「关于」页**：新增显示安装时间
+- 版本 1.3.1 -> 1.4.0（versionCode 7）
 
 ### 对话功能
 - 双后端：LiteRT-LM（`.litertlm`）+ llama.cpp（`.gguf`）
 - **图片输入**：`.litertlm` 多模态模型，或配了 mmproj 的 `.gguf` 视觉模型
+- **文件输入**：文本类文件，一条最多 2 个
 - 多对话管理，历史本地持久化
 - 思考过程与正文分离、可折叠；思考开关对两种格式均生效
 - Markdown 流式渲染（标题 / 列表 / 表格 / 代码块 / 链接）
-- 生成中可继续打字；中断后可继续对话；一键「重新生成」（随机种子）
+- 生成中可继续打字；中断后可继续对话；一键「重新生成」（会带上图片与文件）
 - 自动跟随滚动，上滑暂停、一键回到底部
 
 ### 绘图功能
 - 内置自编 stable-diffusion.cpp，读 GGUF 格式的 SD1.5 系模型，纯 CPU 绘制
-- 文生图 + 图生图两种模式
-- LCM-LoRA 加速：App 内一键下载（HF 官方 / hf-mirror 双源），20 步压到 4~8 步
+- 文生图 + 图生图（重绘强度 0.05~0.99，尺寸自动对齐参考图）
+- 每个参数页可「设为默认值 / 恢复默认」（带确认），文生图 / 图生图按 LoRA 开 / 关各存一套
+- LCM-LoRA 加速：App 内一键下载（HF 官方 / hf-mirror 双源），20 步压到 4~8 步；也支持导入本地 LoRA
 - 对话页出图：语言模型与绘图模型同时加载时，直接说「画一张…」就会调用绘图模型
-- 宽高 / 步数 / CFG / 种子 / 采样器 / 调度器全可调
-- **图像打标（Tagger）**：离线 ONNX 打标（WD14 系），标签可发送至文生图 / 图生图
+- **图像打标（Tagger）**：本机离线 ONNX 打标（WD14 系），标签可发送至文生图 / 图生图
 
 ### 安装
 - 仅支持 arm64-v8a（64 位 ARM 真机），minSdk 28（Android 9 及以上）
-- v1.3.1（versionCode 6）可直接覆盖安装 v1.3 / v1.2；更早的 debug 版或 v1.0 请先卸载（签名不同）
+- v1.4.0（versionCode 7）可直接覆盖安装 v1.3.x / v1.2；更早的 debug 版或 v1.0 请先卸载（签名不同）
 - 模型文件需自备：对话模型（`.litertlm` / `.gguf`）、绘图模型（SD1.5 GGUF），打标模型（`.onnx` + `.csv`）可选，都在 App 内「模型」页导入
 
 ### 许可

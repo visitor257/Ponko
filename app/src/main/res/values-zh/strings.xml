@@ -142,7 +142,7 @@
     <string name="s_139">清空当前对话？</string>
     <string name="s_140">源代码：MIT License\n美术资源（应用图标、角色立绘、原始画稿）：版权归作者所有，保留所有权利，不适用 MIT 许可。\n第三方组件（各自版权归其作者）：LiteRT-LM（Apache-2.0）、llama.cpp（MIT）、stable-diffusion.cpp（MIT）、ggml（MIT）、Markwon（Apache-2.0）、ONNX Runtime（MIT）、commonmark-java（BSD-2-Clause）、Jackson/Gson（Apache-2.0）、SLF4J（MIT）、Kotlin/AndroidX（Apache-2.0）。stable-diffusion.cpp 与 ggml 的源码随本项目分发（app/src/main/cpp/）；ONNX Runtime 另自带若干第三方组件（见 licenses/onnxruntime-ThirdPartyNotices.txt）；各运行时原生库还静态链入 XNNPACK、protobuf、re2、cpuinfo、zlib 等。完整清单与许可证见仓库 NOTICE 与 licenses/ 目录。</string>
     <string name="s_141">点击放大，长按保存到相册</string>
-    <string name="s_142">版本 1.3.1</string>
+    <string name="s_142">版本 1.4.0</string>
     <string name="s_143">生成中（点 ■ 可中断）…</string>
     <string name="s_144">生成中，请稍候</string>
     <string name="s_145">生成出错</string>
@@ -357,4 +357,32 @@
   <string name="s_292">已添加到输入栏</string>
   <string name="s_293">图片</string>
   <string name="s_294">安卓 9 及以下需要存储权限，无法保存到相册</string>
+  <string name="s_295">文件</string>
+  <string name="s_296">无法读取该文件（只支持文本类文件）</string>
+  <string name="s_297">一次最多发 2 个文件</string>
+  <string name="s_298">字</string>
+  <string name="s_299">已截断</string>
+  <string name="s_300">以上是用户发送的文件内容，请结合它回答用户的问题。</string>
+  <string name="s_301">PDF 暂时不支持，后续版本会加上（用转成图片的方式读取）</string>
+  <string name="s_302">上下文放不下这条消息（模型上限 4096 token）。可以：① 开一个新会话再发；② 把文件截短些；③ 少带几轮旧对话。</string>
+  <string name="s_303">对话参数</string>
+  <string name="s_304">参数按模型分别保存；输入即自动保存，上下文长度与最大输出要重新加载模型才生效。</string>
+  <string name="s_305">上下文长度</string>
+  <string name="s_306">最大输出</string>
+  <string name="s_307">温度</string>
+  <string name="s_308">Top-K</string>
+  <string name="s_309">Top-P</string>
+  <string name="s_310">重复惩罚</string>
+  <string name="s_311">思考预算</string>
+  <string name="s_312">随机种子</string>
+  <string name="s_313">重新加载模型后生效</string>
+  <string name="s_314">-1 = 随机</string>
+  <string name="s_315">仅 gguf 生效</string>
+  <string name="s_316">0 = 不限</string>
+  <string name="s_317">已恢复默认值</string>
+  <string name="s_318">参数归属：%1$s</string>
+  <string name="s_319">参数归属：默认（未选模型）</string>
+  <string name="s_320">已还原 %1$d 个文件</string>
+  <string name="s_321">这条记录里没有文件正文（旧版本保存的），请重新发送该文件</string>
+  <string name="s_322">安装时间：%1$s</string>
 </resources>

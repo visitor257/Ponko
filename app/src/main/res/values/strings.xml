@@ -142,7 +142,7 @@
 <string name="s_139">Clear the current chat?</string>
 <string name="s_140">Source code: MIT License\nArtwork (app icon, character art, original drawing): © the author, all rights reserved, not covered by MIT.\nThird-party components (each © its authors): LiteRT-LM (Apache-2.0), llama.cpp (MIT), stable-diffusion.cpp (MIT), ggml (MIT), Markwon (Apache-2.0), ONNX Runtime (MIT), commonmark-java (BSD-2-Clause), Jackson/Gson (Apache-2.0), SLF4J (MIT), Kotlin/AndroidX (Apache-2.0). The sources of stable-diffusion.cpp and ggml are distributed with this project under app/src/main/cpp/; ONNX Runtime bundles extra third-party components (see licenses/onnxruntime-ThirdPartyNotices.txt); the native runtimes also statically link XNNPACK, protobuf, re2, cpuinfo, zlib and more. See the repository NOTICE and the licenses/ directory for the full list and licenses.</string>
 <string name="s_141">Tap to enlarge, long-press to save to your gallery</string>
-<string name="s_142">Version 1.3.1</string>
+<string name="s_142">Version 1.4.0</string>
 <string name="s_143">Generating (tap ■ to interrupt)…</string>
 <string name="s_144">Generating, please wait</string>
 <string name="s_145">Generation error</string>
@@ -357,4 +357,32 @@
 <string name="s_292">Added to the input bar</string>
 <string name="s_293">Image</string>
 <string name="s_294">Storage permission is required (Android 9 and below), cannot save to the gallery</string>
+<string name="s_295">File</string>
+<string name="s_296">Could not read this file (text files only)</string>
+<string name="s_297">Up to 2 files per message</string>
+<string name="s_298">chars</string>
+<string name="s_299">truncated</string>
+<string name="s_300">The above is the content of the file(s) the user sent. Answer the user\'s question based on it.</string>
+<string name="s_301">PDF is not supported yet; a future version will read it as images</string>
+<string name="s_302">This message does not fit the model context (4096 tokens). Try: (1) start a new chat and resend; (2) send a shorter file; (3) send fewer chat turns.</string>
+<string name="s_303">Chat parameters</string>
+<string name="s_304">Saved per model. Values save as you type; context size and max output apply after reloading the model.</string>
+<string name="s_305">Context size</string>
+<string name="s_306">Max output</string>
+<string name="s_307">Temperature</string>
+<string name="s_308">Top-K</string>
+<string name="s_309">Top-P</string>
+<string name="s_310">Repeat penalty</string>
+<string name="s_311">Thinking budget</string>
+<string name="s_312">Random seed</string>
+<string name="s_313">Applies after reloading the model</string>
+<string name="s_314">-1 = random</string>
+<string name="s_315">gguf only</string>
+<string name="s_316">0 = unlimited</string>
+<string name="s_317">Defaults restored</string>
+<string name="s_318">Saved for: %1$s</string>
+<string name="s_319">Saved for: default (no model selected)</string>
+<string name="s_320">Restored %1$d file(s)</string>
+<string name="s_321">File content is missing from this record (saved by an older version). Please send the file again.</string>
+<string name="s_322">Installed: %1$s</string>
 </resources>
