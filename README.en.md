@@ -4,7 +4,9 @@
 
 English · [中文](README.md)
 
-A **fully offline** Android app for local AI: chat with LLMs (**image input included**), generate images, and tag them.
+An **offline-capable** Android app for local AI: chat with LLMs (**image and file input included**), generate images, and tag them.
+
+All inference runs on-device: apart from the optional in-app LoRA download, no feature needs the network.
 
 ## Chat
 
@@ -20,10 +22,12 @@ Two model formats are supported:
 - **Separate thinking**: reasoning and answer are shown apart and collapsible; the thinking toggle works for both formats.
 - **Markdown rendering**: headings, bold/italic, strikethrough, ordered/unordered lists, inline code and code blocks, quotes, dividers, tables, tappable links.
 - **Streaming UX**: token-by-token output; auto-follow scrolling that pauses the moment you scroll up, with a floating "back to bottom" button; interrupt anytime, and keep typing while generating.
-- **Regenerate**: one tap to rerun, with a random seed so results differ.
+- **Regenerate**: one tap to rerun, and it **carries the images and files of that turn along** (restored to the attachment strip above the input box, so you can see them); a random seed keeps results from repeating.
 - **Image input (multimodal)**: the "+" button left of the input box opens an upward drawer with **Take photo / Gallery**, up to 4 images per message. Images appear inline in the bubble: **tap to view fullscreen (pinch-zoom / pan / double-tap)** and **long-press** for a menu: Save to gallery / Quote (put it into the input bar) / Send to Image-to-Image / Send to Tagger
   - `.litertlm`: needs a **multimodal model** (e.g. Gemma 3n). The app probes the model and tells you right away if it has no vision input
   - `.gguf`: needs a **vision model plus its matching `mmproj` file**. Import and select the mmproj on the Models page, Chat model card, and **pick the mmproj before loading the model**
+- **File input (text-like files)**: the third item in the same "+" drawer, **File**, up to 2 per message; supports `.txt` / `.md` / `.json` / `.csv` / `.log` / `.xml` / source code and similar text files (UTF-8 / GBK auto-detected; binary files are rejected, PDF is not supported yet). The text is trimmed to the context budget and sent **with that one message only**, never added to the history; the file name shows up in the bubble
+- **Chat parameters**: on the Models page, Chat model card, you can tune context size, max output, temperature, Top-K, Top-P, repeat penalty, thinking budget and random seed; **saved per model**, as you type. Context size and max output take effect **after reloading the model**
 
 ## Drawing
 
@@ -47,7 +51,7 @@ The engine is [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.
 
 ## Tagging (Tagger)
 
-- **Fully offline** image-to-tags: import a Danbooru-style ONNX tagger (`.onnx`, e.g. WD14) plus its matching tag list (`selected_tags.csv`) - nothing is bundled or downloaded
+- **On-device** image-to-tags: import a Danbooru-style ONNX tagger (`.onnx`, e.g. WD14) plus its matching tag list (`selected_tags.csv`) - nothing is bundled or downloaded
 - The "Tagger" page: pick an image → set threshold (default 0.35) / max tags (default 40) → get tags
 - Send the tags to **Text-to-Image / Image-to-Image** (with a confirmation prompt); from the Result view you can also send a generated image to **Image-to-Image** or to **Tagger**
 - Multiple taggers / tag lists can be switched from the list on the Models page; "Load / Unload tagger" loads on demand and frees memory when you are done
@@ -63,7 +67,7 @@ The app declares **only three permissions** and none of them is sensitive: takin
 | Pick an image (gallery / files) | **No storage read permission** | Uses the system file picker `ACTION_GET_CONTENT`: the app only receives a temporary read grant for the **single file the user taps** (`content://`), not for storage as a whole - hence no `READ_MEDIA_IMAGES` / `READ_EXTERNAL_STORAGE` |
 | Save an image to the gallery | **Not needed on Android 10+** | Writes through `MediaStore` into the app's own media entry, which the platform allows without a permission |
 | Save an image / take a photo | **Needed on Android 9 and below** | These need `WRITE_EXTERNAL_STORAGE` (declared with `maxSdkVersion="28"`, so it only applies on Android 9 or older), and the app **only prompts on Android 9, at the first save/photo**; on Android 10+ it is never requested |
-| Downloading LoRA | `INTERNET`, `ACCESS_NETWORK_STATE` | Used only by the manual LCM-LoRA download (HuggingFace / hf-mirror) on the LoRA card. **No download, no network** - everything else works fully offline |
+| Downloading LoRA | `INTERNET`, `ACCESS_NETWORK_STATE` | Used only by the manual LCM-LoRA download (HuggingFace / hf-mirror) on the LoRA card. **No download, no network** - everything else needs no network |
 | Models / chats / images | **No permission** | Everything lives in the app's private directory (`filesDir/`), the app sandbox |
 
 - The `content://` grant returned by the camera or gallery is **temporary**, so imported files are copied into the private directory right away (this is why picking a model copies it)
@@ -74,7 +78,7 @@ The app declares **only three permissions** and none of them is sensitive: takin
 
 All UI strings are externalized (`res/values` = English, `res/values-zh` = Chinese) and **follow the system language** automatically - no setting needed.
 
-The fourth tab is an **About** page: version, app intro, notes on the thinking mode, license and third-party component list, author and project link.
+The fourth tab is an **About** page: version and install time, app intro, notes on the thinking mode, license and third-party component list, author and project link.
 
 ## Building
 
@@ -109,7 +113,7 @@ powershell -File tools/build-release.ps1
 
 ## Known limitations
 
-- GGUF context is fixed at 4096 tokens; beyond that it relies on llama.cpp's context-shift sliding window
+- Chat context defaults to 4096 tokens (adjustable on the Models page; on the LiteRT-LM side it cannot exceed the limit built into the model); beyond that it relies on llama.cpp's context-shift sliding window
 - The GGUF chat path currently uses CPU only (the binding used does not include GPU backends)
 - "Disable thinking" depends on the model's own chat template; some models may still emit reasoning
 - Drawing runs on CPU only: 256×256 with LCM-LoRA at 6 steps takes about a minute; 512×512 is noticeably slower
@@ -118,7 +122,9 @@ powershell -File tools/build-release.ps1
 - Tagging supports Danbooru-style ONNX taggers (WD14 and its derivatives; the tag list must be in `tag_id,name,category,count` format); the `.onnx` and the tag-list CSV must be imported as a matching pair
 - The tagger model is loaded lazily on first use (it holds hundreds of MB of memory) and can be unloaded manually from the Models page
 - On **Android 9**, saving to the gallery / taking a photo requires the storage permission (prompted on first use); denying it makes those actions fail (Android 10+ is unaffected)
-- Image input is capped at 4 images per message; a `.gguf` vision model must be paired with its matching `mmproj`, selected before the model is loaded
+- Image input is capped at 4 images and 2 files per message; a `.gguf` vision model must be paired with its matching `mmproj`, selected before the model is loaded
+- File input accepts text-like files only: PDF is not supported yet (the plan is to convert pages to images and use the multimodal path), binary files are rejected; the text is trimmed to roughly 1200 tokens
+- When the context does not fit, older turns and file text are trimmed automatically; if it still does not fit, the app tells you what to do: start a new chat, send a shorter file, or drop some old turns
 
 ## License
 

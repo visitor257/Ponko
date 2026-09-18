@@ -8,9 +8,9 @@ TOK = re.search(r"ghp_\w+", open(r"C:\Users\Administrator\Desktop\git_repo_tok.t
                                  encoding="utf-8", errors="replace").read()).group(0)
 REPO = "https://api.github.com/repos/visitor257/Ponko"
 
-DESC = ("Fully offline AI app for Android: on-device chat (.litertlm / .gguf, with image "
-        "input) + drawing (stable-diffusion.cpp GGUF) + image tagging (ONNX tagger). "
-        "No network, no telemetry - everything stays on device.")
+DESC = ("Offline-capable AI app for Android: on-device chat (.litertlm / .gguf) with image and "
+        "file input, drawing (stable-diffusion.cpp GGUF) and image tagging (ONNX tagger). "
+        "All inference runs locally; no telemetry.")
 
 TOPICS = ["android", "kotlin", "llm", "llama-cpp", "litert-lm", "gguf",
           "multimodal", "vision-language-model", "stable-diffusion", "image-generation",
