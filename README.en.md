@@ -53,9 +53,11 @@ The engine is [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.
 ## Tagging (Tagger)
 
 - **On-device** image-to-tags: import a Danbooru-style ONNX tagger (`.onnx`, e.g. WD14) plus its matching tag list (`selected_tags.csv`) - nothing is bundled or downloaded
-- The "Tagger" page: pick an image → set threshold (default 0.35) / max tags (default 40) → get tags
+- The "Tagger" page: pick an image → set threshold (default 0.35) / max tags (default 40) / **channel order** (BGR by default) → get tags
+  - "Channel order" exists for different preprocessing: the official WD-family pipeline is BGR; a few re-exported models baked BGR into their weights, so those need RGB (switch it if colours / hair colour come out wrong)
 - Send the tags to **Text-to-Image / Image-to-Image** (with a confirmation prompt); from the Result view you can also send a generated image to **Image-to-Image** or to **Tagger**
 - Multiple taggers / tag lists can be switched from the list on the Models page; "Load / Unload tagger" loads on demand and frees memory when you are done
+- A loaded tagger can also be called as a **tool by chat models that cannot see images** (the model emits a `<tag>` command, the app tags the image, the tags are sent back and the model answers from them) - see the Chat section
 - Backend follows the Models page run mode: CPU, or NNAPI when GPU is selected
 
 ## Permissions
@@ -121,6 +123,7 @@ powershell -File tools/build-release.ps1
 - The quantization level is baked into the model file; the app only reads and displays it, never converts
 - The drawing native library is built with `-march=armv8.2-a+dotprod+fp16`, requiring a 64-bit ARM device from 2019 or later
 - Tagging supports Danbooru-style ONNX taggers (WD14 and its derivatives; the tag list must be in `tag_id,name,category,count` format); the `.onnx` and the tag-list CSV must be imported as a matching pair
+- If tagging looks wrong (e.g. wrong colours or hair colour), try switching the **channel order** (BGR / RGB): BGR is the official WD-family preprocessing, but a few re-exported models already baked BGR into their weights and need RGB; threshold and tag count also change the output a lot
 - The tagger model is loaded lazily on first use (it holds hundreds of MB of memory) and can be unloaded manually from the Models page
 - On **Android 9**, saving to the gallery / taking a photo requires the storage permission (prompted on first use); denying it makes those actions fail (Android 10+ is unaffected)
 - Image input is capped at 4 images and 2 files per message; a `.gguf` vision model must be paired with its matching `mmproj`, selected before the model is loaded
