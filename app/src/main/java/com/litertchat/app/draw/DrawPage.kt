@@ -1046,6 +1046,10 @@ class DrawPage(
 
     fun taggerLoaded(): Boolean = TaggerEngine.isLoaded()
 
+    /** Tagger 界面选的通道顺序（false = BGR，true = RGB）；对话页借打标看图时沿用这个设置。 */
+    fun taggerRgbOrder(): Boolean =
+        ::taggerChanSpinner.isInitialized && taggerChanSpinner.selectedItemPosition == 1
+
     /** 卸载打标模型，释放内存 */
     fun unloadTagger() = TaggerEngine.unload()
 
