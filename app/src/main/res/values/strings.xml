@@ -142,7 +142,7 @@
 <string name="s_139">Clear the current chat?</string>
 <string name="s_140">Source code: MIT License\nArtwork (app icon, character art, original drawing): © the author, all rights reserved, not covered by MIT.\nThird-party components (each © its authors): LiteRT-LM (Apache-2.0), llama.cpp (MIT), stable-diffusion.cpp (MIT), ggml (MIT), Markwon (Apache-2.0), ONNX Runtime (MIT), commonmark-java (BSD-2-Clause), Jackson/Gson (Apache-2.0), SLF4J (MIT), Kotlin/AndroidX (Apache-2.0). The sources of stable-diffusion.cpp and ggml are distributed with this project under app/src/main/cpp/; ONNX Runtime bundles extra third-party components (see licenses/onnxruntime-ThirdPartyNotices.txt); the native runtimes also statically link XNNPACK, protobuf, re2, cpuinfo, zlib and more. See the repository NOTICE and the licenses/ directory for the full list and licenses.</string>
 <string name="s_141">Tap to enlarge, long-press to save to your gallery</string>
-<string name="s_142">Version 1.4.0</string>
+<string name="s_142">Version 1.4.1</string>
 <string name="s_143">Generating (tap ■ to interrupt)…</string>
 <string name="s_144">Generating, please wait</string>
 <string name="s_145">Generation error</string>
@@ -334,7 +334,7 @@
   <string name="s_269">Imported — tap "Load tagger model"</string>
   <string name="s_270">Take photo</string>
   <string name="s_271">Gallery</string>
-  <string name="s_272">This model does not support image input. Use a multimodal .litertlm model, or pick a matching mmproj file for a vision gguf model.</string>
+  <string name="s_272">This model does not support image input. Use a multimodal .litertlm model, pick a matching mmproj for a vision gguf model, or load a tagger model on the Models page so the model can read images through it.</string>
   <string name="s_273">Load a model first to send images</string>
   <string name="s_274">No camera app available</string>
   <string name="s_275">Could not read the image</string>
@@ -385,4 +385,12 @@
 <string name="s_320">Restored %1$d file(s)</string>
 <string name="s_321">File content is missing from this record (saved by an older version). Please send the file again.</string>
 <string name="s_322">Installed: %1$s</string>
+<string name="s_323">(Identifying the image with the tagger...)</string>
+<string name="s_324">Image tags: %1$s</string>
+<string name="s_325">Tagger failed: %1$s</string>
+<string name="s_326">No image to identify in this turn</string>
+<string name="s_327">The tagger returned no tags; try a lower threshold</string>
+<string name="s_328">[Tagger result for the image the user sent]\n%1$s\n[End of tagger result]\nThe user\'s original question is below. Answer that question directly. Do not list or repeat the tags above, and do not ask the user for the question or the image again.\n[User question] %2$s</string>
+<string name="s_329">[The user attached %1$d image(s) to this message. You cannot see the images; use the image tool below when you need to look at them.]</string>
+<string name="s_331">[System] The user has already asked the question. Do not ask the user for the question or the image again, and do not list the tags. Answer that question directly:\n%1$s</string>
 </resources>

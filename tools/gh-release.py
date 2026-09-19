@@ -10,33 +10,28 @@ import urllib.request
 REPO = "visitor257/Ponko"
 TOKFILE = r"C:\Users\Administrator\Desktop\git_repo_tok.txt"
 APK = r"C:\Users\Administrator\.qclaw\workspace-agent-e522fb09\LiteRT-Chat\app\build\outputs\apk\release\Ponko-release.apk"
-TAG = "v1.4.0"
-NAME = "Ponko v1.4.0"
+TAG = "v1.4.1"
+NAME = "Ponko v1.4.1"
 
-BODY = """Ponko v1.4.0 - Offline-capable AI app for Android: chat (image + file input) + drawing + tagging.
+BODY = """Ponko v1.4.1 - Offline-capable AI app for Android: chat (image + file input) + drawing + tagging.
 
 All inference runs on-device: apart from the optional in-app LoRA download, no feature needs the network. No telemetry; your data stays on your phone.
 See the [README](https://github.com/visitor257/Ponko#readme).
 
-## v1.4.0 Highlights
-- **Chat: send text files**
-  - Third item in the "+" drawer: **File**; up to 2 files per message
-  - Text-like files only (`.txt` / `.md` / `.json` / `.csv` / `.log` / `.xml` / source code ...); UTF-8 / GBK auto-detected, binary files rejected, PDF not supported yet
-  - The text is trimmed to the context budget and sent with that one message (never kept in the history); the file name shows in the bubble
-- **Chat parameters (saved per model)**
-  - Context size, max output, temperature, Top-K, Top-P, repeat penalty, thinking budget, random seed
-  - **Saved per model**, written as you type; context size and max output apply after reloading the model
-- **Regenerate keeps the attachments**
-  - Regenerating a turn now carries its images and files along (restored into the attachment strip above the input box) instead of silently dropping them
-- **Context handling**
-  - The app estimates tokens, trims older turns and file text to fit the model context, and gives an actionable hint instead of a raw error when something still does not fit
-- **About page**: now also shows the install time
-- Version 1.3.1 -> 1.4.0 (versionCode 7)
+## v1.4.1 Highlights
+- **Chat can borrow the tagger to "see" an image (agent-style tool call)**
+  - If the chat model cannot see images itself (no multimodal, no mmproj) but a tagger model is loaded, the model can call the tagger like a tool: it emits a `<tag>` command, Ponko runs the ONNX tagger on the attached image, the tags are sent back to the model as a tool/system message, and the model answers based on them
+  - Threshold and tag count are chosen by the model itself (defaults 0.35 / 40); channel order (BGR/RGB) follows the Tagger setting on the drawing page
+  - The first round is not shown (the model may think out loud before calling the tool); the answer appears once the tool has run - no text that appears, vanishes and reappears
+  - The tagger output is never dumped into the chat bubble, and the model is asked to answer your original question directly instead of asking you for it again
+  - If the chat model can see images itself (multimodal, or gguf + mmproj), the tagger tool is neither offered nor executed
+- Version 1.4.0 -> 1.4.1 (versionCode 8)
 
 ## Chat
 - Two backends: LiteRT-LM (`.litertlm`) + llama.cpp (`.gguf`)
 - **Image input**: `.litertlm` multimodal models, or `.gguf` vision models with a matching mmproj
 - **File input**: text-like files, up to 2 per message
+- **Tagger as a chat tool**: a loaded tagger can be called from chat when the chat model cannot see images itself
 - Multiple conversations, history persisted locally
 - Reasoning and answer shown separately, collapsible; the thinking toggle works for both formats
 - Streaming Markdown rendering (headings / lists / tables / code / links)
@@ -53,7 +48,7 @@ See the [README](https://github.com/visitor257/Ponko#readme).
 
 ## Install
 - arm64-v8a only (64-bit ARM devices), minSdk 28 (Android 9+)
-- v1.4.0 (versionCode 7) installs over v1.3.x / v1.2; uninstall older debug builds or v1.0 first (different signing key)
+- v1.4.1 (versionCode 8) installs over v1.4.0 / v1.3.x / v1.2; uninstall older debug builds or v1.0 first (different signing key)
 - Model files are not bundled: import chat models (`.litertlm` / `.gguf`), a drawing model (SD1.5 GGUF) and, optionally, a tagger (`.onnx` + `.csv`) from the in-app "Models" page
 
 ## License
@@ -61,29 +56,24 @@ Code is MIT; art assets (icons, artwork) are all rights reserved. Third-party co
 
 ---
 
-Ponko v1.4.0 —— 本地 AI App（Android）：聊天（可发图、可发文件）+ 绘图 + 打标
+Ponko v1.4.1 —— 本地 AI App（Android）：聊天（可发图、可发文件）+ 绘图 + 打标
 
 所有推理都在本机完成：除了「手动下载 LoRA」，其余功能都不需要联网；无遥测，数据只留在设备本地。
 
-### v1.4.0 亮点
-- **聊天发送文件（纯文本类）**
-  - 「＋」抽屉里的第三项：**文件**；一条消息最多 2 个
-  - 只支持文本类文件（`.txt` / `.md` / `.json` / `.csv` / `.log` / `.xml` / 代码等）；UTF-8 / GBK 自动识别，二进制文件直接拒收，PDF 暂不支持
-  - 正文按上下文预算截断后随那一条消息发送（不进历史），气泡上显示文件名
-- **对话参数（按模型分别保存）**
-  - 上下文长度、最大输出、温度、Top-K、Top-P、重复惩罚、思考预算、随机种子
-  - **按模型分别保存**，输入即存；上下文长度与最大输出需重新加载模型生效
-- **重新生成不再丢附件**
-  - 重新生成某一轮时，会把这一轮的图片与文件一起还原到输入框上方的附件条，不再默默丢掉
-- **上下文超限处理**
-  - 自动估算 token、裁剪更早的对话与文件正文；实在放不下时给出可操作提示，而不是甩一个原始报错
-- **「关于」页**：新增显示安装时间
-- 版本 1.3.1 -> 1.4.0（versionCode 7）
+### v1.4.1 亮点
+- **聊天可以「借」打标模型看图（agent 式工具调用）**
+  - 当对话模型本身看不见图片（没有多模态、也没配 mmproj），但已加载打标模型时：模型会像调工具那样调用打标模型——它输出一行 `<tag>` 命令，Ponko 对附件图片跑一遍 ONNX 打标，再把标签以「工具 / 系统消息」的形式发回给模型，模型据此作答
+  - 阈值与标签数量由模型自己决定（默认 0.35 / 40）；BGR / RGB 跟随绘图页 Tagger 里的设置
+  - 第一轮内容不显示（模型可能先「想」一段再调工具），工具跑完直接出最终回答——不会出现「先说一段、命令命中后又消失重来」
+  - 标签不会原样倒进聊天气泡；同时会要求模型直接回答你最初的问题，而不是反过来问你要问题
+  - 对话模型自己能看图时（多模态，或 gguf 配了 mmproj），不会向它提供、也不会执行这个工具
+- 版本 1.4.0 -> 1.4.1（versionCode 8）
 
 ### 对话功能
 - 双后端：LiteRT-LM（`.litertlm`）+ llama.cpp（`.gguf`）
 - **图片输入**：`.litertlm` 多模态模型，或配了 mmproj 的 `.gguf` 视觉模型
 - **文件输入**：文本类文件，一条最多 2 个
+- **打标当工具用**：对话模型看不见图片时，可在聊天里调用已加载的打标模型
 - 多对话管理，历史本地持久化
 - 思考过程与正文分离、可折叠；思考开关对两种格式均生效
 - Markdown 流式渲染（标题 / 列表 / 表格 / 代码块 / 链接）
@@ -100,7 +90,7 @@ Ponko v1.4.0 —— 本地 AI App（Android）：聊天（可发图、可发文�
 
 ### 安装
 - 仅支持 arm64-v8a（64 位 ARM 真机），minSdk 28（Android 9 及以上）
-- v1.4.0（versionCode 7）可直接覆盖安装 v1.3.x / v1.2；更早的 debug 版或 v1.0 请先卸载（签名不同）
+- v1.4.1（versionCode 8）可直接覆盖安装 v1.4.0 / v1.3.x / v1.2；更早的 debug 版或 v1.0 请先卸载（签名不同）
 - 模型文件需自备：对话模型（`.litertlm` / `.gguf`）、绘图模型（SD1.5 GGUF），打标模型（`.onnx` + `.csv`）可选，都在 App 内「模型」页导入
 
 ### 许可

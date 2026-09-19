@@ -28,6 +28,7 @@ Two model formats are supported:
   - `.gguf`: needs a **vision model plus its matching `mmproj` file**. Import and select the mmproj on the Models page, Chat model card, and **pick the mmproj before loading the model**
 - **File input (text-like files)**: the third item in the same "+" drawer, **File**, up to 2 per message; supports `.txt` / `.md` / `.json` / `.csv` / `.log` / `.xml` / source code and similar text files (UTF-8 / GBK auto-detected; binary files are rejected, PDF is not supported yet). The text is trimmed to the context budget and sent **with that one message only**, never added to the history; the file name shows up in the bubble
 - **Chat parameters**: on the Models page, Chat model card, you can tune context size, max output, temperature, Top-K, Top-P, repeat penalty, thinking budget and random seed; **saved per model**, as you type. Context size and max output take effect **after reloading the model**
+- **Text-only chat models can borrow the tagger to "see" an image**: when the chat model cannot see images itself (no multimodal, no mmproj) but a tagger model is loaded, the model calls the tagger on its own (it emits a `<tag>` command, the app tags the image, the tags come back as a tool result) and then answers based on them; threshold and tag count are chosen by the model, BGR/RGB follows the Tagger setting on the drawing page. Models that can see images never take this path
 
 ## Drawing
 
