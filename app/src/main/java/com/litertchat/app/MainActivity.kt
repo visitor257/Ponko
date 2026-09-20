@@ -120,6 +120,8 @@ class MainActivity : Activity() {
         private const val KEY_CHAT_REP = "chatRep"
         private const val KEY_CHAT_BUDGET = "chatBudget"
         private const val KEY_CHAT_SEED = "chatSeed"
+        /** 思考模式开关（全局偏好，与模型无关） */
+        private const val KEY_CHAT_THINK = "chatThink"
         private const val DEF_CHAT_CTX = 4096
         private const val DEF_CHAT_MAXOUT = 2048
         private const val DEF_CHAT_TEMP = 0.7f
@@ -1619,8 +1621,9 @@ class MainActivity : Activity() {
             text = getString(R.string.s_105)
             textSize = 12.5f
             setTextColor(C_TEXT)
-            isChecked = true
+            isChecked = chatPrefs().getBoolean(KEY_CHAT_THINK, true)
             buttonTintList = ColorStateList.valueOf(C_PRIMARY)
+            setOnCheckedChangeListener { _, v -> chatPrefs().edit().putBoolean(KEY_CHAT_THINK, v).apply() }
         }
         bar.addView(thinkCheck, matchWrap())
 

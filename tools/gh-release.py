@@ -26,6 +26,7 @@ See the [README](https://github.com/visitor257/Ponko#readme).
   - **Only these three paths carry GPU code**, and all three have only been verified at build time, never on a real device - they are expected to work in theory, but whether they do depends on the phone's drivers and VRAM. **GGUF chat has no GPU backend at all and always runs on CPU**
   - The package grows accordingly: 39.98 MB -> 50.66 MB (`libstable-diffusion.so` 8.9 MB -> 44 MB, mostly precompiled SPIR-V shaders)
 - Licence bookkeeping for the new build dependency: Vulkan-Hpp / Vulkan-Headers (Apache-2.0 OR MIT) is vendored with the source and declared in NOTICE, the READMEs and the in-app About page
+- Fix: the chat thinking toggle now remembers its state across restarts
 - Version 1.4.1 -> 1.5.0 (versionCode 9)
 
 ## Chat
@@ -70,6 +71,7 @@ Ponko v1.5.0 —— 本地 AI App（Android）：聊天（可发图、可发文�
   - **只有这三条路径带 GPU 代码**，且三者都只在构建侧验证过、**未在任何手机上实测**——理论上可用，实际取决于机型驱动与显存。**对话 GGUF 没有任何 GPU 后端，始终 CPU**
   - 包体相应变大：39.98 MB -> 50.66 MB（`libstable-diffusion.so` 8.9 MB -> 44 MB，主要是预编译的 SPIR-V 着色器）
 - 新增构建依赖的许可登记：Vulkan-Hpp / Vulkan-Headers（Apache-2.0 OR MIT）随源码入库，已写入 NOTICE / README / App 关于页
+- 修复：对话页「思考模式」开关现在会记住上次状态（重启后不会被重置）
 - 版本 1.4.1 -> 1.5.0（versionCode 9）
 
 ### 对话功能
