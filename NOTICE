@@ -80,6 +80,17 @@ A. Bundled source code (distributed with this repository, under app/src/main/cpp
             The GPU backends (CUDA / Metal / OpenCL / SYCL / OpenVINO) are kept
             as source only and are not compiled into the app.
 
+  - Vulkan-Hpp (vulkan.hpp) and Vulkan-Headers (vulkan.h, vk_video/*)
+      License: Apache License 2.0 OR MIT (SPDX: Apache-2.0 OR MIT)
+      Copyright: Copyright 2015-2024 The Khronos Group Inc.
+      Source: https://github.com/KhronosGroup/Vulkan-Hpp ,
+              https://github.com/KhronosGroup/Vulkan-Headers
+      License text: licenses/apache-2.0.txt
+      Note: Header-only Vulkan C++ bindings, vendored at
+            app/src/main/cpp/thirdparty/include/ (version 1.3.275, matching the
+            NDK's Vulkan headers). Only needed to compile the optional Vulkan
+            backend for drawing.
+
   - Third-party files bundled with stable-diffusion.cpp (thirdparty/)
       - stb_image.h / stb_image_write.h / stb_image_resize.h: Public Domain or MIT
       - json.hpp (JSON for Modern C++): MIT License
@@ -266,6 +277,16 @@ A. 内置源码（随本仓库分发，源码位于 app/src/main/cpp/）
               （MIT，Evan Nemerson）与 Abseil（Apache License 2.0）
             各 GPU 后端（CUDA / Metal / OpenCL / SYCL / OpenVINO）仅保留源码，
             不参与 App 编译。
+
+  - Vulkan-Hpp（vulkan.hpp）与 Vulkan-Headers（vulkan.h、vk_video/*）
+      许可证：Apache License 2.0 OR MIT（SPDX：Apache-2.0 OR MIT）
+      著作权：Copyright 2015-2024 The Khronos Group Inc.
+      来源：https://github.com/KhronosGroup/Vulkan-Hpp ，
+            https://github.com/KhronosGroup/Vulkan-Headers
+      许可证文本：licenses/apache-2.0.txt
+      说明：仅头文件的 Vulkan C++ 绑定，随仓库分发在
+            app/src/main/cpp/thirdparty/include/（版本 1.3.275，与 NDK 的
+            Vulkan 头版本对应）。只有编译可选的绘图 Vulkan 后端时需要。
 
   - stable-diffusion.cpp 附带的第三方文件（thirdparty/）
       - stb_image.h / stb_image_write.h：公有领域（Public Domain）或 MIT

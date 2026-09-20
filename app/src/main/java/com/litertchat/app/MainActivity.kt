@@ -3078,7 +3078,9 @@ class MainActivity : Activity() {
                         if (backendName == "GPU") toast(getString(R.string.s_016))
                     }
                 } else {
-                    val backend: Backend = if (backendName == "GPU") Backend.GPU() else Backend.CPU()
+                    // 后端：选 GPU 时先试 LiteRT 的 GPU 后端；设备/驱动不支持就自动退回 CPU
+                    val gpuWanted = backendName == "GPU"
+                    var usedBackendName = backendName
                     // 先读模型自带的 Capabilities：是否为多模态（图文）模型
                     val vok = probeVision(path)
                     // 坑：EngineConfig.visionBackend 默认是 null，运行时就不会创建 vision executor，
@@ -3088,13 +3090,24 @@ class MainActivity : Activity() {
                         modelPath = path,
                         // 上下文长度（token）：模型页可调；调大能装更多历史，但更吃内存
                         maxNumTokens = chatCtx(),
-                        backend = backend,
-                        visionBackend = if (vok) backend else null,
+                        backend = if (gpuWanted) Backend.GPU() else Backend.CPU(),
+                        visionBackend = if (vok) (if (gpuWanted) Backend.GPU() else Backend.CPU()) else null,
                         maxNumImages = if (vok) MAX_ATTACH else null,
                         cacheDir = cacheDir.absolutePath,
                     )
-                    val eng = Engine(cfg)
-                    eng.initialize()
+                    val eng: Engine = try {
+                        val g = Engine(cfg)
+                        g.initialize()
+                        g
+                    } catch (e: Throwable) {
+                        if (!gpuWanted) throw e
+                        // GPU 后端在这台机器上用不了 → 退回 CPU，别让用户用不了模型
+                        withContext(Dispatchers.Main) { toast(getString(R.string.s_335)) }
+                        usedBackendName = "CPU"
+                        val cpu = Engine(cfg.copy(backend = Backend.CPU(), visionBackend = if (vok) Backend.CPU() else null))
+                        cpu.initialize()
+                        cpu
+                    }
                     val conv = eng.createConversation(configFor(current, thinking))
                     withContext(Dispatchers.Main) {
                         engine = eng
@@ -3105,7 +3118,7 @@ class MainActivity : Activity() {
                         convThinking = thinking
                         visionOk = vok
                         convDrawCapable = canDrawFromChat
-                        setStatus(getString(R.string.v_015, (backendName)), C_OK)
+                        setStatus(getString(R.string.v_015, (usedBackendName)), C_OK)
                     }
                 }
                 withContext(Dispatchers.Main) {

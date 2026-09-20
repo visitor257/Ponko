@@ -10,22 +10,23 @@ import urllib.request
 REPO = "visitor257/Ponko"
 TOKFILE = r"C:\Users\Administrator\Desktop\git_repo_tok.txt"
 APK = r"C:\Users\Administrator\.qclaw\workspace-agent-e522fb09\LiteRT-Chat\app\build\outputs\apk\release\Ponko-release.apk"
-TAG = "v1.4.1"
-NAME = "Ponko v1.4.1"
+TAG = "v1.5.0"
+NAME = "Ponko v1.5.0"
 
-BODY = """Ponko v1.4.1 - Offline-capable AI app for Android: chat (image + file input) + drawing + tagging.
+BODY = """Ponko v1.5.0 - Offline-capable AI app for Android: chat (image + file input) + drawing + tagging.
 
 All inference runs on-device: apart from the optional in-app LoRA download, no feature needs the network. No telemetry; your data stays on your phone.
 See the [README](https://github.com/visitor257/Ponko#readme).
 
-## v1.4.1 Highlights
-- **Chat can borrow the tagger to "see" an image (agent-style tool call)**
-  - If the chat model cannot see images itself (no multimodal, no mmproj) but a tagger model is loaded, the model can call the tagger like a tool: it emits a `<tag>` command, Ponko runs the ONNX tagger on the attached image, the tags are sent back to the model as a tool/system message, and the model answers based on them
-  - Threshold and tag count are chosen by the model itself (defaults 0.35 / 40); channel order (BGR/RGB) follows the Tagger setting on the drawing page
-  - The first round is not shown (the model may think out loud before calling the tool); the answer appears once the tool has run - no text that appears, vanishes and reappears
-  - The tagger output is never dumped into the chat bubble, and the model is asked to answer your original question directly instead of asking you for it again
-  - If the chat model can see images itself (multimodal, or gguf + mmproj), the tagger tool is neither offered nor executed
-- Version 1.4.0 -> 1.4.1 (versionCode 8)
+## v1.5.0 Highlights
+- **GPU support (optional; verified at build time only, NOT tested on a real device)**
+  - **Drawing**: a Vulkan backend is now compiled into the app. Set the run mode to GPU on the Models page and drawing uses the device's Vulkan backend (text-to-image and image-to-image both); if the phone has no Vulkan or init fails, Ponko falls back to CPU automatically and the drawing status line shows the backend actually in use
+  - **Chat `.litertlm`**: GPU was already wired up; it now falls back to CPU automatically when init fails instead of erroring out
+  - **Tagging**: NNAPI when GPU is selected (unchanged)
+  - **Only these three paths carry GPU code**, and all three have only been verified at build time, never on a real device - they are expected to work in theory, but whether they do depends on the phone's drivers and VRAM. **GGUF chat has no GPU backend at all and always runs on CPU**
+  - The package grows accordingly: 39.98 MB -> 50.66 MB (`libstable-diffusion.so` 8.9 MB -> 44 MB, mostly precompiled SPIR-V shaders)
+- Licence bookkeeping for the new build dependency: Vulkan-Hpp / Vulkan-Headers (Apache-2.0 OR MIT) is vendored with the source and declared in NOTICE, the READMEs and the in-app About page
+- Version 1.4.1 -> 1.5.0 (versionCode 9)
 
 ## Chat
 - Two backends: LiteRT-LM (`.litertlm`) + llama.cpp (`.gguf`)
@@ -39,7 +40,8 @@ See the [README](https://github.com/visitor257/Ponko#readme).
 - Auto-follow scroll, pause on scroll-up, jump-to-bottom button
 
 ## Drawing
-- Built-in custom stable-diffusion.cpp, loads SD1.5-family GGUF models, pure CPU
+- Built-in custom stable-diffusion.cpp, loads SD1.5-family GGUF models; CPU by default, optional GPU (Vulkan) acceleration with automatic CPU fallback
+- GPU status: only drawing (Vulkan), tagging (NNAPI) and `.litertlm` chat carry GPU code; all build-time-verified only, gguf chat is CPU-only
 - Text-to-image + image-to-image (denoise strength 0.05-0.99, output size auto-aligned to the reference)
 - Per-page parameter defaults with confirmation (separate sets for LoRA on/off)
 - LCM-LoRA acceleration: one-tap download in-app (Hugging Face official / hf-mirror), cuts 20 steps to 4-8; local LoRA import supported
@@ -48,26 +50,27 @@ See the [README](https://github.com/visitor257/Ponko#readme).
 
 ## Install
 - arm64-v8a only (64-bit ARM devices), minSdk 28 (Android 9+)
-- v1.4.1 (versionCode 8) installs over v1.4.0 / v1.3.x / v1.2; uninstall older debug builds or v1.0 first (different signing key)
+- v1.5.0 (versionCode 9) installs over v1.4.1 / v1.4.0 / v1.3.x / v1.2; uninstall older debug builds or v1.0 first (different signing key)
 - Model files are not bundled: import chat models (`.litertlm` / `.gguf`), a drawing model (SD1.5 GGUF) and, optionally, a tagger (`.onnx` + `.csv`) from the in-app "Models" page
 
 ## License
-Code is MIT; art assets (icons, artwork) are all rights reserved. Third-party components (stable-diffusion.cpp, ggml, LiteRT-LM, llama.cpp, Markwon, ONNX Runtime, etc.) are distributed under their respective licenses - see the repository NOTICE. ONNX Runtime bundles extra third-party components; their notices are included under `licenses/`. The native runtimes also statically link XNNPACK, protobuf, re2, cpuinfo, zlib and others; see NOTICE and the `licenses/` directory for the full list.
+Code is MIT; art assets (icons, artwork) are all rights reserved. Third-party components (stable-diffusion.cpp, ggml, Vulkan-Hpp/Vulkan-Headers, LiteRT-LM, llama.cpp, Markwon, ONNX Runtime, etc.) are distributed under their respective licenses - see the repository NOTICE. ONNX Runtime bundles extra third-party components; their notices are included under `licenses/`. The native runtimes also statically link XNNPACK, protobuf, re2, cpuinfo, zlib and others; see NOTICE and the `licenses/` directory for the full list.
 
 ---
 
-Ponko v1.4.1 —— 本地 AI App（Android）：聊天（可发图、可发文件）+ 绘图 + 打标
+Ponko v1.5.0 —— 本地 AI App（Android）：聊天（可发图、可发文件）+ 绘图 + 打标
 
 所有推理都在本机完成：除了「手动下载 LoRA」，其余功能都不需要联网；无遥测，数据只留在设备本地。
 
-### v1.4.1 亮点
-- **聊天可以「借」打标模型看图（agent 式工具调用）**
-  - 当对话模型本身看不见图片（没有多模态、也没配 mmproj），但已加载打标模型时：模型会像调工具那样调用打标模型——它输出一行 `<tag>` 命令，Ponko 对附件图片跑一遍 ONNX 打标，再把标签以「工具 / 系统消息」的形式发回给模型，模型据此作答
-  - 阈值与标签数量由模型自己决定（默认 0.35 / 40）；BGR / RGB 跟随绘图页 Tagger 里的设置
-  - 第一轮内容不显示（模型可能先「想」一段再调工具），工具跑完直接出最终回答——不会出现「先说一段、命令命中后又消失重来」
-  - 标签不会原样倒进聊天气泡；同时会要求模型直接回答你最初的问题，而不是反过来问你要问题
-  - 对话模型自己能看图时（多模态，或 gguf 配了 mmproj），不会向它提供、也不会执行这个工具
-- 版本 1.4.0 -> 1.4.1（versionCode 8）
+### v1.5.0 亮点
+- **GPU 支持（可选；仅构建侧验证，未真机实测）**
+  - **绘图**：新增编译进包的 Vulkan 后端。在「模型」页把运行方式切到 GPU，绘图就会走设备的 Vulkan 后端（文生图 / 图生图都生效）；机型没有 Vulkan 或初始化失败会自动回退 CPU，绘图页状态行会显示实际使用的后端
+  - **对话 `.litertlm`**：GPU 原本已接线，现在初始化失败会**自动退回 CPU**，不再直接报错
+  - **打标**：选 GPU 时走 NNAPI（未变）
+  - **只有这三条路径带 GPU 代码**，且三者都只在构建侧验证过、**未在任何手机上实测**——理论上可用，实际取决于机型驱动与显存。**对话 GGUF 没有任何 GPU 后端，始终 CPU**
+  - 包体相应变大：39.98 MB -> 50.66 MB（`libstable-diffusion.so` 8.9 MB -> 44 MB，主要是预编译的 SPIR-V 着色器）
+- 新增构建依赖的许可登记：Vulkan-Hpp / Vulkan-Headers（Apache-2.0 OR MIT）随源码入库，已写入 NOTICE / README / App 关于页
+- 版本 1.4.1 -> 1.5.0（versionCode 9）
 
 ### 对话功能
 - 双后端：LiteRT-LM（`.litertlm`）+ llama.cpp（`.gguf`）
@@ -81,7 +84,8 @@ Ponko v1.4.1 —— 本地 AI App（Android）：聊天（可发图、可发文�
 - 自动跟随滚动，上滑暂停、一键回到底部
 
 ### 绘图功能
-- 内置自编 stable-diffusion.cpp，读 GGUF 格式的 SD1.5 系模型，纯 CPU 绘制
+- 内置自编 stable-diffusion.cpp，读 GGUF 格式的 SD1.5 系模型；默认 CPU，可选 GPU（Vulkan）加速，失败自动回退 CPU
+- GPU 现状：只有绘图（Vulkan）、打标（NNAPI）、对话 `.litertlm` 三条带 GPU 代码，且都仅构建侧验证；对话 GGUF 只能 CPU
 - 文生图 + 图生图（重绘强度 0.05~0.99，尺寸自动对齐参考图）
 - 每个参数页可「设为默认值 / 恢复默认」（带确认），文生图 / 图生图按 LoRA 开 / 关各存一套
 - LCM-LoRA 加速：App 内一键下载（HF 官方 / hf-mirror 双源），20 步压到 4~8 步；也支持导入本地 LoRA
@@ -90,11 +94,11 @@ Ponko v1.4.1 —— 本地 AI App（Android）：聊天（可发图、可发文�
 
 ### 安装
 - 仅支持 arm64-v8a（64 位 ARM 真机），minSdk 28（Android 9 及以上）
-- v1.4.1（versionCode 8）可直接覆盖安装 v1.4.0 / v1.3.x / v1.2；更早的 debug 版或 v1.0 请先卸载（签名不同）
+- v1.5.0（versionCode 9）可直接覆盖安装 v1.4.1 / v1.4.0 / v1.3.x / v1.2；更早的 debug 版或 v1.0 请先卸载（签名不同）
 - 模型文件需自备：对话模型（`.litertlm` / `.gguf`）、绘图模型（SD1.5 GGUF），打标模型（`.onnx` + `.csv`）可选，都在 App 内「模型」页导入
 
 ### 许可
-代码 MIT；美术资源（图标、立绘）版权归作者所有。本项目包含的第三方组件（stable-diffusion.cpp、ggml、LiteRT-LM、llama.cpp、Markwon、ONNX Runtime 等）按各自许可证分发，详见仓库 NOTICE。ONNX Runtime 另自带若干第三方组件，其声明收录在 `licenses/` 目录。各运行时原生库还静态链入 XNNPACK、protobuf、re2、cpuinfo、zlib 等，完整清单见 NOTICE 与 `licenses/` 目录。
+代码 MIT；美术资源（图标、立绘）版权归作者所有。本项目包含的第三方组件（stable-diffusion.cpp、ggml、Vulkan-Hpp/Vulkan-Headers、LiteRT-LM、llama.cpp、Markwon、ONNX Runtime 等）按各自许可证分发，详见仓库 NOTICE。ONNX Runtime 另自带若干第三方组件，其声明收录在 `licenses/` 目录。各运行时原生库还静态链入 XNNPACK、protobuf、re2、cpuinfo、zlib 等，完整清单见 NOTICE 与 `licenses/` 目录。
 """
 
 

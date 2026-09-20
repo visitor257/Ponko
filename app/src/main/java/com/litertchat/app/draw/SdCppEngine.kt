@@ -66,7 +66,7 @@ object SdCppEngine {
     /** 最近一次 new_sd_ctx 的完整参数（诊断加载失败用） */
     external fun nativeLastParams(): String
 
-    external fun nativeCreate(modelPath: String, vaePath: String?, nThreads: Int, wtype: Int, flashAttn: Boolean): Long
+    external fun nativeCreate(modelPath: String, vaePath: String?, nThreads: Int, wtype: Int, flashAttn: Boolean, backend: String?): Long
 
     external fun nativeGenerate(
         handle: Long,
@@ -90,6 +90,9 @@ object SdCppEngine {
 
     external fun nativeCancel(handle: Long)
 
+    /** ggml 后端设备清单：每行 "name\tdescription"（如 "Vulkan0\tAdreno (TM) 650"）。 */
+    external fun nativeListDevices(): String
+
     external fun nativeFree(handle: Long)
 
     fun info(): String = runCatching { nativeInfo() }.getOrDefault("(n/a)")
@@ -97,9 +100,26 @@ object SdCppEngine {
     /** 最近一次 new_sd_ctx 用的参数（多行文本） */
     fun lastParams(): String = runCatching { nativeLastParams() }.getOrDefault("")
 
+    /** 后端设备清单（名字 -> 描述）；取不到时返回空表。 */
+    fun listDevices(): List<Pair<String, String>> =
+        runCatching { nativeListDevices() }.getOrDefault("")
+            .lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .map { line ->
+                val i = line.indexOf('\t')
+                if (i < 0) line to "" else line.substring(0, i) to line.substring(i + 1)
+            }
+            .toList()
+
+    /** 是否有可用的 Vulkan(GPU) 设备；有则返回设备名（如 "Vulkan0"）。 */
+    fun vulkanDevice(): String? =
+        listDevices().firstOrNull { it.first.contains("vulkan", true) }?.first
+
     /** 加载模型并返回 handle；0 表示失败。
      *
      *  flashAttn：CLIP 与 UNet 的 FlashAttention。实测不开会让每步慢约 28%，默认开。
+     *  backend：ggml 后端/设备名（"CPU" / "Vulkan0"）；null = 交给 sd.cpp 自动挑。
      */
     fun create(
         modelPath: String,
@@ -107,7 +127,8 @@ object SdCppEngine {
         nThreads: Int = Runtime.getRuntime().availableProcessors().coerceIn(2, 4),
         wtype: Int = WTYPE_KEEP,
         flashAttn: Boolean = true,
-    ): Long = nativeCreate(modelPath, vaePath, nThreads, wtype, flashAttn)
+        backend: String? = null,
+    ): Long = nativeCreate(modelPath, vaePath, nThreads, wtype, flashAttn, backend)
 
     /** 生成一张图；失败返回 null。
      *

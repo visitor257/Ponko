@@ -74,16 +74,31 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeLastParams(JNIEnv* env, jobject /
     return env->NewStringUTF(g_last_dump.c_str());
 }
 
-// nativeCreate(modelPath, vaePath, nThreads, wtype, flashAttn) -> handle
+// nativeListDevices() -> "name\tdescription\n..."（ggml 后端设备清单；没有设备时返回空串）
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_litertchat_app_draw_SdCppEngine_nativeListDevices(JNIEnv* env, jobject /*thiz*/) {
+    const size_t need = sd_list_devices(nullptr, 0);
+    if (need == 0) return env->NewStringUTF("");
+    std::vector<char> buf(need + 1, '\0');
+    sd_list_devices(buf.data(), buf.size());
+    return env->NewStringUTF(buf.data());
+}
+
+// nativeCreate(modelPath, vaePath, nThreads, wtype, flashAttn, backend) -> handle
+//
+// backend：ggml 后端/设备名（如 "CPU" / "Vulkan0" / "vulkan"），空串或 null = 交给 sd.cpp 自动挑。
+// 显式传值会关掉 sd.cpp 的 auto_fit，行为更可控（选 CPU 就真是 CPU）。
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_litertchat_app_draw_SdCppEngine_nativeCreate(
         JNIEnv* env, jobject /*thiz*/,
-        jstring modelPath, jstring vaePath, jint nThreads, jint wtype, jboolean flashAttn) {
+        jstring modelPath, jstring vaePath, jint nThreads, jint wtype, jboolean flashAttn,
+        jstring backend) {
     if (modelPath == nullptr) return 0;
 
-    std::string model, vae;
+    std::string model, vae, backendStr;
     jstr(env, modelPath, model);
     jstr(env, vaePath, vae);
+    jstr(env, backend, backendStr);
 
     sd_ctx_params_t p;
     sd_ctx_params_init(&p);
@@ -94,6 +109,8 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeCreate(
     // SD_TYPE_COUNT。实测把 -1 强转成 sd_type_t 会让 sd.cpp 内部查表越界，native 直接崩溃。
     if (wtype >= 0) p.wtype = static_cast<enum sd_type_t>(wtype);
     p.enable_mmap  = true;
+    // 后端：非空则显式指定（同时关掉 auto_fit），空则保持 sd.cpp 默认（自动挑设备）
+    if (!backendStr.empty()) p.backend = backendStr.c_str();
     // 两个 FlashAttention 都要开：flash_attn 影响 CLIP，diffusion_flash_attn 影响 UNet（算力主体）。
     // 实测不开比开慢约 28%（6 步 125s vs 98s）。注意 sd_ctx_params_init 默认都是 false。
     const bool fa = (flashAttn == JNI_TRUE);
