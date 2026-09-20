@@ -23,6 +23,36 @@ $signed = Join-Path $proj "app\build\outputs\apk\release\Ponko-release.apk"
 
 function Step($name) { Write-Host "`n=== $name ===" -ForegroundColor Cyan }
 
+# Vulkan 后端的 host 工具（vulkan-shaders-gen）在 Windows 上需要 MSVC 的 cl.exe。
+# Gradle daemon 会继承【启动时】的环境，所以这里先把 MSVC 环境导进来并重启 daemon，
+# 否则 CMake 在 daemon 里 configure 时找不到 host 编译器（Host compiler not found）。
+Step "0/5 载入 MSVC 环境"
+$vcvars = $null
+$vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+if (Test-Path $vswhere) {
+    $vsPath = (& $vswhere -latest -products * -property installationPath) 2>$null | Select-Object -First 1
+    if ($vsPath) {
+        $cand = Join-Path $vsPath "VC\Auxiliary\Build\vcvars64.bat"
+        if (Test-Path $cand) { $vcvars = $cand }
+    }
+}
+if (-not $vcvars) {
+    foreach ($p in @(
+        (Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvars64.bat"),
+        (Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"),
+        (Join-Path ${env:ProgramFiles} "Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat")
+    )) { if (Test-Path $p) { $vcvars = $p; break } }
+}
+if ($vcvars) {
+    cmd /c "`"$vcvars`" >nul 2>&1 && set" | ForEach-Object {
+        if ($_ -match '^([^=]+)=(.*)$') { Set-Item -Path "env:$($matches[1])" -Value $matches[2] -ErrorAction SilentlyContinue }
+    }
+    Write-Host "  MSVC: $vcvars"
+    & $gradle --stop | Out-Null   # 让下一次构建用带 MSVC 环境的新 daemon
+} else {
+    Write-Warning "  未找到 vcvars64.bat：SD_VULKAN=ON 的构建会失败（Host compiler not found）"
+}
+
 Step "1/5 assembleRelease"
 & $gradle -p $proj assembleRelease 2>&1 | Select-String -Pattern "BUILD|^e: |error:|FAILED"
 if ($LASTEXITCODE -ne 0) { throw "gradle 构建失败（exit=$LASTEXITCODE），已停止，不交付任何产物" }

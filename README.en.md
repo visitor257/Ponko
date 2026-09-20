@@ -18,6 +18,7 @@ Two model formats are supported:
 | `.gguf` | llama.cpp | Multi-threaded CPU, in-session KV prefix reuse (no re-prefill on long chats) |
 
 - **Model management**: pick a model file from local storage; it is copied into the app's private directory and can be reused anytime. The Models page has a run-mode selector (CPU / GPU) on top and three sub-pages below (**Chat model / Draw model / Tagger model**, swipe to switch), where each kind of model can be viewed, selected or deleted.
+  - What the run mode covers: **only three paths carry GPU code** - **drawing** (Vulkan), **tagging** (NNAPI) and **`.litertlm` chat** (LiteRT-LM GPU, i.e. OpenCL / Vulkan underneath); **GGUF chat always runs on CPU** (the binding has no GPU backend). All three GPU paths have **only been verified at build time and never on a real device** - they are expected to work in theory, but whether they do depends on the phone's drivers and VRAM; if the device does not support it or init fails, the app falls back to CPU automatically and the drawing status line shows the backend actually in use
 - **Multiple conversations**: create / switch / delete chats. History is persisted on-device (`sessions.json`).
 - **Separate thinking**: reasoning and answer are shown apart and collapsible; the thinking toggle works for both formats.
 - **Markdown rendering**: headings, bold/italic, strikethrough, ordered/unordered lists, inline code and code blocks, quotes, dividers, tables, tappable links.
@@ -47,6 +48,7 @@ The engine is [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.
 - **Parameters**: width/height (multiples of 64), steps, CFG, seed, sampler, scheduler - all adjustable and **remembered across restarts** (prompts are not).
 - **LoRA**: one-tap in-app download of LCM-LoRA (official HuggingFace / hf-mirror), cutting 20 steps down to 4-8. You can also **import a local LoRA** (a single `.safetensors`), and switch between multiple LoRAs from the list.
 - **Model import**: the drawing model is imported as a **single `.gguf` file**.
+- **GPU acceleration (optional; build-time-verified only, not tested on a real device)**: switch the run mode to **GPU** on the Models page and drawing uses the device's Vulkan backend (both text-to-image and image-to-image); if the device has no Vulkan or init fails it **falls back to CPU automatically**, and the backend actually in use is shown in the drawing status line
 - **Draw from chat**: when both a chat model and a draw model are loaded, just say "draw me ..." and the draw model is invoked.
 - The "Parameters" / "Result" views can be swiped left/right; save images to the gallery from the Result view.
 
@@ -105,6 +107,7 @@ powershell -File tools/build-release.ps1
 - The first full compile of sd.cpp + ggml takes about 8-9 minutes; with C++ unchanged, incremental builds take ~10 seconds
 - Main dependencies: `com.google.ai.edge.litertlm:litertlm-android:0.17.0`, `net.ladenthin:llama-android:5.1.0`, `com.microsoft.onnxruntime:onnxruntime-android:1.22.0`, `io.noties.markwon:*:4.6.2`
 - Built by CMake: `libstable-diffusion.so` (sd.cpp itself), `libponko_sd.so` (JNI bridge)
+- The Vulkan backend (optional GPU drawing) needs **no Vulkan SDK**: `glslc` and the SPIRV headers come from the NDK, plus a **host compiler** to build the shader generator (MSVC on Windows - `tools/build-release.ps1` loads the `vcvars64` environment for you)
 
 ## Where to get models
 
@@ -119,7 +122,8 @@ powershell -File tools/build-release.ps1
 - Chat context defaults to 4096 tokens (adjustable on the Models page; on the LiteRT-LM side it cannot exceed the limit built into the model); beyond that it relies on llama.cpp's context-shift sliding window
 - The GGUF chat path currently uses CPU only (the binding used does not include GPU backends)
 - "Disable thinking" depends on the model's own chat template; some models may still emit reasoning
-- Drawing runs on CPU only: 256×256 with LCM-LoRA at 6 steps takes about a minute; 512×512 is noticeably slower
+- Drawing is CPU-only by default: 256×256 with LCM-LoRA at 6 steps takes about a minute; 512×512 is noticeably slower. Switch the run mode to GPU to try Vulkan acceleration; devices without it fall back to CPU (the backend in use is shown in the drawing status line)
+- **GPU support is "theoretical" for now and NOT verified on a real device**: only drawing (Vulkan), tagging (NNAPI) and `.litertlm` chat carry GPU code, and all three have only been verified at build time - none of them has been tested on an actual phone. When the driver is unstable or the VRAM is too small the app falls back to CPU automatically (the drawing status line shows the backend in use); GGUF chat has no GPU backend at all and is CPU-only
 - The quantization level is baked into the model file; the app only reads and displays it, never converts
 - The drawing native library is built with `-march=armv8.2-a+dotprod+fp16`, requiring a 64-bit ARM device from 2019 or later
 - Tagging supports Danbooru-style ONNX taggers (WD14 and its derivatives; the tag list must be in `tag_id,name,category,count` format); the `.onnx` and the tag-list CSV must be imported as a matching pair
@@ -142,6 +146,7 @@ powershell -File tools/build-release.ps1
 | --- | --- | --- |
 | [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) | MIT | source in this repo (`app/src/main/cpp/sd/`) |
 | [ggml](https://github.com/ggerganov/ggml) (also carries contributed files from Intel / Codeplay / Arm / Mozilla) | MIT / Apache-2.0 | source in this repo (`app/src/main/cpp/sd/ggml/`) |
+| [Vulkan-Hpp](https://github.com/KhronosGroup/Vulkan-Hpp) / [Vulkan-Headers](https://github.com/KhronosGroup/Vulkan-Headers) | Apache-2.0 OR MIT | source in this repo (`app/src/main/cpp/thirdparty/include/`, needed by the Vulkan backend) |
 | Third-party files bundled with sd.cpp (stb / json.hpp / httplib / miniz / zip / darts_clone) | Public Domain / MIT / BSD-3-Clause | source in this repo (`app/src/main/cpp/sd/thirdparty/`) |
 | [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM) | Apache-2.0 | Gradle dependency |
 | [llama.cpp](https://github.com/ggerganov/llama.cpp) (via java-llama.cpp binding) | MIT | Gradle dependency |

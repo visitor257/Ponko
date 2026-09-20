@@ -123,6 +123,9 @@ class DrawPage(
     /** 运行方式：true = 尝试 GPU（Vulkan），false = 纯 CPU。由模型页的「运行方式」决定。 */
     var useGpu: Boolean = false
 
+    /** 当前绘图实际用的后端（"CPU" / "Vulkan0"），显示在状态行 */
+    private var activeBackend: String = "CPU"
+
     /**
      * 是否启用 LoRA 加速（挂 LCM-LoRA，压低步数）。
      * 状态持久化到 SharedPreferences —— 否则每次启动 App 都要重新勾。
@@ -1480,13 +1483,31 @@ class DrawPage(
         return try {
             if (sdHandle != 0L) runCatching { SdCppEngine.nativeFree(sdHandle) }
             sdHandle = 0L
-            val h = SdCppEngine.create(
+            // 后端：选了 GPU 且设备有 Vulkan 就用它，否则 CPU。
+            // 显式传后端名会关掉 sd.cpp 的 auto_fit，避免「选 CPU 却悄悄跑 GPU」。
+            val gpuDev = if (useGpu) SdCppEngine.vulkanDevice() else null
+            if (useGpu && gpuDev == null) {
+                stage("4a no vulkan device -> CPU")
+                toast(c.getString(R.string.s_332))
+            }
+            fun createWith(b: String) = SdCppEngine.create(
                 modelPath = main.absolutePath,
                 vaePath = vae?.absolutePath,
                 nThreads = nThreads,
                 wtype = SdCppEngine.WTYPE_KEEP,
                 flashAttn = flashAttn,
+                backend = b,
             )
+            var used = gpuDev ?: "CPU"
+            var h = createWith(used)
+            if (h == 0L && used != "CPU") {
+                // Vulkan 初始化失败（驱动/显存）→ 退回 CPU，别让用户因此用不了绘图
+                stage("4b vulkan init failed -> CPU")
+                used = "CPU"
+                h = createWith(used)
+                if (h != 0L) toast(c.getString(R.string.s_333))
+            }
+            activeBackend = used
             if (h == 0L) {
                 stage(c.getString(R.string.s_012))
                 runCatching { stage(c.getString(R.string.s_010) + SdCppEngine.lastParams().replace("\n", "  |  ")) }
@@ -1504,7 +1525,7 @@ class DrawPage(
                 append(c.getString(R.string.s_094)).append(main.name)
                 if (q != null) append("（").append(q).append("）")
                 if (vae != null) append("  +  ").append(vae.name)
-                append(" · CPU · ").append(nThreads).append(c.getString(R.string.s_001)).append(if (flashAttn) "FA" else c.getString(R.string.s_110)).append(" · sd.cpp")
+                append(" · ").append(activeBackend).append(" · ").append(nThreads).append(c.getString(R.string.s_001)).append(if (flashAttn) "FA" else c.getString(R.string.s_110)).append(" · sd.cpp")
             }
             statusText.post { statusText.text = summary }
             statusText.post { refreshQuantText() }
@@ -1521,6 +1542,7 @@ class DrawPage(
     fun unloadModel() {
         if (sdHandle != 0L) runCatching { SdCppEngine.nativeFree(sdHandle) }
         sdHandle = 0L
+        activeBackend = "CPU"
         try {
             statusText.text = c.getString(R.string.s_115)
         } catch (_: Throwable) {}

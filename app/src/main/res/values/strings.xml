@@ -75,7 +75,7 @@
 <string name="s_072">Copy failed</string>
 <string name="s_073">Copy failed (0 files)</string>
 <string name="s_074">Chat</string>
-<string name="s_075">Shared by chat and drawing. GPU is faster but some drivers are unstable; switch back to CPU if loading fails.</string>
+<string name="s_075">Shared by chat and drawing. Drawing uses the GPU when the device supports Vulkan (otherwise CPU, with automatic fallback); tagging uses NNAPI; GGUF chat always runs on CPU.</string>
 <string name="s_076">Chat model</string>
 <string name="s_077">Chat model loaded. If a draw model is loaded too, just say \"draw a ...\" and it will be used; otherwise use the Draw page.</string>
 <string name="s_078">Chat model loaded (llama.cpp · CPU · KV reuse)</string>
@@ -140,9 +140,9 @@
 <string name="s_137">Clear all generation history? (saved-to-gallery copies are unaffected)</string>
 <string name="s_138">Clear history</string>
 <string name="s_139">Clear the current chat?</string>
-<string name="s_140">Source code: MIT License\nArtwork (app icon, character art, original drawing): © the author, all rights reserved, not covered by MIT.\nThird-party components (each © its authors): LiteRT-LM (Apache-2.0), llama.cpp (MIT), stable-diffusion.cpp (MIT), ggml (MIT), Markwon (Apache-2.0), ONNX Runtime (MIT), commonmark-java (BSD-2-Clause), Jackson/Gson (Apache-2.0), SLF4J (MIT), Kotlin/AndroidX (Apache-2.0). The sources of stable-diffusion.cpp and ggml are distributed with this project under app/src/main/cpp/; ONNX Runtime bundles extra third-party components (see licenses/onnxruntime-ThirdPartyNotices.txt); the native runtimes also statically link XNNPACK, protobuf, re2, cpuinfo, zlib and more. See the repository NOTICE and the licenses/ directory for the full list and licenses.</string>
+<string name="s_140">Source code: MIT License\nArtwork (app icon, character art, original drawing): © the author, all rights reserved, not covered by MIT.\nThird-party components (each © its authors): LiteRT-LM (Apache-2.0), llama.cpp (MIT), stable-diffusion.cpp (MIT), ggml (MIT), Vulkan-Hpp/Vulkan-Headers (Apache-2.0 OR MIT), Markwon (Apache-2.0), ONNX Runtime (MIT), commonmark-java (BSD-2-Clause), Jackson/Gson (Apache-2.0), SLF4J (MIT), Kotlin/AndroidX (Apache-2.0). The sources of stable-diffusion.cpp and ggml are distributed with this project under app/src/main/cpp/ (the Vulkan headers used by the optional GPU backend are at app/src/main/cpp/thirdparty/include/); ONNX Runtime bundles extra third-party components (see licenses/onnxruntime-ThirdPartyNotices.txt); the native runtimes also statically link XNNPACK, protobuf, re2, cpuinfo, zlib and more. See the repository NOTICE and the licenses/ directory for the full list and licenses.</string>
 <string name="s_141">Tap to enlarge, long-press to save to your gallery</string>
-<string name="s_142">Version 1.4.1</string>
+<string name="s_142">Version 1.5.0</string>
 <string name="s_143">Generating (tap ■ to interrupt)…</string>
 <string name="s_144">Generating, please wait</string>
 <string name="s_145">Generation error</string>
@@ -393,4 +393,7 @@
 <string name="s_328">[Tagger result for the image the user sent]\n%1$s\n[End of tagger result]\nThe user\'s original question is below. Answer that question directly. Do not list or repeat the tags above, and do not ask the user for the question or the image again.\n[User question] %2$s</string>
 <string name="s_329">[The user attached %1$d image(s) to this message. You cannot see the images; use the image tool below when you need to look at them.]</string>
 <string name="s_331">[System] The user has already asked the question. Do not ask the user for the question or the image again, and do not list the tags. Answer that question directly:\n%1$s</string>
+<string name="s_332">No Vulkan (GPU) device on this phone - drawing will run on CPU</string>
+<string name="s_333">GPU init failed (driver or memory), fell back to CPU</string>
+<string name="s_335">GPU backend init failed, fell back to CPU</string>
 </resources>

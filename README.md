@@ -18,6 +18,7 @@
 | `.gguf` | llama.cpp | CPU 多线程、会话内 KV 前缀复用（长对话不重复 prefill）|
 
 - **模型管理**：从本地存储选择模型文件，复制到 App 私有目录后可反复选用；「模型」页顶部选运行方式（CPU / GPU），下面分「对话模型 / 绘图模型 / 打标模型」三个子页（左右滑动切换），各类模型均可查看 / 选择 / 删除
+  - 运行方式（CPU / GPU）的作用范围：**只有三条路径带 GPU 代码**——**绘图**（Vulkan）、**打标**（NNAPI）、**对话 `.litertlm`**（LiteRT-LM 的 GPU，底层是 OpenCL / Vulkan）；**对话 GGUF 始终 CPU**（所用绑定未含 GPU 后端）。这三条 GPU 路径**目前都只在构建侧验证过，均未经真机实测**——理论上可用，实际能不能用取决于机型的驱动与显存；设备不支持或初始化失败会自动回退 CPU，绘图页状态行会显示实际使用的后端
 - **多对话**：新建 / 切换 / 删除对话，记录持久化在设备本地（`sessions.json`），互不干扰
 - **思考分离**：思考过程与正文分开显示、可折叠；思考开关对两种格式都生效
 - **Markdown 渲染**：标题、粗斜体、删除线、有序/无序列表、行内代码与代码块、引用、分隔线、表格、可点击链接
@@ -46,6 +47,7 @@
 - **参数**：宽高（64 的倍数）、步数、CFG、种子、采样器、调度器都能调，**重启后自动记住**（提示词不保留）
 - **LoRA**：App 内一键下载 LCM-LoRA（HuggingFace 官方 / hf-mirror 双源），可把 20 步压到 4~8 步；也可**导入本地 LoRA**（`.safetensors` 单文件），多份 LoRA 可在列表里点选切换
 - **模型导入**：绘图模型直接选**单个 `.gguf` 文件**
+- **GPU 加速（可选，⚠️ 仅构建侧验证、未真机实测）**：在「模型」页把运行方式切到 **GPU**，绘图会使用设备的 Vulkan 后端（文生图 / 图生图都生效）；设备没有 Vulkan 或初始化失败会**自动回退 CPU**，实际用的是哪个后端会显示在绘图页状态行
 - **对话页出图**：语言模型与绘图模型都加载时，直接说「画一张…」就会调用绘图模型生成
 - 顶部「参数 / 结果」两个视图可左右滑动切换；结果页可把图片保存到相册
 
@@ -104,6 +106,7 @@ powershell -File tools/build-release.ps1
 - 首次全量编译 sd.cpp + ggml 约 8~9 分钟，C++ 未改动时增量仅约 10 秒
 - 主要依赖：`com.google.ai.edge.litertlm:litertlm-android:0.17.0`、`net.ladenthin:llama-android:5.1.0`、`com.microsoft.onnxruntime:onnxruntime-android:1.22.0`、`io.noties.markwon:*:4.6.2`
 - CMake 现场产出：`libstable-diffusion.so`（sd.cpp 本体）、`libponko_sd.so`（JNI 桥）
+- Vulkan 后端（可选 GPU 绘图）不需要安装 Vulkan SDK：`glslc` 与 SPIRV 头文件都用 NDK 自带的；交叉编译时还需要一个**宿主编译器**来构建着色器生成工具（Windows 上是 MSVC，`tools/build-release.ps1` 会自动载入 `vcvars64` 环境）
 
 ## 模型从哪来
 
@@ -118,7 +121,8 @@ powershell -File tools/build-release.ps1
 - 对话上下文默认 4096 tokens（可在「模型」页调整；LiteRT-LM 侧不能超过模型自带的上限），超出后依赖 llama.cpp 的 context shift 滑动窗口
 - 对话用的 GGUF 目前仅走 CPU（所用绑定未包含 GPU 后端）
 - 「关闭思考」依赖模型自带的对话模板，个别模型可能仍会输出思考内容
-- 绘图是纯 CPU 推理：256×256 + LCM-LoRA 6 步约 1 分钟，512×512 明显更慢
+- 绘图默认是纯 CPU 推理：256×256 + LCM-LoRA 6 步约 1 分钟，512×512 明显更慢；把运行方式切到 GPU 可尝试 Vulkan 加速，设备不支持会自动回退 CPU（实际后端显示在绘图页状态行）
+- **GPU 支持目前只是「理论上可用」，未经真机验证**：只有绘图（Vulkan）、打标（NNAPI）、对话 `.litertlm` 这三条路径带 GPU 代码，三者都只在构建侧验证过，**未在任何手机上实测**；机型驱动不稳 / 显存不足时自动回退 CPU（绘图页状态行会显示实际后端）；对话 GGUF 没有任何 GPU 后端，只能 CPU
 - 绘图量化等级写死在模型文件里，App 只读取并显示，不会转换
 - 绘图原生库用 `-march=armv8.2-a+dotprod+fp16` 编译，需要 2019 年后的 64 位 ARM 设备
 - 打标支持 Danbooru 系的 ONNX 打标模型（WD14 及其衍生版本等；标签表需为 `tag_id,name,category,count` 格式）；`.onnx` 与标签表 CSV 必须配套导入
@@ -141,6 +145,7 @@ powershell -File tools/build-release.ps1
 | --- | --- | --- |
 | [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) | MIT | 源码随仓库分发（`app/src/main/cpp/sd/`） |
 | [ggml](https://github.com/ggerganov/ggml)（另含 Intel / Codeplay / Arm / Mozilla 的贡献文件） | MIT / Apache-2.0 | 源码随仓库分发（`app/src/main/cpp/sd/ggml/`） |
+| [Vulkan-Hpp](https://github.com/KhronosGroup/Vulkan-Hpp) / [Vulkan-Headers](https://github.com/KhronosGroup/Vulkan-Headers) | Apache-2.0 OR MIT | 源码随仓库分发（`app/src/main/cpp/thirdparty/include/`，Vulkan 后端编译需要） |
 | sd.cpp 附带第三方文件（stb / json.hpp / httplib / miniz / zip / darts_clone） | Public Domain / MIT / BSD-3-Clause | 源码随仓库分发（`app/src/main/cpp/sd/thirdparty/`） |
 | [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM) | Apache-2.0 | Gradle 依赖 |
 | [llama.cpp](https://github.com/ggerganov/llama.cpp)（经 java-llama.cpp 绑定） | MIT | Gradle 依赖 |

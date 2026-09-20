@@ -9,12 +9,12 @@ TOK = re.search(r"ghp_\w+", open(r"C:\Users\Administrator\Desktop\git_repo_tok.t
 REPO = "https://api.github.com/repos/visitor257/Ponko"
 
 DESC = ("Offline-capable AI app for Android: on-device chat (.litertlm / .gguf) with image and "
-        "file input, drawing (stable-diffusion.cpp GGUF) and image tagging (ONNX tagger). "
-        "All inference runs locally; no telemetry.")
+        "file input, drawing (stable-diffusion.cpp GGUF, optional Vulkan GPU) and image tagging "
+        "(ONNX tagger). Optional GPU acceleration; all inference runs locally; no telemetry.")
 
 TOPICS = ["android", "kotlin", "llm", "llama-cpp", "litert-lm", "gguf",
           "multimodal", "vision-language-model", "stable-diffusion", "image-generation",
-          "image-tagging", "onnxruntime", "on-device-ai", "offline"]
+          "image-tagging", "onnxruntime", "on-device-ai", "offline", "vulkan"]
 
 
 def req(url, data=None, ctype=None, method=None):
