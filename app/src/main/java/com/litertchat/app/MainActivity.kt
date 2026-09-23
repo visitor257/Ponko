@@ -698,7 +698,15 @@ class MainActivity : Activity() {
     /** 打标模型 加载/卸载 按钮 */
     private var taggerLoadBtn: TextView? = null
     /** 当前选定的绘图主模型（绝对路径） */
-    private var drawMainPath: String? = null
+    /** 当前选用的模型集 id（多文件模型 = 一组文件） */
+    private var drawSetId: String? = null
+    /** 正在等文件选择结果的槽位（null = 主模型文件） */
+    private var pendingSlotKey: String? = null
+    private var drawSlotsContainer: LinearLayout? = null
+    /** 槽位面板的折叠标题行 */
+    private var drawSlotsHeader: TextView? = null
+    /** 槽位面板是否展开（默认收起，省地方） */
+    private var drawSlotsExpanded = false
     /** LoRA 状态文本（模型页） */
     private var loraStatusTv: TextView? = null
     /** 已安装 LoRA 列表容器（模型页） */
@@ -1134,7 +1142,7 @@ class MainActivity : Activity() {
             }, matchWrap())
         }
 
-        val importBtn = actionButton(getString(R.string.s_190)) { pickDrawModelFile() }
+        val importBtn = actionButton(getString(R.string.s_190)) { showDrawTypeMenu() }
         drawImportBtn = importBtn
         drawCard.addView(importBtn, matchWrap().apply { topMargin = dp(8) })
 
@@ -1151,6 +1159,22 @@ class MainActivity : Activity() {
             visibility = View.GONE
         }
         drawCard.addView(drawSavedContainer, matchWrap().apply { topMargin = dp(6) })
+        // 多文件模型：槽位列表折叠成一个标题行，点开才显示（缺哪个补哪个）
+        val slotsHeader = TextView(this).apply {
+            textSize = 13f
+            setTextColor(C_PRIMARY)
+            setPadding(dp(2), dp(8), dp(2), dp(2))
+            isClickable = true
+            visibility = View.GONE
+        }
+        slotsHeader.setOnClickListener { toggleDrawSlots() }
+        drawSlotsHeader = slotsHeader
+        drawCard.addView(slotsHeader, matchWrap())
+        drawSlotsContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+        }
+        drawCard.addView(drawSlotsContainer, matchWrap().apply { topMargin = dp(2) })
         // 加载 / 卸载合成一个按钮：未加载时点击 = 加载，已加载时点击 = 卸载
         drawToggleBtn = actionButton(getString(R.string.s_061)) { onDrawToggleClick() }
         drawCard.addView(drawToggleBtn, matchWrap().apply { topMargin = dp(8) })
@@ -2339,7 +2363,104 @@ class MainActivity : Activity() {
         startActivityForResult(i, REQ_PICK_MMPROJ)
     }
 
-    /** 绘图模型：选一个 .gguf 文件（stable-diffusion.cpp 格式，单文件） */
+    /** 「选择绘图模型文件」→ 先挑类型（单文件 / 多文件 × 家族），再选文件。
+     *  单文件 = 一个 all-in-one .gguf；多文件 = 主模型 + 若干配套文件（按家族给槽位模板）。 */
+    private fun showDrawTypeMenu() {
+        val single = listOf("sd15", "sdxl", "sd3", "flux", "qwen", "video", "other")
+        val multi = listOf("sd3", "flux", "qwen", "hidream", "video", "other")
+        val labels = ArrayList<String>()
+        val picks = ArrayList<kotlin.Pair<String, String>>()
+        for (kind in listOf("single", "multi")) {
+            val fams = if (kind == "single") single else multi
+            val kindLabel = getString(if (kind == "single") R.string.s_345 else R.string.s_346)
+            for (fam in fams) {
+                labels.add(kindLabel + " · " + getString(DrawPage.familyLabelRes(fam)))
+                picks.add(kotlin.Pair(kind, fam))
+            }
+        }
+        AlertDialog.Builder(this)
+            .setTitle(getString(R.string.s_336))
+            .setItems(labels.toTypedArray()) { _, which ->
+                val dpg = drawPage ?: return@setItems
+                val pick = picks[which]
+                dpg.pendingKind = pick.first
+                dpg.pendingFamily = pick.second
+                dpg.pendingNewSet = true
+                pendingSlotKey = null
+                pickDrawModelFile()
+            }
+            .setNegativeButton(getString(R.string.s_066), null)
+            .show()
+    }
+
+    /** 给当前模型集的某个槽位挑一个文件 */
+    private fun pickDrawSlot(key: String) {
+        pendingSlotKey = key
+        pickDrawModelFile()
+    }
+
+    /** 当前模型集的槽位列表（多文件模型在这里逐个补文件） */
+    private fun refreshDrawSlots() {
+        val box = drawSlotsContainer ?: return
+        val hdr = drawSlotsHeader ?: return
+        box.removeAllViews()
+        val dpg = drawPage ?: return
+        val set = dpg.activeSetOrSelected()
+        if (set == null) {
+            hdr.visibility = View.GONE
+            box.visibility = View.GONE
+            return
+        }
+        val spec = DrawPage.familySlots(set.kind, set.family)
+        val filled = spec.count { set.files[it.first] != null }
+        val miss = spec.count { it.second && set.files[it.first] == null }
+        hdr.visibility = View.VISIBLE
+        hdr.text = getString(R.string.s_371, filled, spec.size) + if (drawSlotsExpanded) "  \u25be" else "  \u25b8"
+        hdr.setTextColor(if (miss > 0) C_WARN else C_PRIMARY)
+        if (!drawSlotsExpanded) {
+            box.visibility = View.GONE
+            return
+        }
+        box.visibility = View.VISIBLE
+        box.addView(hintText(getString(R.string.s_364)), matchWrap().apply { topMargin = dp(4) })
+        for (item in spec) {
+            val key = item.first
+            val required = item.second
+            val f = set.files[key]
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }
+            row.addView(TextView(this).apply {
+                text = getString(DrawPage.slotLabelRes(key)) + if (required) " *" else ""
+                textSize = 12f
+                setTextColor(if (f != null) C_TEXT else C_SUBTEXT)
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.15f))
+            row.addView(TextView(this).apply {
+                text = f?.name ?: getString(R.string.s_360)
+                textSize = 11.5f
+                maxLines = 2
+                setTextColor(if (f != null) C_TEXT else C_SUBTEXT)
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            row.addView(smallButton(getString(R.string.s_361)) { pickDrawSlot(key) })
+            if (f != null) {
+                row.addView(smallButton(getString(R.string.s_362)) {
+                    dpg.clearSlot(key)
+                    refreshDrawSlots()
+                    drawModelStatus?.text = dpg.modelSummary()
+                })
+            }
+            box.addView(row, matchWrap().apply { topMargin = dp(6) })
+        }
+    }
+
+    /** 展开 / 收起模型槽位面板（expand = null 表示切换） */
+    private fun toggleDrawSlots(expand: Boolean? = null) {
+        drawSlotsExpanded = expand ?: !drawSlotsExpanded
+        refreshDrawSlots()
+    }
+
+    /** 绘图模型：选一个文件（单文件 all-in-one，或多文件里的某个槽位） */
     private fun pickDrawModelFile() {
         val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
@@ -2441,13 +2562,16 @@ class MainActivity : Activity() {
         if (requestCode == REQ_PICK_DRAW_MODEL && resultCode == RESULT_OK) {
             val uri = data?.data ?: return
             val dpg = drawPage ?: return
+            val slot = pendingSlotKey
+            pendingSlotKey = null
             setBusy(true)
             setDrawBusy(true)
             showDrawProgress(true)
             setStatus(getString(R.string.s_131), C_WARN)
             scope.launch {
-                val err = dpg.prepareFromFile(
+                val err = dpg.importSetFile(
                     uri,
+                    slot,
                     onStage = { stage -> drawModelStatus?.text = stage },
                     onProgress = { done, total -> updateDrawProgress(done, total) }
                 )
@@ -2455,11 +2579,17 @@ class MainActivity : Activity() {
                 setDrawBusy(false)
                 showDrawProgress(false)
                 if (err == null) {
-                    // 导入成功：把最新复制的那个默认标为选用
-                    dpg.listModels().firstOrNull()?.let { drawMainPath = it.absolutePath }
+                    drawSetId = dpg.activeSetId()
+                    val set = dpg.activeSetOrSelected()
                     drawModelStatus?.text = dpg.modelSummary()
                     setStatus(getString(R.string.s_161), C_OK)
-                    toast(getString(R.string.s_091))
+                    if (set != null && set.kind == "multi" && slot == null) {
+                        toast(getString(R.string.s_370))
+                        // 新导入的多文件主模型：自动把槽位面板展开，方便接着补配套文件
+                        drawSlotsExpanded = true
+                    } else {
+                        toast(getString(R.string.s_091))
+                    }
                 } else {
                     drawModelStatus?.text = err
                     setStatus(getString(R.string.s_158), C_ERR)
@@ -2798,12 +2928,11 @@ class MainActivity : Activity() {
         }
         scope.launch {
             drawModelStatus?.text = getString(R.string.s_128)
-            val picked = drawMainPath?.let { File(it) }
             dpg.useGpu = (backendSpinner.selectedItem.toString() == "GPU")
-            val err = dpg.loadExisting(picked)
+            val err = dpg.loadSelectedSet()
             drawModelStatus?.text = if (err == null) dpg.modelSummary() else err
             if (err == null) {
-                drawMainPath = dpg.currentMainName()?.let { File(filesDir, "draw/$it").absolutePath }
+                drawSetId = dpg.activeSetId()
                 dpg.llmLoaded = false
                 updateThinkEnabled()
                 refreshDrawModels()
@@ -2833,15 +2962,16 @@ class MainActivity : Activity() {
         }
     }
 
-    /** 列出私有目录里已复制的绘图模型（点击选用并加载 · 长按删除）。 */
+    /** 列出已有的绘图模型集（点击选用 · 长按删除）。单文件与多文件都在这。 */
     private fun refreshDrawModels() {
         refreshDrawToggle()
         val box = drawSavedContainer ?: return
         box.removeAllViews()
         val dpg = drawPage
-        val files = dpg?.listModels().orEmpty()
-        if (files.isEmpty()) {
+        val sets = dpg?.listSets().orEmpty()
+        if (sets.isEmpty()) {
             box.visibility = View.GONE
+            refreshDrawSlots()
             return
         }
         box.visibility = View.VISIBLE
@@ -2852,38 +2982,40 @@ class MainActivity : Activity() {
             setPadding(0, dp(4), 0, 0)
         }, matchWrap())
 
-        val active = dpg?.currentMainName()
-        for (f in files) {
-            val isMain = active != null && f.name == active
-            val isSel = f.absolutePath == drawMainPath
+        dpg?.ensureActiveSet()
+        val activeId = dpg?.activeSetId()
+        val loadedName = dpg?.currentMainName()
+        for (s in sets) {
+            val isSel = s.id == activeId || s.id == drawSetId
             val chip = TextView(this).apply {
-                val role = if (isMain) getString(R.string.s_099) else if (files.size > 1) getString(R.string.s_149) else ""
+                // 列表样式与旧版一致：文件名 + 角色 + 量化 + 体积（多文件集只多一个标记，不做分类/家族展示）
+                val isMain = loadedName != null && dpg?.isReady() == true && loadedName == s.name
+                val role = if (isMain) getString(R.string.s_099)
+                else if (s.kind == DrawPage.KIND_MULTI) getString(R.string.s_346)
+                else ""
                 val suffix = if (role.isEmpty()) "" else "　[$role]"
-                val q = dpg?.quantOf(f)
+                val q = s.mainFile()?.let { dpg?.quantOf(it) }
                 val qTag = if (q != null) "　[$q]" else ""
-                text = "▶ ${f.name}$suffix$qTag　${fmtSize(f.length())}"
+                text = "▶ ${s.mainFile()?.name ?: s.name}$suffix$qTag　${fmtSize(s.sizeBytes())}"
                 textSize = 12.5f
-                setTextColor(if (isSel || isMain) C_PRIMARY else C_TEXT)
+                setTextColor(if (isSel) C_PRIMARY else C_TEXT)
                 setPadding(dp(12), dp(8), dp(12), dp(8))
-                background = rounded(if (isSel || isMain) C_PRIMARY_SOFT else Color.rgb(247, 248, 251), 10,
-                    strokeDp = if (isSel || isMain) 1 else 0, strokeColor = C_PRIMARY)
+                background = rounded(if (isSel) C_PRIMARY_SOFT else Color.rgb(247, 248, 251), 10,
+                    strokeDp = if (isSel) 1 else 0, strokeColor = C_PRIMARY)
                 isClickable = true
             }
-            chip.setOnClickListener { selectDrawModel(f) }
-            chip.setOnLongClickListener { confirmDeleteDrawModel(f); true }
+            chip.setOnClickListener { selectDrawSet(s) }
+            chip.setOnLongClickListener { confirmDeleteDrawSet(s); true }
             box.addView(chip, matchWrap().apply { topMargin = dp(4) })
         }
+        refreshDrawSlots()
     }
 
-    /** 点击某个绘图模型 → 只标记为选用，不加载（与对话模型一致，需再点「加载绘图模型」）。 */
-    private fun selectDrawModel(f: File) {
-        drawMainPath = f.absolutePath
-        val cur = drawPage?.currentMainName()
-        drawModelStatus?.text = if (cur != null && cur != f.name) {
-            getString(R.string.v_005, (f.name), (cur))
-        } else {
-            getString(R.string.v_006, (f.name))
-        }
+    /** 点击某个模型集 → 只标记为选用，不加载（与对话模型一致，需再点「加载绘图模型」）。 */
+    private fun selectDrawSet(s: DrawPage.ModelSet) {
+        drawPage?.selectSet(s)
+        drawSetId = s.id
+        drawModelStatus?.text = drawPage?.modelSummary()
         refreshDrawToggle()
         refreshDrawModels()
     }
@@ -2906,7 +3038,9 @@ class MainActivity : Activity() {
         val active = dpg?.currentLoraName()
         for (f in all) {
             box.addView(
-                selectableChip(f, f.name == active) { dpg?.selectLora(f); refreshLoraUi() },
+                selectableChip(f, f.name == active, onLongClick = { confirmDeleteLora(f) }) {
+                    dpg?.selectLora(f); refreshLoraUi()
+                },
                 matchWrap().apply { topMargin = dp(4) }
             )
         }
@@ -2955,40 +3089,40 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun confirmDeleteLora() {
+    /** 删除单个 LoRA：target 为空时删当前选中的那个（不再一次清空全部）。 */
+    private fun confirmDeleteLora(target: File? = null) {
         val dpg = drawPage ?: return
-        val all = dpg.listLoras()
-        if (all.isEmpty()) {
+        val f = target ?: dpg.activeLora()
+        if (f == null) {
             toast(getString(R.string.s_135))
             return
         }
         AlertDialog.Builder(this)
             .setTitle(getString(R.string.s_052))
-            .setMessage(all.joinToString("、") { it.name } + getString(R.string.s_026))
+            .setMessage(f.name + getString(R.string.s_026))
             .setPositiveButton(getString(R.string.s_050)) { _, _ ->
-                var n = 0
-                all.forEach { if (dpg.deleteLora(it)) n++ }
-                toast(getString(R.string.v_010, (n)))
+                val ok = dpg.deleteLora(f)
+                if (ok) toast(getString(R.string.v_010, 1)) else toast(getString(R.string.s_158))
                 refreshLoraUi()
             }
             .setNegativeButton(getString(R.string.s_066), null)
             .show()
     }
 
-    /** 长按删除一个已复制的绘图模型文件。 */
-    private fun confirmDeleteDrawModel(f: File) {
+    /** 长按删除一个模型集（连同它的全部文件）。 */
+    private fun confirmDeleteDrawSet(s: DrawPage.ModelSet) {
         val dpg = drawPage ?: return
-        if (dpg.currentMainName() == f.name && dpg.isReady()) {
+        if (dpg.isReady() && dpg.activeSetId() == s.id) {
             toast(getString(R.string.s_172))
             return
         }
         AlertDialog.Builder(this)
             .setTitle(getString(R.string.s_056))
-            .setMessage(getString(R.string.v_011, (f.name), (fmtSize(f.length()))))
+            .setMessage(getString(R.string.s_366, s.name, s.slotCount()))
             .setPositiveButton(getString(R.string.s_050)) { _, _ ->
-                val ok = dpg.deleteModel(f)
-                if (drawMainPath == f.absolutePath) drawMainPath = null
-                toast(if (ok) getString(R.string.v_012, (f.name)) else getString(R.string.s_053))
+                val ok = dpg.deleteSet(s)
+                if (drawSetId == s.id) drawSetId = null
+                toast(if (ok) getString(R.string.v_012, s.name) else getString(R.string.s_053))
                 drawModelStatus?.text = dpg.modelSummary()
                 refreshDrawModels()
             }
@@ -4576,8 +4710,13 @@ class MainActivity : Activity() {
         setPadding(0, dp(6), 0, 0)
     }
 
-    /** 可点选的条目（高亮当前选中） */
-    private fun selectableChip(f: File, selected: Boolean, onClick: () -> Unit) = TextView(this).apply {
+    /** 可点选的条目（高亮当前选中）；onLongClick 可选（如长按删除这一项） */
+    private fun selectableChip(
+        f: File,
+        selected: Boolean,
+        onLongClick: (() -> Unit)? = null,
+        onClick: () -> Unit
+    ) = TextView(this).apply {
         text = "▶ ${f.name}　${fmtSize(f.length())}"
         textSize = 12.5f
         setTextColor(if (selected) C_PRIMARY else C_TEXT)
@@ -4586,6 +4725,10 @@ class MainActivity : Activity() {
             strokeDp = if (selected) 1 else 0, strokeColor = C_PRIMARY)
         isClickable = true
         setOnClickListener { onClick() }
+        if (onLongClick != null) {
+            isLongClickable = true
+            setOnLongClickListener { onLongClick(); true }
+        }
     }
 
     private fun showDrawProgress(show: Boolean) {

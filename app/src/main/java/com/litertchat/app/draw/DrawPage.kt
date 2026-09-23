@@ -70,6 +70,80 @@ class DrawPage(
         /** 下载后重命名成这个，prompt 里就用 `lora:lcm-lora-sdv1-5:1` 引用 */
         const val LORA_NAME = "lcm-lora-sdv1-5"
 
+        /** 模型集偏好键（当前选中的模型集 id） */
+        private const val KEY_SEL_SET = "selSet"
+
+        /** 单文件 / 多文件 */
+        const val KIND_SINGLE = "single"
+        const val KIND_MULTI = "multi"
+
+        /** 家族 id */
+        const val FAM_SD15 = "sd15"
+        const val FAM_SDXL = "sdxl"
+        const val FAM_SD3 = "sd3"
+        const val FAM_FLUX = "flux"
+        const val FAM_QWEN = "qwen"
+        const val FAM_HIDREAM = "hidream"
+        const val FAM_VIDEO = "video"
+        const val FAM_OTHER = "other"
+
+        /** 家族显示名 */
+        fun familyLabelRes(family: String): Int = when (family) {
+            FAM_SD15 -> R.string.s_337
+            FAM_SDXL -> R.string.s_338
+            FAM_SD3 -> R.string.s_339
+            FAM_FLUX -> R.string.s_340
+            FAM_QWEN -> R.string.s_341
+            FAM_HIDREAM -> R.string.s_342
+            FAM_VIDEO -> R.string.s_343
+            else -> R.string.s_344
+        }
+
+        /** 槽位显示名 */
+        fun slotLabelRes(key: String): Int = when (key) {
+            "model" -> R.string.s_347
+            "diffusion" -> R.string.s_348
+            "high_noise" -> R.string.s_349
+            "uncond" -> R.string.s_350
+            "clip_l" -> R.string.s_351
+            "clip_g" -> R.string.s_352
+            "clip_vision" -> R.string.s_353
+            "t5xxl" -> R.string.s_354
+            "llm" -> R.string.s_355
+            "llm_vision" -> R.string.s_356
+            "vae" -> R.string.s_357
+            else -> R.string.s_358
+        }
+
+        /** 某个类型需要哪些槽位（key to 是否必填）。
+         *  多文件模型的配套文件各家不一样，这里按家族给模板；用户选了类型就按模板列槽位。
+         *  必填只是「加载前的检查」，不阻止用户尝试（可选槽位留空也允许加载）。 */
+        fun familySlots(kind: String, family: String): List<Pair<String, Boolean>> = when {
+            kind == KIND_SINGLE && family == FAM_OTHER -> listOf(
+                "model" to true, "vae" to false, "clip_l" to false, "clip_g" to false,
+                "clip_vision" to false, "t5xxl" to false, "llm" to false, "llm_vision" to false,
+                "diffusion" to false, "high_noise" to false, "uncond" to false, "audio_vae" to false)
+            kind == KIND_SINGLE -> listOf("model" to true, "vae" to false)
+            family == FAM_SDXL -> listOf(
+                "diffusion" to true, "clip_l" to true, "clip_g" to true, "vae" to true)
+            family == FAM_SD3 -> listOf(
+                "diffusion" to true, "clip_l" to true, "clip_g" to true, "t5xxl" to true, "vae" to true)
+            family == FAM_FLUX -> listOf(
+                "diffusion" to true, "clip_l" to true, "t5xxl" to true, "vae" to true)
+            family == FAM_QWEN -> listOf(
+                "diffusion" to true, "llm" to true, "llm_vision" to true, "vae" to true)
+            family == FAM_HIDREAM -> listOf(
+                "diffusion" to true, "high_noise" to false, "clip_l" to false, "clip_g" to false,
+                "t5xxl" to false, "llm" to false, "vae" to true)
+            family == FAM_VIDEO -> listOf(
+                "diffusion" to true, "clip_vision" to false, "t5xxl" to false, "llm" to false,
+                "vae" to true, "audio_vae" to false)
+            else -> listOf(
+                "diffusion" to true, "vae" to false, "clip_l" to false, "clip_g" to false,
+                "clip_vision" to false, "t5xxl" to false, "llm" to false, "llm_vision" to false,
+                "high_noise" to false, "uncond" to false, "audio_vae" to false)
+        }
+
         /** SharedPreferences 文件名与键（只存 UI 偏好） */
         private const val PREFS_NAME = "ponko"
         private const val KEY_USE_LORA = "useLora"
@@ -107,6 +181,14 @@ class DrawPage(
     private var sdHandle: Long = 0L
     private var mainModel: File? = null
     private var vaeModel: File? = null
+
+    /** 当前模型集（单文件 = 只填主模型；多文件 = 主模型 + 各槽位配套文件） */
+    private var activeSet: ModelSet? = null
+    /** 下一个要导入的类型（由「模型」页的类型菜单设定） */
+    var pendingKind: String = KIND_SINGLE
+    var pendingFamily: String = FAM_SD15
+    /** true = 下一个导入的文件用来开一个新模型集 */
+    var pendingNewSet: Boolean = false
 
     /** 推理线程数：默认 4（多数手机的大核数；开太多会跑到小核上，反而变慢） */
     private var nThreads: Int = 4
@@ -1307,24 +1389,169 @@ class DrawPage(
         }
     }
 
-    // ================= 模型（由「模型」页驱动） =================
+    // ================= 模型集（单文件 / 多文件；由「模型」页驱动） =================
 
-    /** 从单文件导入绘图模型（.gguf）到私有目录。返回 null 表示成功，否则为错误文案。
-     *
-     *  设计决定：Ponko 不支持多文件模型，所以逐个选文件导入（不再整目录导入）。 */
-    suspend fun prepareFromFile(
+    /** 一个模型集：单文件 = 只填 model 槽位；多文件 = 主模型 + 各槽位配套文件。 */
+    class ModelSet(
+        val id: String,
+        var name: String,
+        var kind: String,
+        var family: String,
+        val dir: File?,
+        val files: MutableMap<String, File> = LinkedHashMap(),
+    ) {
+        fun mainFile(): File? = files["model"] ?: files["diffusion"] ?: files.values.firstOrNull()
+        fun sizeBytes(): Long = files.values.sumOf { it.length() }
+        fun slotCount(): Int = files.size
+    }
+
+    private fun setsDir(): File = File(File(c.filesDir, DIR_NAME), "sets").apply { mkdirs() }
+
+    private fun safeId(s: String): String {
+        val t = s.replace(Regex("[^A-Za-z0-9._-]"), "_").trim('_').take(48)
+        return t.ifEmpty { "set" }
+    }
+
+    private fun newSetId(base: String): String {
+        val b = safeId(base)
+        var id = b
+        var i = 2
+        while (File(setsDir(), id).exists()) { id = "$b-$i"; i++ }
+        return id
+    }
+
+    private fun writeSetJson(s: ModelSet) {
+        val d = s.dir ?: return
+        runCatching {
+            val o = org.json.JSONObject()
+            o.put("name", s.name)
+            o.put("kind", s.kind)
+            o.put("family", s.family)
+            val a = org.json.JSONObject()
+            s.files.forEach { (k, f) -> a.put(k, f.name) }
+            o.put("slots", a)
+            File(d, "ponko-set.json").writeText(o.toString())
+        }
+    }
+
+    private fun readSetJson(dir: File): ModelSet? {
+        val o = runCatching { org.json.JSONObject(File(dir, "ponko-set.json").readText()) }.getOrNull() ?: return null
+        val files = LinkedHashMap<String, File>()
+        o.optJSONObject("slots")?.let { a ->
+            val keys = a.keys()
+            while (keys.hasNext()) {
+                val k = keys.next()
+                val fn = a.optString(k, "")
+                val f = File(dir, fn)
+                if (fn.isNotEmpty() && f.isFile) files[k] = f
+            }
+        }
+        return ModelSet(dir.name, o.optString("name", dir.name),
+            o.optString("kind", KIND_MULTI), o.optString("family", "custom"), dir, files)
+    }
+
+    /** 私有目录里已有的绘图模型：新式模型集（draw/sets 下的子目录）+ 旧版散落的单文件 gguf */
+    fun listSets(): List<ModelSet> {
+        val out = ArrayList<ModelSet>()
+        setsDir().listFiles { f -> f.isDirectory }?.sortedByDescending { it.lastModified() }?.forEach { d ->
+            readSetJson(d)?.let { out.add(it) }
+        }
+        val loose = File(c.filesDir, DIR_NAME).listFiles { f ->
+            f.isFile && f.name.endsWith(".gguf", true) && !f.name.startsWith(".")
+        }?.sortedByDescending { it.lastModified() } ?: emptyList()
+        val looseVae = loose.firstOrNull { it.name.contains("vae", true) }
+        for (f in loose) {
+            if (f === looseVae) continue
+            val files = LinkedHashMap<String, File>()
+            files["model"] = f
+            if (looseVae != null) files["vae"] = looseVae
+            out.add(ModelSet("legacy:${f.name}", f.nameWithoutExtension, KIND_SINGLE, "other", null, files))
+        }
+        return out
+    }
+
+    /** 启动后兜底：把上次选中的模型集（或第一个）设为当前 */
+    fun ensureActiveSet() {
+        if (activeSet != null) return
+        val all = listSets()
+        if (all.isEmpty()) return
+        val saved = prefs().getString(KEY_SEL_SET, null)
+        val pick = all.firstOrNull { it.id == saved } ?: all.first()
+        selectSet(pick)
+    }
+
+    /** 当前操作的模型集：优先内存里的，其次按偏好里记的 */
+    fun activeSetOrSelected(): ModelSet? {
+        ensureActiveSet()
+        return activeSet
+    }
+
+    fun activeSetId(): String? = activeSet?.id
+
+    fun selectSet(s: ModelSet) {
+        activeSet = s
+        mainModel = s.mainFile()
+        vaeModel = s.files["vae"]
+        prefs().edit().putString(KEY_SEL_SET, s.id).apply()
+    }
+
+    fun deleteSet(s: ModelSet): Boolean {
+        val ok = if (s.dir != null) runCatching { s.dir.deleteRecursively() }.getOrDefault(false)
+        else s.files.values.all { runCatching { it.delete() }.getOrDefault(false) }
+        if (activeSet?.id == s.id) activeSet = null
+        if (prefs().getString(KEY_SEL_SET, null) == s.id) prefs().edit().remove(KEY_SEL_SET).apply()
+        return ok
+    }
+
+    /** 只把槽位从集里摘掉，不删文件（同一个文件可能被多个槽位共用） */
+    fun clearSlot(key: String) {
+        val s = activeSetOrSelected() ?: return
+        s.files.remove(key)
+        writeSetJson(s)
+    }
+
+    /** 模型集摘要：名字 · 单/多文件 · 家族 · 文件数 · 体积 */
+    fun setSummary(s: ModelSet): String {
+        val kindLabel = c.getString(if (s.kind == KIND_SINGLE) R.string.s_345 else R.string.s_346)
+        val fam = c.getString(familyLabelRes(s.family))
+        val size = "%.2f GB".format(s.sizeBytes() / 1073741824.0)
+        return c.getString(R.string.s_365, s.name, "$kindLabel · $fam", s.slotCount(), size)
+    }
+
+    /** 当前模型集里还没填的必填槽位（key） */
+    fun slotMissingIds(s: ModelSet): List<String> =
+        familySlots(s.kind, s.family).filter { it.second && s.files[it.first] == null }.map { it.first }
+
+    /** 导入一个文件到模型集。
+     *  pendingNewSet = true（用户在类型菜单里选了类型）→ 用这个主文件开一个新集；
+     *  否则（补配套文件）→ 放进当前集。
+     *  返回 null 表示成功，否则为错误文案。 */
+    suspend fun importSetFile(
         uri: Uri,
+        slotKey: String?,
         onStage: (String) -> Unit,
         onProgress: ((Long, Long) -> Unit)? = null
     ): String? = withContext(Dispatchers.IO) {
         try {
-            val name = queryDisplayName(uri)
-            if (name == null || !name.endsWith(".gguf", ignoreCase = true)) {
-                return@withContext c.getString(R.string.s_217)
+            val name = queryDisplayName(uri) ?: return@withContext c.getString(R.string.s_106)
+            val ext = name.substringAfterLast('.', "").lowercase()
+            if (ext !in listOf("gguf", "safetensors", "ckpt", "pt")) {
+                return@withContext c.getString(R.string.s_368)
             }
+            val key = slotKey ?: if (pendingKind == KIND_SINGLE) "model" else "diffusion"
+            val cur = activeSet
+            val useSet: ModelSet = if (cur == null || cur.dir == null || pendingNewSet) {
+                val id = newSetId(name.substringBeforeLast('.'))
+                val dir = File(setsDir(), id).apply { mkdirs() }
+                ModelSet(id, id, pendingKind, pendingFamily, dir).also {
+                    activeSet = it
+                    pendingNewSet = false
+                }
+            } else cur
+            val dir: File = useSet.dir ?: return@withContext c.getString(R.string.s_106)
+
             withContext(Dispatchers.Main) { onStage(c.getString(R.string.v_033, name)) }
-            val root = File(c.filesDir, DIR_NAME).apply { mkdirs() }
-            val dest = File(root, name)
+            val dest = File(dir, name)
             val total = runCatching {
                 c.contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length } ?: -1L
             }.getOrDefault(-1L)
@@ -1341,16 +1568,20 @@ class DrawPage(
                         done += n
                         if (done - tick >= (1L shl 20)) {
                             tick = done
-                            val d = done
-                            withContext(Dispatchers.Main) { onProgress?.invoke(d, total) }
+                            val dd = done
+                            withContext(Dispatchers.Main) { onProgress?.invoke(dd, total) }
                         }
                     }
-                    val d = done
-                    withContext(Dispatchers.Main) { onProgress?.invoke(d, total) }
+                    val dd = done
+                    withContext(Dispatchers.Main) { onProgress?.invoke(dd, total) }
                 }
             } ?: return@withContext c.getString(R.string.s_106)
-            statusText.post {
-                statusText.text = c.getString(R.string.s_161) + c.getString(R.string.s_027)
+
+            useSet.files[key] = dest
+            writeSetJson(useSet)
+            selectSet(useSet)
+            withContext(Dispatchers.Main) {
+                statusText.text = c.getString(R.string.s_161)
             }
             null
         } catch (e: Throwable) {
@@ -1410,10 +1641,10 @@ class DrawPage(
             if (idx >= 0 && cur.moveToFirst()) cur.getString(idx) else null
         }
 
-    /** 扫描私有目录里已复制的 gguf 并加载（main=null 时自动挑体积最大的） */
-    suspend fun loadExisting(main: File? = null): String? = withContext(Dispatchers.IO) {
+    /** 加载当前选中的模型集（「加载绘图模型」按钮） */
+    suspend fun loadSelectedSet(): String? = withContext(Dispatchers.IO) {
         try {
-            loadFromPrivateDir(main)
+            loadSet(activeSetOrSelected())
         } catch (e: Throwable) {
             runCatching {
                 File(File(c.filesDir, DIR_NAME), ".loadstage")
@@ -1424,47 +1655,46 @@ class DrawPage(
         }
     }
 
-    /** 私有目录里已复制的绘图模型文件（.gguf） */
+    /** 当前模型集的主模型文件名 */
+    fun currentMainName(): String? = activeSetOrSelected()?.name
+
+    /** 某个文件的量化等级（Q4_0 / Q8_0 / …），读不出来返回 null */
+    fun quantOf(f: File): String? = GgufProbe.quantType(f)
+
+    /** 删除单个已复制的模型文件（旧接口，保留给兼容用） */
+    fun deleteModel(f: File): Boolean = runCatching { f.delete() }.getOrDefault(false)
+
+    /** 私有目录里散落的 gguf（旧版遗留；新式模型请用 listSets） */
     fun listModels(): List<File> =
         File(c.filesDir, DIR_NAME)
             .listFiles { f -> f.isFile && f.name.endsWith(".gguf", ignoreCase = true) }
             ?.sortedByDescending { it.lastModified() } ?: emptyList()
 
-    /** 当前作为主模型的文件名（未指定时取体积最大的） */
-    fun currentMainName(): String? = mainModel?.name
-
-    /** 某个 gguf 的量化等级（Q4_0 / Q8_0 / …），读不出来返回 null */
-    fun quantOf(f: File): String? = GgufProbe.quantType(f)
-
-    /** 删除单个已复制的模型文件 */
-    fun deleteModel(f: File): Boolean = runCatching { f.delete() }.getOrDefault(false)
-
-    private suspend fun loadFromPrivateDir(preferred: File? = null): String? {
-        val root = File(c.filesDir, DIR_NAME)
-        val ggufs = root.listFiles { f -> f.isFile && f.name.endsWith(".gguf", true) }?.toList().orEmpty()
-        if (ggufs.isEmpty()) {
+    private suspend fun loadSet(set: ModelSet?): String? {
+        if (set == null) {
             statusText.post { statusText.text = c.getString(R.string.s_114) }
             return c.getString(R.string.s_114)
         }
-
-        // 主模型：优先用指定的，否则取体积最大的 gguf
-        val main = preferred?.takeIf { it.isFile } ?: ggufs.maxByOrNull { it.length() }!!
-        val others = ggufs.filter { it !== main }
-        val vae = others.firstOrNull { it.name.contains("vae", true) }
-
-        mainModel = main
-        vaeModel = vae
+        // 槽位表 → sd.cpp 的路径参数
+        val slots = LinkedHashMap<String, String>()
+        set.files.forEach { (k, f) -> slots[k] = f.absolutePath }
+        val missing = slotMissingIds(set).map { c.getString(slotLabelRes(it)) }
+        if (missing.isNotEmpty()) {
+            val msg = c.getString(R.string.s_363, missing.joinToString("、"))
+            statusText.post { statusText.text = msg }
+            return msg
+        }
 
         // 崩溃追踪：逐步把阶段写进文件。native 段错误会直接杀死进程，
         // 但只要事先写进了磁盘，下次启动就能看到崩在哪一步。
+        val root = File(c.filesDir, DIR_NAME)
         val stageFile = File(root, ".loadstage")
         fun stage(s: String) {
             runCatching { stageFile.appendText("$s\n") }
         }
-
         runCatching { stageFile.writeText("") }
-        stage(c.getString(R.string.v_056, (main.name), (main.length() / 1048576), (GgufProbe.quantType(main) ?: c.getString(R.string.s_119))))
-        if (vae != null) stage(c.getString(R.string.v_057, (vae.name), (vae.length() / 1048576)))
+        stage("2 模型集：${set.id}（${set.kind}/${set.family}，${set.slotCount()} 个文件）")
+        slots.forEach { (k, v) -> stage("   槽位 $k = ${File(v).name}（${File(v).length() / 1048576} MB）") }
         activeLora()?.let { stage(c.getString(R.string.v_058, (it.name), (it.length() / 1048576))) }
         stage(c.getString(R.string.v_041, (android.os.Build.SUPPORTED_ABIS.firstOrNull()), (android.os.Build.VERSION.SDK_INT), (android.os.Build.MANUFACTURER), (android.os.Build.MODEL)))
         stage(c.getString(R.string.v_042, (Runtime.getRuntime().maxMemory() / 1048576), (root.usableSpace / 1048576)))
@@ -1491,12 +1721,13 @@ class DrawPage(
                 toast(c.getString(R.string.s_332))
             }
             fun createWith(b: String) = SdCppEngine.create(
-                modelPath = main.absolutePath,
-                vaePath = vae?.absolutePath,
+                modelPath = slots["model"].orEmpty(),
+                vaePath = slots["vae"],
                 nThreads = nThreads,
                 wtype = SdCppEngine.WTYPE_KEEP,
                 flashAttn = flashAttn,
                 backend = b,
+                slots = SdCppEngine.buildSlots(slots),
             )
             var used = gpuDev ?: "CPU"
             var h = createWith(used)
@@ -1515,16 +1746,15 @@ class DrawPage(
                 return c.getString(R.string.s_059)
             }
             sdHandle = h
+            mainModel = set.mainFile()
+            vaeModel = set.files["vae"]
             stage(c.getString(R.string.s_011))
             runCatching {
                 stage(c.getString(R.string.s_010) + SdCppEngine.lastParams().replace("\n", "  |  "))
             }
 
-            val q = GgufProbe.quantType(main)
             val summary = buildString {
-                append(c.getString(R.string.s_094)).append(main.name)
-                if (q != null) append("（").append(q).append("）")
-                if (vae != null) append("  +  ").append(vae.name)
+                append(c.getString(R.string.s_094)).append(set.name)
                 append(" · ").append(activeBackend).append(" · ").append(nThreads).append(c.getString(R.string.s_001)).append(if (flashAttn) "FA" else c.getString(R.string.s_110)).append(" · sd.cpp")
             }
             statusText.post { statusText.text = summary }
@@ -1549,10 +1779,7 @@ class DrawPage(
         refreshQuantText()
     }
 
-    fun hasModel(): Boolean {
-        val root = File(c.filesDir, DIR_NAME)
-        return root.listFiles { f -> f.isFile && f.name.endsWith(".gguf", true) }?.isNotEmpty() == true
-    }
+    fun hasModel(): Boolean = listSets().isNotEmpty()
 
     fun modelSummary(): String = when {
         sdHandle != 0L -> {
@@ -1561,7 +1788,7 @@ class DrawPage(
                 (if (q != null) "（$q）" else "") +
                 " · CPU · " + nThreads + c.getString(R.string.s_002)
         }
-        hasModel() -> c.getString(R.string.s_088)
+        hasModel() -> (activeSetOrSelected()?.name?.let { it + " · " } ?: "") + c.getString(R.string.s_088)
         else -> c.getString(R.string.s_115)
     }
 
@@ -1591,7 +1818,7 @@ class DrawPage(
      *  量化等级是烧在模型文件里的（Q4_0 的 gguf 就是 Q4_0），App 无法凭空转换，只能读出来展示。 */
     private fun refreshQuantText() {
         try {
-            val m = mainModel ?: listModels().maxByOrNull { it.length() }
+            val m = mainModel ?: activeSetOrSelected()?.mainFile() ?: listModels().maxByOrNull { it.length() }
             quantText.text = if (m == null) {
                 c.getString(R.string.s_103)
             } else {
