@@ -84,26 +84,80 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeListDevices(JNIEnv* env, jobject 
     return env->NewStringUTF(buf.data());
 }
 
-// nativeCreate(modelPath, vaePath, nThreads, wtype, flashAttn, backend) -> handle
+// 槽位顺序（与 Kotlin 侧 SdCppEngine.SLOT_KEYS 一一对应）
+enum SlotIndex {
+    SLOT_MODEL = 0,       // 单文件 all-in-one -> model_path
+    SLOT_DIFFUSION,       // DiT/UNet 单独文件 -> diffusion_model_path
+    SLOT_HIGH_NOISE,      // 高噪扩散模型
+    SLOT_UNCOND,          // 无条件扩散模型
+    SLOT_CLIP_L,
+    SLOT_CLIP_G,
+    SLOT_CLIP_VISION,
+    SLOT_T5XXL,
+    SLOT_LLM,
+    SLOT_LLM_VISION,
+    SLOT_VAE,
+    SLOT_AUDIO_VAE,
+    SLOT_COUNT
+};
+
+// nativeCreate(modelPath, vaePath, nThreads, wtype, flashAttn, backend, slots) -> handle
 //
 // backend：ggml 后端/设备名（如 "CPU" / "Vulkan0" / "vulkan"），空串或 null = 交给 sd.cpp 自动挑。
 // 显式传值会关掉 sd.cpp 的 auto_fit，行为更可控（选 CPU 就真是 CPU）。
+//
+// slots：多文件模型用。长度 12 的字符串数组，按 SlotIndex 顺序给槽位文件路径；
+// 元素可以为 null / 空串（表示该槽位不填）。传 null = 走旧的两参数路径（单文件 + 可选 VAE）。
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_litertchat_app_draw_SdCppEngine_nativeCreate(
         JNIEnv* env, jobject /*thiz*/,
         jstring modelPath, jstring vaePath, jint nThreads, jint wtype, jboolean flashAttn,
-        jstring backend) {
-    if (modelPath == nullptr) return 0;
-
+        jstring backend, jobjectArray slots) {
     std::string model, vae, backendStr;
     jstr(env, modelPath, model);
     jstr(env, vaePath, vae);
     jstr(env, backend, backendStr);
+    if (modelPath == nullptr && slots == nullptr) return 0;
+
+    // 槽位路径（std::string 持有内容，new_sd_ctx 期间必须有效）
+    std::vector<std::string> slotStr(SLOT_COUNT);
+    std::vector<const char*> slotPtr(SLOT_COUNT, nullptr);
+    if (slots != nullptr) {
+        const jsize n = env->GetArrayLength(slots);
+        for (jsize i = 0; i < n && i < SLOT_COUNT; ++i) {
+            jstring js = static_cast<jstring>(env->GetObjectArrayElement(slots, i));
+            if (js == nullptr) continue;
+            const char* cs = env->GetStringUTFChars(js, nullptr);
+            if (cs != nullptr && cs[0] != '\0') {
+                slotStr[i] = cs;
+                slotPtr[i] = slotStr[i].c_str();
+            }
+            if (cs != nullptr) env->ReleaseStringUTFChars(js, cs);
+            env->DeleteLocalRef(js);
+        }
+        bool any = false;
+        for (int i = 0; i < SLOT_COUNT; ++i) if (slotPtr[i] != nullptr) any = true;
+        if (!any) return 0;
+    }
 
     sd_ctx_params_t p;
     sd_ctx_params_init(&p);
-    p.model_path   = model.c_str();
-    p.vae_path     = vae.empty() ? nullptr : vae.c_str();
+    const char* modelPathC = slotPtr[SLOT_MODEL] != nullptr ? slotPtr[SLOT_MODEL]
+                           : (model.empty() ? nullptr : model.c_str());
+    const char* vaePathC   = slotPtr[SLOT_VAE] != nullptr ? slotPtr[SLOT_VAE]
+                           : (vae.empty() ? nullptr : vae.c_str());
+    p.model_path            = modelPathC;
+    p.diffusion_model_path  = slotPtr[SLOT_DIFFUSION];
+    p.high_noise_diffusion_model_path = slotPtr[SLOT_HIGH_NOISE];
+    p.uncond_diffusion_model_path     = slotPtr[SLOT_UNCOND];
+    p.clip_l_path           = slotPtr[SLOT_CLIP_L];
+    p.clip_g_path           = slotPtr[SLOT_CLIP_G];
+    p.clip_vision_path      = slotPtr[SLOT_CLIP_VISION];
+    p.t5xxl_path            = slotPtr[SLOT_T5XXL];
+    p.llm_path              = slotPtr[SLOT_LLM];
+    p.llm_vision_path       = slotPtr[SLOT_LLM_VISION];
+    p.vae_path              = vaePathC;
+    p.audio_vae_path        = slotPtr[SLOT_AUDIO_VAE];
     p.n_threads    = (nThreads > 0) ? nThreads : sd_get_num_physical_cores();
     // wtype < 0 表示「保持模型原样」——此时【不能】覆盖，保留 sd_ctx_params_init 给的
     // SD_TYPE_COUNT。实测把 -1 强转成 sd_type_t 会让 sd.cpp 内部查表越界，native 直接崩溃。

@@ -66,7 +66,16 @@ object SdCppEngine {
     /** 最近一次 new_sd_ctx 的完整参数（诊断加载失败用） */
     external fun nativeLastParams(): String
 
-    external fun nativeCreate(modelPath: String, vaePath: String?, nThreads: Int, wtype: Int, flashAttn: Boolean, backend: String?): Long
+    /** slots 长度 = SLOT_KEYS.size，元素可为 null（该槽位不填）。 */
+    external fun nativeCreate(
+        modelPath: String,
+        vaePath: String?,
+        nThreads: Int,
+        wtype: Int,
+        flashAttn: Boolean,
+        backend: String?,
+        slots: Array<String?>?,
+    ): Long
 
     external fun nativeGenerate(
         handle: Long,
@@ -128,7 +137,28 @@ object SdCppEngine {
         wtype: Int = WTYPE_KEEP,
         flashAttn: Boolean = true,
         backend: String? = null,
-    ): Long = nativeCreate(modelPath, vaePath, nThreads, wtype, flashAttn, backend)
+        slots: Array<String?>? = null,
+    ): Long = nativeCreate(modelPath, vaePath, nThreads, wtype, flashAttn, backend, slots)
+
+    /**
+     * 槽位顺序（与 JNI 里的 SlotIndex 一一对应；sd.cpp 的 sd_ctx_params_t 路径字段）。
+     * 单文件模型只用 "model"；多文件模型按家族填 diffusion / clip_l / t5xxl / llm / vae 等。
+     */
+    val SLOT_KEYS = arrayOf(
+        "model", "diffusion", "high_noise", "uncond",
+        "clip_l", "clip_g", "clip_vision", "t5xxl",
+        "llm", "llm_vision", "vae", "audio_vae",
+    )
+
+    /** 把槽位表（key -> 文件绝对路径）转成 JNI 要的定长数组 */
+    fun buildSlots(map: Map<String, String>): Array<String?> {
+        val out = arrayOfNulls<String>(SLOT_KEYS.size)
+        for ((k, v) in map) {
+            val i = SLOT_KEYS.indexOf(k)
+            if (i >= 0) out[i] = v
+        }
+        return out
+    }
 
     /** 生成一张图；失败返回 null。
      *
