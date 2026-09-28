@@ -275,6 +275,19 @@ class DrawPage(
     /** 最近一次生成的图（结果页「保存到相册」用） */
     private var lastImage: Bitmap? = null
 
+    // ---- 结果面板子页：结果 / 过程（生成过程实时预览） ----
+    private lateinit var tabResResult: TextView
+    private lateinit var tabResProcess: TextView
+    private lateinit var resultContent: LinearLayout
+    private lateinit var processContent: LinearLayout
+    private lateinit var previewImg: ImageView
+    private lateinit var procStepText: TextView
+    private lateinit var procProgressBar: ProgressBar
+    /** 结果面板当前子页：0=结果 1=过程 */
+    private var resultPage = 0
+    /** 预览节流：上一帧还没画完就丢帧 */
+    @Volatile private var previewBusy = false
+
     // ---- 模式：文生图 / 图生图 ----
     private lateinit var tabT2i: TextView
     private lateinit var tabI2i: TextView
@@ -533,6 +546,55 @@ class DrawPage(
             setPadding(dp(16), dp(10), dp(16), dp(12))
         }
 
+        // ---- 结果面板内的子标签：结果 / 过程（过程页逐步刷新预览）----
+        val resBar = LinearLayout(c).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setBackgroundColor(Color.WHITE)
+            setPadding(dp(8), dp(2), dp(8), dp(2))
+        }
+        tabResResult = modeTab(c.getString(R.string.s_203))
+        tabResProcess = modeTab(c.getString(R.string.s_373))
+        tabResResult.setOnClickListener { switchResultPage(0) }
+        tabResProcess.setOnClickListener { switchResultPage(1) }
+        resBar.addView(tabResResult, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        resBar.addView(tabResProcess, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        resultPane.addView(resBar, matchWrap())
+
+        resultContent = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
+        resultPane.addView(resultContent, matchWrap())
+        processContent = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
+        resultPane.addView(processContent, matchWrap())
+
+        // 过程页：逐步刷新的预览图 + 步骤进度
+        val procCard = card()
+        procCard.addView(title(c.getString(R.string.s_373)))
+        previewImg = ImageView(c).apply {
+            adjustViewBounds = true
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setBackgroundColor(0xFFF2F3F5.toInt())
+            setPadding(dp(4), dp(6), dp(4), dp(6))
+            minimumHeight = dp(180)
+        }
+        procCard.addView(previewImg, matchWrap(top = 6))
+        procStepText = TextView(c).apply {
+            textSize = 12f
+            setTextColor(subText)
+            text = c.getString(R.string.s_375)
+        }
+        procCard.addView(procStepText, matchWrap(top = 8))
+        procProgressBar = ProgressBar(c, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            progress = 0
+        }
+        procCard.addView(procProgressBar, matchWrap(top = 6))
+        procCard.addView(TextView(c).apply {
+            text = c.getString(R.string.s_374)
+            textSize = 11f
+            setTextColor(subText)
+            setPadding(0, dp(6), 0, 0)
+        })
+        processContent.addView(procCard)
+
         val resultCard = card()
         resultCard.addView(title(c.getString(R.string.s_148)))
         resultImg = ImageView(c).apply {
@@ -580,7 +642,7 @@ class DrawPage(
             LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
                 .apply { leftMargin = dp(8) })
         resultCard.addView(sendRow, matchWrap(top = 8))
-        resultPane.addView(resultCard)
+        resultContent.addView(resultCard)
 
         // ---- 生成历史（只活在内存里，App 进程结束即清空） ----
         val histCard = card()
@@ -621,7 +683,7 @@ class DrawPage(
             }
         }
         histCard.addView(clearHistBtn, matchWrap(top = 10))
-        resultPane.addView(histCard)
+        resultContent.addView(histCard)
         refreshHistory()
 
         // ---- 参数 / 结果：ViewPager 跟手翻页（同手机桌面） ----
@@ -644,6 +706,7 @@ class DrawPage(
         refreshQuantText()
         switchMode(0)
         switchPane(toResult = false)
+        switchResultPage(0)
         return root
     }
 
@@ -1850,6 +1913,7 @@ class DrawPage(
         totalStep = 0
         progressBar.progress = 0
         progressBar.visibility = View.VISIBLE
+        startPreview()
         onStatus?.invoke(c.getString(R.string.s_165), false)
         val startedAt = System.currentTimeMillis()
         scope.launch {
@@ -1862,17 +1926,27 @@ class DrawPage(
                         val phase = if (sec < 8) c.getString(R.string.s_127) else c.getString(R.string.s_129)
                         val stepInfo = if (totalStep > 0) c.getString(R.string.v_049, (curStep), (totalStep)) else ""
                         progressText.text = c.getString(R.string.v_050, (phase), (stepInfo), (sec))
+                        if (::procStepText.isInitialized) {
+                            procStepText.text = c.getString(R.string.v_050, (phase), (stepInfo), (sec))
+                        }
                         if (totalStep > 0) {
                             progressBar.progress = (curStep * 100 / totalStep).coerceIn(0, 100)
+                            if (::procProgressBar.isInitialized) {
+                                procProgressBar.progress = (curStep * 100 / totalStep).coerceIn(0, 100)
+                            }
                         }
                     }
                 }
             }
             try {
-                val img = generateImage(prompt) { cur, total ->
-                    curStep = cur
-                    totalStep = total
-                }
+                val img = generateImage(
+                    prompt,
+                    onProgress = { cur, total ->
+                        curStep = cur
+                        totalStep = total
+                    },
+                    onPreview = { st, w, h, rgb -> onPreviewFrame(st, w, h, rgb) },
+                )
                 ticker.cancel()
                 val bmp = toBitmap(img)
                 val sec = (System.currentTimeMillis() - startedAt) / 1000
@@ -1884,21 +1958,28 @@ class DrawPage(
                     refreshHistory()
                     switchPane(toResult = true)   // 出图后自动跳到结果页
                 }
-                progressText.post { progressText.text = c.getString(R.string.v_052, (img.width), (img.height), (img.seed), (sec)) }
+                val doneTxt = c.getString(R.string.v_052, (img.width), (img.height), (img.seed), (sec))
+                progressText.post { progressText.text = doneTxt }
+                if (::procStepText.isInitialized) procStepText.post { procStepText.text = doneTxt }
                 onStatus?.invoke(c.getString(R.string.v_053, (sec)), false)
             } catch (e: Throwable) {
                 ticker.cancel()
                 val sec = (System.currentTimeMillis() - startedAt) / 1000
                 if (cancelRequested) {
-                    progressText.post { progressText.text = c.getString(R.string.v_054, (sec)) }
+                    val stopTxt = c.getString(R.string.v_054, (sec))
+                    progressText.post { progressText.text = stopTxt }
+                    if (::procStepText.isInitialized) procStepText.post { procStepText.text = stopTxt }
                     onStatus?.invoke(c.getString(R.string.s_154), false)
                 } else {
-                    progressText.post { progressText.text = c.getString(R.string.v_059, (sec), (e.message ?: e.javaClass.simpleName)) + "\n" + c.getString(R.string.v_060) }
+                    val errTxt = c.getString(R.string.v_059, (sec), (e.message ?: e.javaClass.simpleName)) + "\n" + c.getString(R.string.v_060)
+                    progressText.post { progressText.text = errTxt }
+                    if (::procStepText.isInitialized) procStepText.post { procStepText.text = errTxt }
                     onStatus?.invoke(c.getString(R.string.v_055, (e.message ?: e.javaClass.simpleName)), true)
                 }
             } finally {
                 setGenerating(false)
                 progressBar.post { progressBar.visibility = View.GONE }
+                switchResultPage(0)
             }
         }
     }
@@ -1913,6 +1994,7 @@ class DrawPage(
     suspend fun generateImage(
         prompt: String,
         onProgress: (Int, Int) -> Unit = { _, _ -> },
+        onPreview: ((Int, Int, Int, ByteArray) -> Unit)? = null,
     ): ImageData {
         val steps = stepsEdit.text.toString().toIntOrNull()?.coerceIn(1, 150) ?: 20
         val cfg = cfgEdit.text.toString().toFloatOrNull()?.coerceIn(1f, 30f) ?: 7.0f
@@ -1956,6 +2038,9 @@ class DrawPage(
                 sampler = sampler,
                 scheduler = scheduler,
                 cb = { cur, total -> onProgress(cur, total) },
+                onPreview = onPreview?.let { f ->
+                    SdCppEngine.PreviewCallback { st, w, h, rgb -> f(st, w, h, rgb) }
+                },
             )
         } ?: throw IllegalStateException(c.getString(R.string.s_147))
         onProgress(steps, steps)
@@ -2017,6 +2102,7 @@ class DrawPage(
         totalStep = 0
         i2iProgressBar.progress = 0
         i2iProgressBar.visibility = View.VISIBLE
+        startPreview()
         onStatus?.invoke(c.getString(R.string.s_165), false)
         val startedAt = System.currentTimeMillis()
         scope.launch {
@@ -2028,17 +2114,27 @@ class DrawPage(
                         val phase = if (sec < 8) c.getString(R.string.s_127) else c.getString(R.string.s_129)
                         val stepInfo = if (totalStep > 0) c.getString(R.string.v_049, (curStep), (totalStep)) else ""
                         i2iProgressText.text = c.getString(R.string.v_050, (phase), (stepInfo), (sec))
+                        if (::procStepText.isInitialized) {
+                            procStepText.text = c.getString(R.string.v_050, (phase), (stepInfo), (sec))
+                        }
                         if (totalStep > 0) {
                             i2iProgressBar.progress = (curStep * 100 / totalStep).coerceIn(0, 100)
+                            if (::procProgressBar.isInitialized) {
+                                procProgressBar.progress = (curStep * 100 / totalStep).coerceIn(0, 100)
+                            }
                         }
                     }
                 }
             }
             try {
-                val img = generateImageI2i(prompt) { cur, total ->
-                    curStep = cur
-                    totalStep = total
-                }
+                val img = generateImageI2i(
+                    prompt,
+                    onProgress = { cur, total ->
+                        curStep = cur
+                        totalStep = total
+                    },
+                    onPreview = { st, w, h, rgb -> onPreviewFrame(st, w, h, rgb) },
+                )
                 ticker.cancel()
                 val bmp = toBitmap(img)
                 val sec = (System.currentTimeMillis() - startedAt) / 1000
@@ -2050,21 +2146,28 @@ class DrawPage(
                     refreshHistory()
                     switchPane(toResult = true)
                 }
-                i2iProgressText.post { i2iProgressText.text = c.getString(R.string.v_052, (img.width), (img.height), (img.seed), (sec)) }
+                val i2iDoneTxt = c.getString(R.string.v_052, (img.width), (img.height), (img.seed), (sec))
+                i2iProgressText.post { i2iProgressText.text = i2iDoneTxt }
+                if (::procStepText.isInitialized) procStepText.post { procStepText.text = i2iDoneTxt }
                 onStatus?.invoke(c.getString(R.string.v_053, (sec)), false)
             } catch (e: Throwable) {
                 ticker.cancel()
                 val sec = (System.currentTimeMillis() - startedAt) / 1000
                 if (cancelRequested) {
-                    i2iProgressText.post { i2iProgressText.text = c.getString(R.string.v_054, (sec)) }
+                    val i2iStopTxt = c.getString(R.string.v_054, (sec))
+                    i2iProgressText.post { i2iProgressText.text = i2iStopTxt }
+                    if (::procStepText.isInitialized) procStepText.post { procStepText.text = i2iStopTxt }
                     onStatus?.invoke(c.getString(R.string.s_154), false)
                 } else {
-                    i2iProgressText.post { i2iProgressText.text = c.getString(R.string.v_059, (sec), (e.message ?: e.javaClass.simpleName)) + "\n" + c.getString(R.string.v_060) }
+                    val i2iErrTxt = c.getString(R.string.v_059, (sec), (e.message ?: e.javaClass.simpleName)) + "\n" + c.getString(R.string.v_060)
+                    i2iProgressText.post { i2iProgressText.text = i2iErrTxt }
+                    if (::procStepText.isInitialized) procStepText.post { procStepText.text = i2iErrTxt }
                     onStatus?.invoke(c.getString(R.string.v_055, (e.message ?: e.javaClass.simpleName)), true)
                 }
             } finally {
                 setGenerating(false)
                 i2iProgressBar.post { i2iProgressBar.visibility = View.GONE }
+                switchResultPage(0)
             }
         }
     }
@@ -2073,6 +2176,7 @@ class DrawPage(
     private suspend fun generateImageI2i(
         prompt: String,
         onProgress: (Int, Int) -> Unit = { _, _ -> },
+        onPreview: ((Int, Int, Int, ByteArray) -> Unit)? = null,
     ): ImageData {
         val steps = i2iStepsEdit.text.toString().toIntOrNull()?.coerceIn(1, 150) ?: 20
         val cfg = i2iCfgEdit.text.toString().toFloatOrNull()?.coerceIn(1f, 30f) ?: 7.0f
@@ -2111,6 +2215,9 @@ class DrawPage(
                 sampler = sampler,
                 scheduler = scheduler,
                 cb = { cur, total -> onProgress(cur, total) },
+                onPreview = onPreview?.let { f ->
+                    SdCppEngine.PreviewCallback { st, w, h, rgb -> f(st, w, h, rgb) }
+                },
                 initImage = rgb,
                 initWidth = src.width,
                 initHeight = src.height,
@@ -2122,6 +2229,9 @@ class DrawPage(
     }
 
     fun toBitmap(img: ImageData): Bitmap = img.bitmap
+
+    /** 供对话页调用：把生成过程的预览帧转给「过程」页 */
+    fun previewFrame(step: Int, w: Int, h: Int, rgb: ByteArray) = onPreviewFrame(step, w, h, rgb)
 
     /** 点「中断生成」：先给个即时反馈，再请求 native 中断 */
     private fun doCancel() {
@@ -2273,6 +2383,47 @@ class DrawPage(
             tv.setTextColor(if (sel) primary else subText)
             tv.typeface = if (sel) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
             tv.setBackgroundColor(if (sel) 0xFFEDF1FF.toInt() else Color.WHITE)
+        }
+    }
+
+    /** 结果面板内切换「结果 / 过程」子页 */
+    private fun switchResultPage(p: Int) {
+        if (!::resultContent.isInitialized) return
+        resultPage = p
+        resultContent.visibility = if (p == 0) View.VISIBLE else View.GONE
+        processContent.visibility = if (p == 1) View.VISIBLE else View.GONE
+        for ((tv, sel) in listOf(tabResResult to (p == 0), tabResProcess to (p == 1))) {
+            tv.setTextColor(if (sel) primary else subText)
+            tv.typeface = if (sel) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+            tv.setBackgroundColor(if (sel) 0xFFEDF1FF.toInt() else Color.WHITE)
+        }
+    }
+
+    /** 开始生成：清掉上一张预览并切到「过程」页 */
+    private fun startPreview() {
+        if (!::processContent.isInitialized) return
+        previewBusy = false
+        previewImg.setImageDrawable(null)
+        procProgressBar.progress = 0
+        procStepText.text = c.getString(R.string.s_126)
+        switchPane(toResult = true)
+        switchResultPage(1)
+    }
+
+    /** 预览帧（native 推理线程回调）→ 节流后刷到「过程」页 */
+    private fun onPreviewFrame(step: Int, w: Int, h: Int, rgb: ByteArray) {
+        if (!::previewImg.isInitialized) return
+        if (previewBusy) return
+        val bmp = SdCppEngine.rgbToBitmap(w, h, rgb) ?: return
+        previewBusy = true
+        previewImg.post {
+            previewImg.setImageBitmap(bmp)
+            val total = totalStep
+            if (total > 0) {
+                procProgressBar.progress = (step * 100 / total).coerceIn(0, 100)
+                procStepText.text = c.getString(R.string.s_129) + c.getString(R.string.v_049, (step), (total))
+            }
+            previewBusy = false
         }
     }
 

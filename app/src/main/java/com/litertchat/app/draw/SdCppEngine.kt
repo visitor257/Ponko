@@ -61,6 +61,11 @@ object SdCppEngine {
         fun onStep(step: Int, steps: Int)
     }
 
+    /** 生成过程预览：每一步回调一张低分辨率小图（RGB888，行优先，左上原点） */
+    fun interface PreviewCallback {
+        fun onPreview(step: Int, width: Int, height: Int, rgb: ByteArray)
+    }
+
     external fun nativeInfo(): String
 
     /** 最近一次 new_sd_ctx 的完整参数（诊断加载失败用） */
@@ -91,6 +96,7 @@ object SdCppEngine {
         sampleMethod: Int,
         scheduler: Int,
         cb: StepCallback?,
+        pcb: PreviewCallback?,
         initData: ByteArray?,
         initWidth: Int,
         initHeight: Int,
@@ -179,6 +185,7 @@ object SdCppEngine {
         sampler: Sampler = Sampler.EULER_A,
         scheduler: Scheduler = Scheduler.DISCRETE,
         cb: StepCallback? = null,
+        onPreview: PreviewCallback? = null,
         initImage: ByteArray? = null,
         initWidth: Int = 0,
         initHeight: Int = 0,
@@ -189,7 +196,7 @@ object SdCppEngine {
         val px = nativeGenerate(
             handle, prompt, negative, loraPath, loraScale,
             width, height, steps, cfg, effectiveSeed,
-            sampler.code, scheduler.code, cb,
+            sampler.code, scheduler.code, cb, onPreview,
             if (useInit) initImage else null,
             if (useInit) initWidth else 0,
             if (useInit) initHeight else 0,
@@ -199,7 +206,20 @@ object SdCppEngine {
         return Bitmap.createBitmap(px, width, height, Bitmap.Config.ARGB_8888)
     }
 
-    /**
+        /** 预览小图（RGB888）→ Bitmap（ARGB_8888）；非法输入返回 null */
+    fun rgbToBitmap(width: Int, height: Int, rgb: ByteArray): Bitmap? {
+        if (width <= 0 || height <= 0 || rgb.size < width * height * 3) return null
+        val px = IntArray(width * height)
+        var j = 0
+        for (i in px.indices) {
+            px[i] = (0xFF shl 24) or ((rgb[j].toInt() and 0xFF) shl 16) or
+                    ((rgb[j + 1].toInt() and 0xFF) shl 8) or (rgb[j + 2].toInt() and 0xFF)
+            j += 3
+        }
+        return Bitmap.createBitmap(px, width, height, Bitmap.Config.ARGB_8888)
+    }
+
+/**
      * Bitmap → RGB888 交错字节（每像素 3 字节，行优先，左上原点）。
      * sd.cpp 的 init_image 就吃这个布局（见 sd_image_get_f32）。
      */

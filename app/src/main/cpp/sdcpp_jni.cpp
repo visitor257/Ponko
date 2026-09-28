@@ -22,6 +22,8 @@ struct SdHandle {
     sd_ctx_t* ctx = nullptr;
     jobject   cb  = nullptr;    // StepCallback（GlobalRef）
     jmethodID cb_mid = nullptr; // onStep(II)V
+    jobject   pcb = nullptr;    // PreviewCallback（GlobalRef）
+    jmethodID pcb_mid = nullptr; // onPreview(III[B)V
     std::atomic<bool> cancelled{false};
 };
 
@@ -51,6 +53,34 @@ void progressTrampoline(int step, int steps, float /*time*/, void* data) {
         attached = true;
     }
     env->CallVoidMethod(h->cb, h->cb_mid, static_cast<jint>(step), static_cast<jint>(steps));
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    if (attached) g_vm->DetachCurrentThread();
+}
+
+// 实时预览回调：native 推理线程每步调用一次。frames 指向的内存回调返回后立即释放，
+// 必须当场拷成 jbyteArray 抛给 Kotlin。
+void previewTrampoline(int step, int frame_count, sd_image_t* frames, bool /*is_noisy*/, void* data) {
+    SdHandle* h = static_cast<SdHandle*>(data);
+    if (!h || !h->pcb || !h->pcb_mid) return;
+    if (h->cancelled.load()) return;
+    if (frames == nullptr || frame_count <= 0) return;
+    const sd_image_t& im = frames[0];
+    if (im.data == nullptr || im.width == 0 || im.height == 0 || im.channel != 3) return;
+
+    JNIEnv* env = nullptr;
+    bool attached = false;
+    if (g_vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK) {
+        if (g_vm->AttachCurrentThread(&env, nullptr) != JNI_OK || env == nullptr) return;
+        attached = true;
+    }
+    const jsize n = static_cast<jsize>(im.width * im.height * 3u);
+    jbyteArray arr = env->NewByteArray(n);
+    if (arr != nullptr) {
+        env->SetByteArrayRegion(arr, 0, n, reinterpret_cast<const jbyte*>(im.data));
+        env->CallVoidMethod(h->pcb, h->pcb_mid, static_cast<jint>(step),
+                            static_cast<jint>(im.width), static_cast<jint>(im.height), arr);
+        env->DeleteLocalRef(arr);
+    }
     if (env->ExceptionCheck()) env->ExceptionClear();
     if (attached) g_vm->DetachCurrentThread();
 }
@@ -203,7 +233,7 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeGenerate(
         jstring loraPath, jfloat loraScale,
         jint width, jint height, jint steps, jfloat cfg, jlong seed,
         jint sampleMethod, jint scheduler,
-        jobject cb,
+        jobject cb, jobject pcb,
         jbyteArray initData, jint initWidth, jint initHeight, jfloat strength) {
     SdHandle* h = reinterpret_cast<SdHandle*>(handle);
     if (h == nullptr || h->ctx == nullptr) return nullptr;
@@ -223,6 +253,21 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeGenerate(
             env->DeleteGlobalRef(h->cb);
             h->cb = nullptr;
         }
+    }
+    // 预览回调：每步把 latent 投影成小图（PREVIEW_PROJ 不需要额外模型）
+    if (pcb != nullptr) {
+        h->pcb = env->NewGlobalRef(pcb);
+        jclass pcls = env->GetObjectClass(pcb);
+        h->pcb_mid = env->GetMethodID(pcls, "onPreview", "(III[B)V");
+        if (h->pcb_mid == nullptr) {
+            LOGE("PreviewCallback.onPreview(III[B)V not found");
+            env->DeleteGlobalRef(h->pcb);
+            h->pcb = nullptr;
+        } else {
+            sd_set_preview_callback(previewTrampoline, PREVIEW_PROJ, 1, true, false, h);
+        }
+    } else {
+        sd_set_preview_callback(nullptr, PREVIEW_NONE, 1, true, false, nullptr);
     }
     h->cancelled.store(false);
     g_active = h;
@@ -312,7 +357,9 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeGenerate(
         env->ReleaseByteArrayElements(initData, initBytes, JNI_ABORT);
     }
     if (h->cb) { env->DeleteGlobalRef(h->cb); h->cb = nullptr; h->cb_mid = nullptr; }
+    if (h->pcb) { env->DeleteGlobalRef(h->pcb); h->pcb = nullptr; h->pcb_mid = nullptr; }
     sd_set_progress_callback(nullptr, nullptr);
+    sd_set_preview_callback(nullptr, PREVIEW_NONE, 1, true, false, nullptr);
     g_active = nullptr;
     return result;
 }
@@ -332,6 +379,7 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeFree(JNIEnv* env, jobject /*thiz*
     if (h == nullptr) return;
     if (h->ctx != nullptr) free_sd_ctx(h->ctx);
     if (h->cb != nullptr) env->DeleteGlobalRef(h->cb);
+    if (h->pcb != nullptr) env->DeleteGlobalRef(h->pcb);
     delete h;
     LOGI("ctx freed");
 }
