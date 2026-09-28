@@ -10,21 +10,19 @@ import urllib.request
 REPO = "visitor257/Ponko"
 TOKFILE = r"C:\Users\Administrator\Desktop\git_repo_tok.txt"
 APK = r"C:\Users\Administrator\.qclaw\workspace-agent-e522fb09\LiteRT-Chat\app\build\outputs\apk\release\Ponko-release.apk"
-TAG = "v1.6.0"
-NAME = "Ponko v1.6.0"
+TAG = "v1.6.1"
+NAME = "Ponko v1.6.1"
 
-BODY = """Ponko v1.6.0 - Offline-capable AI app for Android: chat (image + file input) + drawing + tagging.
+BODY = """Ponko v1.6.1 - Offline-capable AI app for Android: chat (image + file input) + drawing + tagging.
 
 All inference runs on-device: apart from the optional in-app LoRA download, no feature needs the network. No telemetry; your data stays on your phone.
 See the [README](https://github.com/visitor257/Ponko#readme).
 
-## v1.6.0 Highlights
-- **Multi-file (split) drawing models**: import a model as a set of files (unet + text encoders + VAE) and fill in the slots one by one; each model set keeps its files in its own folder, can be selected or long-pressed to delete, and the slot panel is collapsible so the page stays tidy
-- **Fix**: deleting a LoRA no longer wipes all of them - tap to select, long-press to remove just that one
-- **SDXL is single-file only** (upstream sd.cpp cannot combine a split SDXL): the model-type menu no longer offers it, and the app explains why
-- Clearer load-failure message when a drawing model cannot be created
-- Note: multi-file is really meant for families that upstream ships split apart (Flux / SD3.5 / Qwen-Image); the smallest such sets are 8 GB+, so on a phone single-file models remain the practical choice
-- Version 1.5.0 -> 1.6.0 (versionCode 10)
+## v1.6.1 Highlights
+- **Live progress preview while drawing**: the Result pane now has a "Result / Process" switch. The Process page refreshes a step-by-step low-resolution preview while the image is generated (built-in latent projection - no extra model needed)
+- The Process page shows the same progress text as the Parameters page: loading / denoising phase, current step and elapsed seconds; finished / interrupted / failed are mirrored there too
+- Version 1.6.0 -> 1.6.1 (versionCode 11)
+
 
 ## Chat
 - Two backends: LiteRT-LM (`.litertlm`) + llama.cpp (`.gguf`)
@@ -41,6 +39,7 @@ See the [README](https://github.com/visitor257/Ponko#readme).
 - Built-in custom stable-diffusion.cpp; loads GGUF drawing models - single-file all-in-one (SD1.5 / SD2 / SDXL) or a multi-file (split) set filled in slot by slot; CPU by default, optional GPU (Vulkan) acceleration with automatic CPU fallback
 - GPU status: only drawing (Vulkan), tagging (NNAPI) and `.litertlm` chat carry GPU code; all build-time-verified only, gguf chat is CPU-only
 - Text-to-image + image-to-image (denoise strength 0.05-0.99, output size auto-aligned to the reference)
+- **Live progress preview**: the Result pane has a "Result / Process" switch; the Process page refreshes a step-by-step low-res preview (built-in latent projection, no extra model) with the same phase / step / elapsed text as the Parameters page
 - Per-page parameter defaults with confirmation (separate sets for LoRA on/off)
 - LCM-LoRA acceleration: one-tap download in-app (Hugging Face official / hf-mirror), cuts 20 steps to 4-8; local LoRA import supported
 - Generate from chat: when both an LLM and an SD model are loaded, just say "draw a ..."
@@ -48,7 +47,7 @@ See the [README](https://github.com/visitor257/Ponko#readme).
 
 ## Install
 - arm64-v8a only (64-bit ARM devices), minSdk 28 (Android 9+)
-- v1.6.0 (versionCode 10) installs over v1.5.0 / v1.4.1 / v1.4.0 / v1.3.x / v1.2; uninstall older debug builds or v1.0 first (different signing key)
+- v1.6.1 (versionCode 11) installs over v1.6.0 / v1.5.0 / v1.4.1 / v1.4.0 / v1.3.x / v1.2; uninstall older debug builds or v1.0 first (different signing key)
 - Model files are not bundled: import chat models (`.litertlm` / `.gguf`), a drawing model (GGUF: single file, or a multi-file set) and, optionally, a tagger (`.onnx` + `.csv`) from the in-app "Models" page
 
 ## License
@@ -56,17 +55,15 @@ Code is MIT; art assets (icons, artwork) are all rights reserved. Third-party co
 
 ---
 
-Ponko v1.6.0 —— 本地 AI App（Android）：聊天（可发图、可发文件）+ 绘图 + 打标
+Ponko v1.6.1 —— 本地 AI App（Android）：聊天（可发图、可发文件）+ 绘图 + 打标
 
 所有推理都在本机完成：除了「手动下载 LoRA」，其余功能都不需要联网；无遥测，数据只留在设备本地。
 
-### v1.6.0 亮点
-- **绘图模型支持多文件（拆包）导入**：按家族逐个补槽位（unet + 文本编码器 + VAE），每个模型集的文件放在各自子目录，列表可点选 / 长按删除，槽位面板可折叠，页面不再被撑长
-- **修复**：删除 LoRA 不再一次清空全部——点击选用、长按只删那一个
-- **SDXL 限定单文件**（上游 sd.cpp 无法组合拆开的 SDXL）：类型菜单不再提供，并在界面里说明原因
-- 绘图模型加载失败的提示更明确
-- 说明：多文件真正有意义的是「官方本来就拆开分发」的家族（Flux / SD3.5 / Qwen-Image），这类最小组合 8GB+，手机上仍建议用单文件
-- 版本 1.5.0 -> 1.6.0（versionCode 10）
+### v1.6.1 亮点
+- **绘图过程实时预览**：「结果」面板新增「结果 / 过程」子页，过程页在生成过程中逐步刷新低分辨率预览（内置 latent 投影，不需要额外模型）
+- 过程页与参数页显示同一套进度文案：加载 / 去噪阶段、当前步数、已用秒数；完成 / 中断 / 失败也会同步显示
+- 版本 1.6.0 -> 1.6.1（versionCode 11）
+
 
 ### 对话功能
 - 双后端：LiteRT-LM（`.litertlm`）+ llama.cpp（`.gguf`）
@@ -83,6 +80,7 @@ Ponko v1.6.0 —— 本地 AI App（Android）：聊天（可发图、可发文�
 - 内置自编 stable-diffusion.cpp；读 GGUF 格式的绘图模型——单文件整合版（SD1.5 / SD2 / SDXL）或按槽位补齐的多文件（拆包）组合；默认 CPU，可选 GPU（Vulkan）加速，失败自动回退 CPU
 - GPU 现状：只有绘图（Vulkan）、打标（NNAPI）、对话 `.litertlm` 三条带 GPU 代码，且都仅构建侧验证；对话 GGUF 只能 CPU
 - 文生图 + 图生图（重绘强度 0.05~0.99，尺寸自动对齐参考图）
+- **过程实时预览**：「结果」面板可切「结果 / 过程」子页，过程页逐步刷新低分辨率预览（内置 latent 投影，无需额外模型），进度文案与参数页一致
 - 每个参数页可「设为默认值 / 恢复默认」（带确认），文生图 / 图生图按 LoRA 开 / 关各存一套
 - LCM-LoRA 加速：App 内一键下载（HF 官方 / hf-mirror 双源），20 步压到 4~8 步；也支持导入本地 LoRA
 - 对话页出图：语言模型与绘图模型同时加载时，直接说「画一张…」就会调用绘图模型
@@ -90,7 +88,7 @@ Ponko v1.6.0 —— 本地 AI App（Android）：聊天（可发图、可发文�
 
 ### 安装
 - 仅支持 arm64-v8a（64 位 ARM 真机），minSdk 28（Android 9 及以上）
-- v1.6.0（versionCode 10）可直接覆盖安装 v1.5.0 / v1.4.1 / v1.4.0 / v1.3.x / v1.2；更早的 debug 版或 v1.0 请先卸载（签名不同）
+- v1.6.1（versionCode 11）可直接覆盖安装 v1.6.0 / v1.5.0 / v1.4.1 / v1.4.0 / v1.3.x / v1.2；更早的 debug 版或 v1.0 请先卸载（签名不同）
 - 模型文件需自备：对话模型（`.litertlm` / `.gguf`）、绘图模型（GGUF：单文件或多文件组合），打标模型（`.onnx` + `.csv`）可选，都在 App 内「模型」页导入
 
 ### 许可
