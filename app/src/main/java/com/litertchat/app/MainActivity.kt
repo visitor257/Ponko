@@ -3778,13 +3778,17 @@ class MainActivity : Activity() {
                 }
             }
             try {
-                val img = dpg.generateImage(prompt) { cur, total ->
-                    curStep = cur
-                    totalStep = total
-                    runOnUiThread {
-                        if (cur == total || cur % 2 == 0) setStatus(getString(R.string.v_021, (cur), (total)), C_WARN)
-                    }
-                }
+                val img = dpg.generateImage(
+                    prompt,
+                    onProgress = { cur, total ->
+                        curStep = cur
+                        totalStep = total
+                        runOnUiThread {
+                            if (cur == total || cur % 2 == 0) setStatus(getString(R.string.v_021, (cur), (total)), C_WARN)
+                        }
+                    },
+                    onPreview = { st, w, h, rgb -> dpg.previewFrame(st, w, h, rgb) },
+                )
                 ticker.cancel()
                 val bmp = dpg.toBitmap(img)
                 val name = "ponko_${System.currentTimeMillis()}.png"

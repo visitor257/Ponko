@@ -142,7 +142,7 @@
 <string name="s_139">Clear the current chat?</string>
 <string name="s_140">Source code: MIT License\nArtwork (app icon, character art, original drawing): © the author, all rights reserved, not covered by MIT.\nThird-party components (each © its authors): LiteRT-LM (Apache-2.0), llama.cpp (MIT), stable-diffusion.cpp (MIT), ggml (MIT), Vulkan-Hpp/Vulkan-Headers (Apache-2.0 OR MIT), Markwon (Apache-2.0), ONNX Runtime (MIT), commonmark-java (BSD-2-Clause), Jackson/Gson (Apache-2.0), SLF4J (MIT), Kotlin/AndroidX (Apache-2.0). The sources of stable-diffusion.cpp and ggml are distributed with this project under app/src/main/cpp/ (the Vulkan headers used by the optional GPU backend are at app/src/main/cpp/thirdparty/include/); ONNX Runtime bundles extra third-party components (see licenses/onnxruntime-ThirdPartyNotices.txt); the native runtimes also statically link XNNPACK, protobuf, re2, cpuinfo, zlib and more. See the repository NOTICE and the licenses/ directory for the full list and licenses.</string>
 <string name="s_141">Tap to enlarge, long-press to save to your gallery</string>
-<string name="s_142">Version 1.6.0</string>
+<string name="s_142">Version 1.6.1</string>
 <string name="s_143">Generating (tap ■ to interrupt)…</string>
 <string name="s_144">Generating, please wait</string>
 <string name="s_145">Generation error</string>
@@ -432,4 +432,7 @@
 <string name="s_369">Companion files (%1$d/%2$d)</string>
 <string name="s_370">Main model copied. Tap "Companion files" to add the remaining slots.</string>
     <string name="s_371">Model slots (%1$d/%2$d)</string>
+<string name="s_373">Process</string>
+<string name="s_374">The preview is a low-resolution approximation (latent projection); the final image appears when generation finishes.</string>
+<string name="s_375">The preview refreshes here once generation starts.</string>
 </resources>
