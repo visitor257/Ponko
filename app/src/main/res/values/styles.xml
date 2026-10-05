@@ -8,6 +8,19 @@
         <item name="android:colorAccent">#FF2F6BFF</item>
         <item name="android:textColorPrimary">#FF1C202A</item>
         <item name="android:textColorHint">#FF9AA4B5</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+
+    <!-- 深色主题：只有系统栏与窗口底色不同，界面颜色由 PonkoTheme 控制 -->
+    <style name="AppTheme.Dark" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#FF15171C</item>
+        <item name="android:statusBarColor">#FF2F6BFF</item>
+        <item name="android:navigationBarColor">#FF15171C</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:colorAccent">#FF4C7DFF</item>
+        <item name="android:textColorPrimary">#FFE7E9EF</item>
+        <item name="android:textColorHint">#FF6E7683</item>
+        <item name="android:windowLightNavigationBar">false</item>
     </style>
 
     <!-- 「＋」抽屉：从输入栏向上展开 / 收回 -->

@@ -9,20 +9,19 @@ import urllib.request
 
 REPO = "visitor257/Ponko"
 TOKFILE = r"C:\Users\Administrator\Desktop\git_repo_tok.txt"
-APK = r"C:\Users\Administrator\.qclaw\workspace-agent-e522fb09\LiteRT-Chat\app\build\outputs\apk\release\Ponko-release.apk"
-TAG = "v1.6.1"
-NAME = "Ponko v1.6.1"
+APK = r"C:\Users\Administrator\WorkBuddy\智能Agent\LiteRT-Chat\app\build\outputs\apk\release\Ponko-release.apk"
+TAG = "v1.6.2"
+NAME = "Ponko v1.6.2"
 
-BODY = """Ponko v1.6.1 - Offline-capable AI app for Android: chat (image + file input) + drawing + tagging.
+BODY = """Ponko v1.6.2 - Offline-capable AI app for Android: chat (image + file input) + drawing + tagging.
 
 All inference runs on-device: apart from the optional in-app LoRA download, no feature needs the network. No telemetry; your data stays on your phone.
 See the [README](https://github.com/visitor257/Ponko#readme).
 
-## v1.6.1 Highlights
-- **Live progress preview while drawing**: the Result pane now has a "Result / Process" switch. The Process page refreshes a step-by-step low-resolution preview while the image is generated (built-in latent projection - no extra model needed)
-- The Process page shows the same progress text as the Parameters page: loading / denoising phase, current step and elapsed seconds; finished / interrupted / failed are mirrored there too
-- Version 1.6.0 -> 1.6.1 (versionCode 11)
-
+## v1.6.2 Highlights
+- **Dark mode**: a Theme row in Settings switches Follow system / Light / Dark. It applies immediately and is remembered across restarts. Cards, inputs, text, dialogs and the system bars all follow the theme
+- **Samplers expanded**: the sampler list is now aligned 1:1 with sd.cpp - DPM++ 2M SDE (the most requested one), DPM++ 2M SDE B&T, LMS, Res Multistep, Res 2S, ER SDE and Euler GE are now selectable. DPM++ 2M SDE pairs well with the Karras scheduler
+- Version 1.6.1 -> 1.6.2 (versionCode 12)
 
 ## Chat
 - Two backends: LiteRT-LM (`.litertlm`) + llama.cpp (`.gguf`)
@@ -35,10 +34,15 @@ See the [README](https://github.com/visitor257/Ponko#readme).
 - Keep typing while generating; interrupt and continue; one-tap "regenerate" (keeps images and files)
 - Auto-follow scroll, pause on scroll-up, jump-to-bottom button
 
+## UI
+- **Dark mode**: Follow system / Light / Dark in Settings, applied instantly and persisted
+- All interface colours come from a single theme table, so no bright panels are left behind in dark mode
+
 ## Drawing
 - Built-in custom stable-diffusion.cpp; loads GGUF drawing models - single-file all-in-one (SD1.5 / SD2 / SDXL) or a multi-file (split) set filled in slot by slot; CPU by default, optional GPU (Vulkan) acceleration with automatic CPU fallback
 - GPU status: only drawing (Vulkan), tagging (NNAPI) and `.litertlm` chat carry GPU code; all build-time-verified only, gguf chat is CPU-only
 - Text-to-image + image-to-image (denoise strength 0.05-0.99, output size auto-aligned to the reference)
+- **Samplers**: the list matches sd.cpp 1:1 (incl. DPM++ 2M SDE / SDE B&T / LMS / Res Multistep / ER SDE / Euler GE)
 - **Live progress preview**: the Result pane has a "Result / Process" switch; the Process page refreshes a step-by-step low-res preview (built-in latent projection, no extra model) with the same phase / step / elapsed text as the Parameters page
 - Per-page parameter defaults with confirmation (separate sets for LoRA on/off)
 - LCM-LoRA acceleration: one-tap download in-app (Hugging Face official / hf-mirror), cuts 20 steps to 4-8; local LoRA import supported
@@ -47,7 +51,7 @@ See the [README](https://github.com/visitor257/Ponko#readme).
 
 ## Install
 - arm64-v8a only (64-bit ARM devices), minSdk 28 (Android 9+)
-- v1.6.1 (versionCode 11) installs over v1.6.0 / v1.5.0 / v1.4.1 / v1.4.0 / v1.3.x / v1.2; uninstall older debug builds or v1.0 first (different signing key)
+- v1.6.2 (versionCode 12) installs over v1.6.1 / v1.6.0 / v1.5.0 / v1.4.1 / v1.4.0 / v1.3.x / v1.2; uninstall older debug builds or v1.0 first (different signing key)
 - Model files are not bundled: import chat models (`.litertlm` / `.gguf`), a drawing model (GGUF: single file, or a multi-file set) and, optionally, a tagger (`.onnx` + `.csv`) from the in-app "Models" page
 
 ## License
@@ -55,15 +59,14 @@ Code is MIT; art assets (icons, artwork) are all rights reserved. Third-party co
 
 ---
 
-Ponko v1.6.1 —— 本地 AI App（Android）：聊天（可发图、可发文件）+ 绘图 + 打标
+Ponko v1.6.2 —— 本地 AI App（Android）：聊天（可发图、可发文件）+ 绘图 + 打标
 
 所有推理都在本机完成：除了「手动下载 LoRA」，其余功能都不需要联网；无遥测，数据只留在设备本地。
 
-### v1.6.1 亮点
-- **绘图过程实时预览**：「结果」面板新增「结果 / 过程」子页，过程页在生成过程中逐步刷新低分辨率预览（内置 latent 投影，不需要额外模型）
-- 过程页与参数页显示同一套进度文案：加载 / 去噪阶段、当前步数、已用秒数；完成 / 中断 / 失败也会同步显示
-- 版本 1.6.0 -> 1.6.1（versionCode 11）
-
+### v1.6.2 亮点
+- **深色模式**：设置页新增「主题」一行，可切「跟随系统 / 浅色 / 深色」，选完立刻生效、重启后记住；卡片、输入框、文字、对话框和系统栏都跟着变
+- **采样器补齐**：可选采样器现与 sd.cpp 完全对齐——新增 DPM++ 2M SDE（这次被点名要的那个）、DPM++ 2M SDE B&T、LMS、Res Multistep、Res 2S、ER SDE、Euler GE；DPM++ 2M SDE 建议配 Karras 调度器
+- 版本 1.6.1 -> 1.6.2（versionCode 12）
 
 ### 对话功能
 - 双后端：LiteRT-LM（`.litertlm`）+ llama.cpp（`.gguf`）
@@ -76,10 +79,15 @@ Ponko v1.6.1 —— 本地 AI App（Android）：聊天（可发图、可发文�
 - 生成中可继续打字；中断后可继续对话；一键「重新生成」（会带上图片与文件）
 - 自动跟随滚动，上滑暂停、一键回到底部
 
+### 界面
+- **深色模式**：设置页可切「跟随系统 / 浅色 / 深色」，选完立即生效、重启后记住
+- 界面颜色统一走一张主题表，深色下不会残留白块
+
 ### 绘图功能
 - 内置自编 stable-diffusion.cpp；读 GGUF 格式的绘图模型——单文件整合版（SD1.5 / SD2 / SDXL）或按槽位补齐的多文件（拆包）组合；默认 CPU，可选 GPU（Vulkan）加速，失败自动回退 CPU
 - GPU 现状：只有绘图（Vulkan）、打标（NNAPI）、对话 `.litertlm` 三条带 GPU 代码，且都仅构建侧验证；对话 GGUF 只能 CPU
 - 文生图 + 图生图（重绘强度 0.05~0.99，尺寸自动对齐参考图）
+- **采样器**：列表与 sd.cpp 一一对应（含 DPM++ 2M SDE / SDE B&T / LMS / Res Multistep / ER SDE / Euler GE）
 - **过程实时预览**：「结果」面板可切「结果 / 过程」子页，过程页逐步刷新低分辨率预览（内置 latent 投影，无需额外模型），进度文案与参数页一致
 - 每个参数页可「设为默认值 / 恢复默认」（带确认），文生图 / 图生图按 LoRA 开 / 关各存一套
 - LCM-LoRA 加速：App 内一键下载（HF 官方 / hf-mirror 双源），20 步压到 4~8 步；也支持导入本地 LoRA
@@ -88,7 +96,7 @@ Ponko v1.6.1 —— 本地 AI App（Android）：聊天（可发图、可发文�
 
 ### 安装
 - 仅支持 arm64-v8a（64 位 ARM 真机），minSdk 28（Android 9 及以上）
-- v1.6.1（versionCode 11）可直接覆盖安装 v1.6.0 / v1.5.0 / v1.4.1 / v1.4.0 / v1.3.x / v1.2；更早的 debug 版或 v1.0 请先卸载（签名不同）
+- v1.6.2（versionCode 12）可直接覆盖安装 v1.6.1 / v1.6.0 / v1.5.0 / v1.4.1 / v1.4.0 / v1.3.x / v1.2；更早的 debug 版或 v1.0 请先卸载（签名不同）
 - 模型文件需自备：对话模型（`.litertlm` / `.gguf`）、绘图模型（GGUF：单文件或多文件组合），打标模型（`.onnx` + `.csv`）可选，都在 App 内「模型」页导入
 
 ### 许可
