@@ -5,6 +5,7 @@ import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.Typeface
@@ -133,18 +134,38 @@ class MainActivity : Activity() {
     }
 
     // ---- palette ----
-    private val C_PRIMARY = Color.rgb(47, 107, 255)
-    private val C_PRIMARY_SOFT = Color.rgb(233, 239, 255)
-    private val C_BG = Color.rgb(242, 244, 248)
-    private val C_CARD = Color.WHITE
-    private val C_TEXT = Color.rgb(28, 32, 42)
-    private val C_SUBTEXT = Color.rgb(122, 131, 148)
-    private val C_THOUGHT_BG = Color.rgb(245, 247, 251)
-    private val C_THOUGHT_TEXT = Color.rgb(110, 118, 134)
-    private val C_OK = Color.rgb(34, 178, 110)
-    private val C_WARN = Color.rgb(245, 158, 11)
-    private val C_ERR = Color.rgb(229, 82, 82)
-    private val C_IDLE = Color.rgb(154, 164, 181)
+    // ================= 主题 =================
+    // 所有界面颜色都来自 pal（见 PonkoTheme）；这里只做取名，方便沿用 C_XXX。
+    // 新增控件请用这些常量，不要再写死色值，否则深色模式会留下白块。
+
+    /** 主题模式：0=跟随系统 1=浅色 2=深色（存在 ponko 偏好里） */
+    private var themeMode = 0
+    /** 当前配色表 */
+    private var pal: PonkoTheme = PonkoTheme.light()
+
+    private val C_PRIMARY get() = pal.primary
+    private val C_PRIMARY_SOFT get() = pal.primarySoft
+    private val C_BG get() = pal.bg
+    private val C_BG_ALT get() = pal.bgAlt
+    private val C_CARD get() = pal.surface
+    private val C_FIELD_BG get() = pal.fieldBg
+    private val C_SOFT_BTN get() = pal.softBtn
+    private val C_SOFT_BTN2 get() = pal.softBtn2
+    private val C_BORDER get() = pal.border
+    private val C_CHIP_BG get() = pal.chipBg
+    private val C_DIVIDER get() = pal.divider
+    private val C_DIVIDER_LINE get() = pal.dividerLine
+    private val C_TEXT get() = pal.text
+    private val C_SUBTEXT get() = pal.subText
+    private val C_HINT get() = pal.hint
+    private val C_THOUGHT_BG get() = pal.thoughtBg
+    private val C_THOUGHT_TEXT get() = pal.thoughtText
+    private val C_OK get() = pal.ok
+    private val C_WARN get() = pal.warn
+    private val C_ERR get() = pal.err
+    private val C_IDLE get() = pal.idle
+    private val C_ERR_TEXT get() = pal.errText
+    private val C_SCRIM get() = pal.scrim
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
@@ -663,6 +684,8 @@ class MainActivity : Activity() {
     private lateinit var modelsTabDraw: TextView
     private lateinit var modelsTabTag: TextView
     private lateinit var tabSettings: View
+    /** 设置页「主题」当前值 */
+    private var themeValueTv: TextView? = null
     private lateinit var tabDraw: View
     private lateinit var inputBar: View
 
@@ -736,6 +759,10 @@ class MainActivity : Activity() {
     private var autoFollow = true
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // 主题必须在 setContentView 之前定好（系统栏/窗口底色来自 style，界面颜色来自 pal）
+        themeMode = chatPrefs().getInt("themeMode", 0)
+        pal = PonkoTheme.resolve(this, themeMode)
+        setTheme(if (pal.isDark) R.style.AppTheme_Dark else R.style.AppTheme)
         super.onCreate(savedInstanceState)
         markwonFull = Markwon.builder(this)
             .usePlugin(TablePlugin.create(this))
@@ -751,6 +778,16 @@ class MainActivity : Activity() {
         loadSessions()
         installCrashHandler()
         buildUi()
+    }
+
+    /** manifest 里声明了 uiMode，系统切深浅色不会自动重建，这里手动跟上。 */
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (themeMode == 0) {
+            val dark = (newConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+                Configuration.UI_MODE_NIGHT_YES
+            if (dark != pal.isDark) recreate()
+        }
     }
 
     /** 崩溃自捕获：Java/ART 层异常（含 UnsatisfiedLinkError）写进文件，下次启动可见。 */
@@ -817,7 +854,7 @@ class MainActivity : Activity() {
         // 注意顺序：DrawPage 必须先建好并赋给 drawPage，再建「模型」页。
         // 「模型」页构建时就地读取 drawPage 的状态（LoRA 列表 / 已复制绘图模型清单），
         // 顺序反了会拿到 null，每次启动都显示成「未安装」。
-        val dpg = DrawPage(this, scope, C_PRIMARY, C_TEXT, C_SUBTEXT)
+        val dpg = DrawPage(this, scope, pal)
         drawPage = dpg
         tabModels = buildModelsPage()
         tabSettings = buildSettingsPage()
@@ -845,7 +882,7 @@ class MainActivity : Activity() {
                 addView(TextView(this@MainActivity).apply {
                     text = "绘图页初始化失败：\n" + android.util.Log.getStackTraceString(e)
                     textSize = 12f
-                    setTextColor(0xFFCC3333.toInt())
+                    setTextColor(C_ERR_TEXT)
                     setPadding(36, 36, 36, 36)
                     setTextIsSelectable(true)
                 })
@@ -979,7 +1016,7 @@ class MainActivity : Activity() {
         // ViewPager2 内部是 RecyclerView，重复 attach 同一个 View 会崩。
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(0xFFF5F6F8.toInt())
+            setBackgroundColor(C_BG_ALT)
         }
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1277,7 +1314,7 @@ class MainActivity : Activity() {
 
         val tabBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setBackgroundColor(Color.WHITE)
+            setBackgroundColor(C_CARD)
             setPadding(dp(16), dp(12), dp(16), 0)
         }
         modelsTabChat = tabItem(getString(R.string.s_076))
@@ -1345,7 +1382,7 @@ class MainActivity : Activity() {
             val sel = i == selected
             tv.setTextColor(if (sel) C_PRIMARY else C_SUBTEXT)
             tv.typeface = if (sel) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-            tv.setBackgroundColor(if (sel) 0xFFEDF1FF.toInt() else Color.WHITE)
+            tv.setBackgroundColor(if (sel) C_PRIMARY_SOFT else C_CARD)
         }
     }
 
@@ -1373,7 +1410,24 @@ class MainActivity : Activity() {
         }
         val card = card()
 
-        card.addView(pageTitle(getString(R.string.s_048)))
+        card.addView(pageTitle(getString(R.string.s_376)))
+        val themeRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(8), 0, 0)
+        }
+        themeValueTv = TextView(this).apply {
+            textSize = 13f
+            setTextColor(C_SUBTEXT)
+        }
+        themeRow.addView(themeValueTv, LinearLayout.LayoutParams(
+            0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        themeRow.addView(smallButton(getString(R.string.s_361)) { showThemeDialog() })
+        card.addView(themeRow, matchWrap())
+        card.addView(hintText(getString(R.string.s_380)))
+        refreshThemeRow()
+
+        card.addView(pageTitle(getString(R.string.s_048)), matchWrap().apply { topMargin = dp(16) })
         card.addView(hintText(getString(R.string.s_142)))
         card.addView(hintText(getString(R.string.s_322, installedAt())))
         val portrait = ImageView(this).apply {
@@ -1434,7 +1488,7 @@ class MainActivity : Activity() {
 
     /** 卡片内的细分隔线 */
     private fun divider(): View = View(this).apply {
-        setBackgroundColor(0x1F000000)
+        setBackgroundColor(C_DIVIDER)
         layoutParams = LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, dp(1)
         )
@@ -1446,6 +1500,36 @@ class MainActivity : Activity() {
         setTextColor(C_SUBTEXT)
         setLineSpacing(dp(2).toFloat(), 1f)
         setPadding(0, dp(5), 0, 0)
+    }
+
+    /** 设置页「主题」当前值 */
+    private fun refreshThemeRow() {
+        themeValueTv?.text = getString(
+            when (themeMode) {
+                1 -> R.string.s_378
+                2 -> R.string.s_379
+                else -> R.string.s_377
+            }
+        )
+    }
+
+    /** 主题选择：跟随系统 / 浅色 / 深色（存偏好，选完立刻重建界面生效） */
+    private fun showThemeDialog() {
+        val labels = arrayOf(
+            getString(R.string.s_377), getString(R.string.s_378), getString(R.string.s_379)
+        )
+        AlertDialog.Builder(this)
+            .setTitle(getString(R.string.s_376))
+            .setSingleChoiceItems(labels, themeMode) { d, which ->
+                d.dismiss()
+                if (which != themeMode) {
+                    themeMode = which
+                    chatPrefs().edit().putInt("themeMode", which).apply()
+                    recreate()
+                }
+            }
+            .setNegativeButton(getString(R.string.s_066), null)
+            .show()
     }
 
     /** 关于页的可点击链接（点开系统浏览器） */
@@ -1465,7 +1549,7 @@ class MainActivity : Activity() {
     private fun buildBottomNav(): View {
         val nav = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setBackgroundColor(Color.WHITE)
+            setBackgroundColor(C_CARD)
             elevation = dp(6).toFloat()
         }
         val items = listOf(
@@ -1522,7 +1606,7 @@ class MainActivity : Activity() {
 
     private fun buildDrawer(rootFrame: FrameLayout) {
         drawerMask = View(this).apply {
-            setBackgroundColor(Color.parseColor("#66000000"))
+            setBackgroundColor(C_SCRIM)
             visibility = View.GONE
             alpha = 0f
             setOnClickListener { closeDrawer() }
@@ -1532,7 +1616,7 @@ class MainActivity : Activity() {
 
         drawerPanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.WHITE)
+            setBackgroundColor(C_CARD)
             elevation = dp(10).toFloat()
             visibility = View.GONE
         }
@@ -1605,7 +1689,7 @@ class MainActivity : Activity() {
             }, wrapWrap())
             row.setOnClickListener { closeDrawer(); switchTo(s) }
             drawerBody.addView(row, matchWrap())
-            drawerBody.addView(View(this).apply { setBackgroundColor(Color.rgb(238, 240, 245)) },
+            drawerBody.addView(View(this).apply { setBackgroundColor(C_DIVIDER_LINE) },
                 LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1)).apply {
                     setMargins(dp(16), 0, 0, 0)
                 })
@@ -1636,7 +1720,7 @@ class MainActivity : Activity() {
     private fun buildInputBar(): View {
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.WHITE)
+            setBackgroundColor(C_CARD)
             setPadding(dp(10), dp(4), dp(10), dp(8))
             elevation = dp(6).toFloat()
         }
@@ -1673,8 +1757,8 @@ class MainActivity : Activity() {
             hint = getString(R.string.s_180)
             textSize = 15f
             setTextColor(C_TEXT)
-            setHintTextColor(C_SUBTEXT)
-            background = rounded(Color.rgb(243, 245, 249), 20)
+            setHintTextColor(C_HINT)
+            background = rounded(C_SOFT_BTN, 20)
             setPadding(dp(16), dp(10), dp(16), dp(10))
             inputType = InputType.TYPE_CLASS_TEXT or
                 InputType.TYPE_TEXT_FLAG_MULTI_LINE or
@@ -1730,7 +1814,7 @@ class MainActivity : Activity() {
     private fun showAttachDrawer() {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = rounded(Color.WHITE, 14)
+            background = rounded(C_CARD, 14)
             elevation = dp(8).toFloat()
             setPadding(dp(4), dp(4), dp(4), dp(4))
         }
@@ -1984,7 +2068,7 @@ class MainActivity : Activity() {
             chip.addView(ImageView(this).apply {
                 setImageBitmap(pendingImages[i].first)
                 scaleType = ImageView.ScaleType.CENTER_CROP
-                background = rounded(Color.rgb(243, 245, 249), 10)
+                background = rounded(C_SOFT_BTN, 10)
             }, FrameLayout.LayoutParams(dp(56), dp(56)))
             chip.addView(TextView(this).apply {
                 text = "×"
@@ -2012,7 +2096,7 @@ class MainActivity : Activity() {
                 setTextColor(C_TEXT)
                 maxLines = 2
                 ellipsize = android.text.TextUtils.TruncateAt.END
-                background = rounded(Color.rgb(243, 245, 249), 10)
+                background = rounded(C_SOFT_BTN, 10)
                 setPadding(dp(8), dp(8), dp(8), dp(8))
             }, FrameLayout.LayoutParams(dp(124), dp(56)))
             chip.addView(TextView(this).apply {
@@ -2270,7 +2354,7 @@ class MainActivity : Activity() {
             inputType = android.text.InputType.TYPE_CLASS_NUMBER or
                 android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL or
                 android.text.InputType.TYPE_NUMBER_FLAG_SIGNED
-            setBackgroundColor(0xFFF2F3F5.toInt())
+            setBackgroundColor(C_FIELD_BG)
             setPadding(dp(10), dp(8), dp(10), dp(8))
             isSingleLine = true
         }
@@ -2818,7 +2902,7 @@ class MainActivity : Activity() {
             textSize = 12.5f
             setTextColor(if (selected) C_PRIMARY else C_TEXT)
             setPadding(dp(12), dp(8), dp(12), dp(8))
-            background = rounded(if (selected) C_PRIMARY_SOFT else Color.rgb(247, 248, 251), 10,
+            background = rounded(if (selected) C_PRIMARY_SOFT else C_CHIP_BG, 10,
                 strokeDp = if (selected) 1 else 0, strokeColor = C_PRIMARY)
             isClickable = true
         }
@@ -2888,7 +2972,7 @@ class MainActivity : Activity() {
                 textSize = 12.5f
                 setTextColor(if (isImageModel) C_IDLE else if (sel) C_PRIMARY else C_TEXT)
                 setPadding(dp(12), dp(8), dp(12), dp(8))
-                background = rounded(if (sel) C_PRIMARY_SOFT else Color.rgb(247, 248, 251), 10,
+                background = rounded(if (sel) C_PRIMARY_SOFT else C_CHIP_BG, 10,
                     strokeDp = if (sel) 1 else 0, strokeColor = C_PRIMARY)
                 isClickable = true
             }
@@ -2952,8 +3036,8 @@ class MainActivity : Activity() {
         val b = drawToggleBtn ?: return
         if (drawPage?.isReady() == true) {
             b.text = getString(R.string.s_063)
-            b.background = rounded(Color.rgb(246, 247, 250), 12,
-                strokeDp = 1, strokeColor = Color.rgb(219, 224, 234))
+            b.background = rounded(C_SOFT_BTN2, 12,
+                strokeDp = 1, strokeColor = C_BORDER)
             b.setTextColor(C_TEXT)
         } else {
             b.text = getString(R.string.s_061)
@@ -3000,7 +3084,7 @@ class MainActivity : Activity() {
                 textSize = 12.5f
                 setTextColor(if (isSel) C_PRIMARY else C_TEXT)
                 setPadding(dp(12), dp(8), dp(12), dp(8))
-                background = rounded(if (isSel) C_PRIMARY_SOFT else Color.rgb(247, 248, 251), 10,
+                background = rounded(if (isSel) C_PRIMARY_SOFT else C_CHIP_BG, 10,
                     strokeDp = if (isSel) 1 else 0, strokeColor = C_PRIMARY)
                 isClickable = true
             }
@@ -3260,8 +3344,8 @@ class MainActivity : Activity() {
                 }
                 withContext(Dispatchers.Main) {
                     loadButton.text = getString(R.string.s_062)
-                    loadButton.background = rounded(Color.rgb(246, 247, 250), 12,
-                        strokeDp = 1, strokeColor = Color.rgb(219, 224, 234))
+                    loadButton.background = rounded(C_SOFT_BTN2, 12,
+                        strokeDp = 1, strokeColor = C_BORDER)
                     loadButton.setTextColor(C_TEXT)
                     // 加载语言模型 → 对话页回到聊天（drawMode 由「有无语言模型」自动决定）
                     drawPage?.llmLoaded = true
@@ -4668,8 +4752,8 @@ class MainActivity : Activity() {
         val b = taggerLoadBtn ?: return
         if (drawPage?.taggerLoaded() == true) {
             b.text = getString(R.string.s_255)
-            b.background = rounded(Color.rgb(246, 247, 250), 12,
-                strokeDp = 1, strokeColor = Color.rgb(219, 224, 234))
+            b.background = rounded(C_SOFT_BTN2, 12,
+                strokeDp = 1, strokeColor = C_BORDER)
             b.setTextColor(C_TEXT)
         } else {
             b.text = getString(R.string.s_254)
@@ -4725,7 +4809,7 @@ class MainActivity : Activity() {
         textSize = 12.5f
         setTextColor(if (selected) C_PRIMARY else C_TEXT)
         setPadding(dp(12), dp(8), dp(12), dp(8))
-        background = rounded(if (selected) C_PRIMARY_SOFT else Color.rgb(247, 248, 251), 10,
+        background = rounded(if (selected) C_PRIMARY_SOFT else C_CHIP_BG, 10,
             strokeDp = if (selected) 1 else 0, strokeColor = C_PRIMARY)
         isClickable = true
         setOnClickListener { onClick() }

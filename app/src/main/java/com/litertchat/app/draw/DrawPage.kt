@@ -1,5 +1,6 @@
 package com.litertchat.app.draw
 
+import com.litertchat.app.PonkoTheme
 import com.litertchat.app.R
 
 import android.app.Activity
@@ -51,10 +52,15 @@ class GenerationCancelledException : RuntimeException("Generation cancelled")
 class DrawPage(
     private val act: Activity,
     private val scope: CoroutineScope,
-    private val primary: Int,
-    private val textColor: Int,
-    private val subText: Int,
+    /**
+     * 配色表（浅色 / 深色由 MainActivity 决定）。
+     * 下面三个只是它的便捷取用点；切换主题时整个 Activity 重建，页面随之重画。
+     */
+    private val pal: PonkoTheme,
 ) {
+    private val primary: Int get() = pal.primary
+    private val textColor: Int get() = pal.text
+    private val subText: Int get() = pal.subText
 
     companion object {
         const val DIR_NAME = "draw"
@@ -357,13 +363,13 @@ class DrawPage(
     fun build(): View {
         val root = LinearLayout(c).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(0xFFF5F6F8.toInt())
+            setBackgroundColor(pal.bgAlt)
         }
 
         // ---- 顶部菜单：参数 / 结果（点击或左右翻页都能切） ----
         val tabBar = LinearLayout(c).apply {
             orientation = LinearLayout.HORIZONTAL
-            setBackgroundColor(Color.WHITE)
+            setBackgroundColor(pal.surface)
             setPadding(dp(16), dp(12), dp(16), 0)
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -405,7 +411,7 @@ class DrawPage(
         // ---- 模式子标签：文生图 / 图生图 ----
         val modeBar = LinearLayout(c).apply {
             orientation = LinearLayout.HORIZONTAL
-            setBackgroundColor(Color.WHITE)
+            setBackgroundColor(pal.surface)
             setPadding(dp(8), dp(2), dp(8), dp(2))
         }
         tabT2i = modeTab(c.getString(R.string.s_207))
@@ -549,7 +555,7 @@ class DrawPage(
         // ---- 结果面板内的子标签：结果 / 过程（过程页逐步刷新预览）----
         val resBar = LinearLayout(c).apply {
             orientation = LinearLayout.HORIZONTAL
-            setBackgroundColor(Color.WHITE)
+            setBackgroundColor(pal.surface)
             setPadding(dp(8), dp(2), dp(8), dp(2))
         }
         tabResResult = modeTab(c.getString(R.string.s_203))
@@ -571,7 +577,7 @@ class DrawPage(
         previewImg = ImageView(c).apply {
             adjustViewBounds = true
             scaleType = ImageView.ScaleType.FIT_CENTER
-            setBackgroundColor(0xFFF2F3F5.toInt())
+            setBackgroundColor(pal.fieldBg)
             setPadding(dp(4), dp(6), dp(4), dp(6))
             minimumHeight = dp(180)
         }
@@ -625,14 +631,14 @@ class DrawPage(
             text = c.getString(R.string.s_225)
             textSize = 13f
             setTextColor(primary)
-            setBackgroundColor(0xFFEDF1FF.toInt())
+            setBackgroundColor(pal.primarySoft)
             setOnClickListener { sendResultToI2i() }
         }
         resultToTaggerBtn = Button(c).apply {
             text = c.getString(R.string.s_238)
             textSize = 13f
             setTextColor(primary)
-            setBackgroundColor(0xFFEDF1FF.toInt())
+            setBackgroundColor(pal.primarySoft)
             setOnClickListener { sendResultToTagger() }
         }
         val sendRow = LinearLayout(c).apply { orientation = LinearLayout.HORIZONTAL }
@@ -722,7 +728,7 @@ class DrawPage(
         i2iPreview = ImageView(c).apply {
             adjustViewBounds = true
             scaleType = ImageView.ScaleType.FIT_CENTER
-            setBackgroundColor(0xFFF2F3F5.toInt())
+            setBackgroundColor(pal.fieldBg)
             visibility = View.GONE
             setPadding(dp(4), dp(4), dp(4), dp(4))
         }
@@ -865,7 +871,7 @@ class DrawPage(
         )) {
             tv.setTextColor(if (sel) primary else subText)
             tv.typeface = if (sel) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-            tv.setBackgroundColor(if (sel) 0xFFEDF1FF.toInt() else Color.WHITE)
+            tv.setBackgroundColor(if (sel) pal.primarySoft else pal.surface)
         }
         refreshModelCard()
     }
@@ -890,7 +896,7 @@ class DrawPage(
         taggerPreview = ImageView(c).apply {
             adjustViewBounds = true
             scaleType = ImageView.ScaleType.FIT_CENTER
-            setBackgroundColor(0xFFF2F3F5.toInt())
+            setBackgroundColor(pal.fieldBg)
             visibility = View.GONE
             setPadding(dp(4), dp(4), dp(4), dp(4))
         }
@@ -966,14 +972,14 @@ class DrawPage(
             text = c.getString(R.string.s_224)
             textSize = 13f
             setTextColor(primary)
-            setBackgroundColor(0xFFEDF1FF.toInt())
+            setBackgroundColor(pal.primarySoft)
             setOnClickListener { sendTags(0) }
         }
         taggerSendI2iBtn = Button(c).apply {
             text = c.getString(R.string.s_225)
             textSize = 13f
             setTextColor(primary)
-            setBackgroundColor(0xFFEDF1FF.toInt())
+            setBackgroundColor(pal.primarySoft)
             setOnClickListener { sendTags(1) }
         }
         val row = LinearLayout(c).apply { orientation = LinearLayout.HORIZONTAL }
@@ -2245,12 +2251,12 @@ class DrawPage(
         genBtn.post {
             genBtn.isEnabled = true
             genBtn.text = if (g) c.getString(R.string.s_040) else c.getString(R.string.s_098)
-            genBtn.setBackgroundColor(if (g) 0xFFD9534F.toInt() else primary)
+            genBtn.setBackgroundColor(if (g) pal.stop else primary)
         }
         if (::i2iGenBtn.isInitialized) i2iGenBtn.post {
             i2iGenBtn.isEnabled = true
             i2iGenBtn.text = if (g) c.getString(R.string.s_040) else c.getString(R.string.s_098)
-            i2iGenBtn.setBackgroundColor(if (g) 0xFFD9534F.toInt() else primary)
+            i2iGenBtn.setBackgroundColor(if (g) pal.stop else primary)
         }
     }
 
@@ -2291,7 +2297,7 @@ class DrawPage(
 
     private fun card() = LinearLayout(c).apply {
         orientation = LinearLayout.VERTICAL
-        setBackgroundColor(Color.WHITE)
+        setBackgroundColor(pal.surface)
         setPadding(dp(14), dp(12), dp(14), dp(12))
         layoutParams = LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
@@ -2324,8 +2330,8 @@ class DrawPage(
         this.hint = hint
         textSize = 13f
         setTextColor(textColor)
-        setHintTextColor(0xFFAAAAAA.toInt())
-        setBackgroundColor(0xFFF2F3F5.toInt())
+        setHintTextColor(pal.hint)
+        setBackgroundColor(pal.fieldBg)
         setPadding(dp(10), dp(8), dp(10), dp(8))
         isSingleLine = singleLine
         if (!singleLine) {
@@ -2339,7 +2345,7 @@ class DrawPage(
         textSize = 13f
         setTextColor(textColor)
         inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL or InputType.TYPE_NUMBER_FLAG_SIGNED
-        setBackgroundColor(0xFFF2F3F5.toInt())
+        setBackgroundColor(pal.fieldBg)
         setPadding(dp(10), dp(8), dp(10), dp(8))
     }
 
@@ -2382,7 +2388,7 @@ class DrawPage(
         for ((tv, sel) in listOf(tabParams to !toResult, tabResult to toResult)) {
             tv.setTextColor(if (sel) primary else subText)
             tv.typeface = if (sel) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-            tv.setBackgroundColor(if (sel) 0xFFEDF1FF.toInt() else Color.WHITE)
+            tv.setBackgroundColor(if (sel) pal.primarySoft else pal.surface)
         }
     }
 
@@ -2395,7 +2401,7 @@ class DrawPage(
         for ((tv, sel) in listOf(tabResResult to (p == 0), tabResProcess to (p == 1))) {
             tv.setTextColor(if (sel) primary else subText)
             tv.typeface = if (sel) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-            tv.setBackgroundColor(if (sel) 0xFFEDF1FF.toInt() else Color.WHITE)
+            tv.setBackgroundColor(if (sel) pal.primarySoft else pal.surface)
         }
     }
 
@@ -2657,7 +2663,7 @@ class DrawPage(
         text = t
         textSize = 12.5f
         setTextColor(primary)
-        setBackgroundColor(0xFFEDF1FF.toInt())
+        setBackgroundColor(pal.primarySoft)
         setOnClickListener { onClick() }
     }
 
@@ -2683,7 +2689,7 @@ class DrawPage(
             val iv = ImageView(c).apply {
                 setImageBitmap(img.bitmap)
                 scaleType = ImageView.ScaleType.CENTER_CROP
-                setBackgroundColor(0xFFEDEDED.toInt())
+                setBackgroundColor(pal.mediaBg)
                 setOnClickListener { showHistoryImage(img) }
                 setOnLongClickListener {
                     android.app.AlertDialog.Builder(act)

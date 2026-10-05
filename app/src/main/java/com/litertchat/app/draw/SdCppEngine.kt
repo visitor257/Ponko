@@ -31,6 +31,16 @@ object SdCppEngine {
         TCD(11, "TCD"),
         EULER_CFG_PP(15, "Euler CFG++"),
         EULER_A_CFG_PP(16, "Euler a CFG++"),
+
+        // 以下 7 项 sd.cpp 早已实现（见 runtime/denoiser.hpp 的分发），此前只是 UI 没暴露。
+        // 一律追加在末尾：下拉框按声明顺序生成，旧用户偏好里存的是索引，插在中间会错位。
+        RES_MULTISTEP(12, "Res Multistep"),
+        RES_2S(13, "Res 2S"),
+        ER_SDE(14, "ER SDE"),
+        EULER_GE(17, "Euler GE"),
+        DPMPP2M_SDE(18, "DPM++ 2M SDE"),
+        DPMPP2M_SDE_BT(19, "DPM++ 2M SDE B&T"),
+        LMS(20, "LMS"),
     }
 
     /** 调度器（对应 sd.cpp enum scheduler_t） */
