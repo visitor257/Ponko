@@ -19,7 +19,7 @@ All inference runs on-device: apart from the optional in-app LoRA download, no f
 See the [README](https://github.com/visitor257/Ponko#readme).
 
 ## v1.6.2 Highlights
-- **Dark mode**: a Theme row in Settings switches Follow system / Light / Dark. It applies immediately and is remembered across restarts. Cards, inputs, text, dialogs and the system bars all follow the theme
+- **Dark mode**: Settings now has collapsible **Settings / About** sections, and the theme is a three-position slider - **Light / Follow system / Dark**. It is remembered across restarts and applies in place (no app restart, models and chats stay loaded). Cards, inputs, buttons, text, dialogs, the status bar and the navigation bar all follow it
 - **Samplers expanded**: the sampler list is now aligned 1:1 with sd.cpp - DPM++ 2M SDE (the most requested one), DPM++ 2M SDE B&T, LMS, Res Multistep, Res 2S, ER SDE and Euler GE are now selectable. DPM++ 2M SDE pairs well with the Karras scheduler
 - Version 1.6.1 -> 1.6.2 (versionCode 12)
 
@@ -35,7 +35,8 @@ See the [README](https://github.com/visitor257/Ponko#readme).
 - Auto-follow scroll, pause on scroll-up, jump-to-bottom button
 
 ## UI
-- **Dark mode**: Follow system / Light / Dark in Settings, applied instantly and persisted
+- **Dark mode**: a three-position slider in Settings (Light / Follow system / Dark), persisted and applied without restarting
+- Settings is split into collapsible **Settings / About** groups
 - All interface colours come from a single theme table, so no bright panels are left behind in dark mode
 
 ## Drawing
@@ -64,7 +65,7 @@ Ponko v1.6.2 —— 本地 AI App（Android）：聊天（可发图、可发文�
 所有推理都在本机完成：除了「手动下载 LoRA」，其余功能都不需要联网；无遥测，数据只留在设备本地。
 
 ### v1.6.2 亮点
-- **深色模式**：设置页新增「主题」一行，可切「跟随系统 / 浅色 / 深色」，选完立刻生效、重启后记住；卡片、输入框、文字、对话框和系统栏都跟着变
+- **深色模式**：设置页改为「设置 / 关于」两个可折叠分区，主题是**三档滑块**（亮 / 跟随系统 / 暗）；重启后记住，切换时**就地换色**（不重启 App，已加载的模型与会话都保留）；卡片、输入框、按钮、文字、对话框、状态栏与导航栏全部跟随
 - **采样器补齐**：可选采样器现与 sd.cpp 完全对齐——新增 DPM++ 2M SDE（这次被点名要的那个）、DPM++ 2M SDE B&T、LMS、Res Multistep、Res 2S、ER SDE、Euler GE；DPM++ 2M SDE 建议配 Karras 调度器
 - 版本 1.6.1 -> 1.6.2（versionCode 12）
 
@@ -80,7 +81,8 @@ Ponko v1.6.2 —— 本地 AI App（Android）：聊天（可发图、可发文�
 - 自动跟随滚动，上滑暂停、一键回到底部
 
 ### 界面
-- **深色模式**：设置页可切「跟随系统 / 浅色 / 深色」，选完立即生效、重启后记住
+- **深色模式**：设置页三档滑块（亮 / 跟随系统 / 暗），重启后记住，切换就地生效不重启
+- 设置页分成「设置 / 关于」两个可折叠分区
 - 界面颜色统一走一张主题表，深色下不会残留白块
 
 ### 绘图功能

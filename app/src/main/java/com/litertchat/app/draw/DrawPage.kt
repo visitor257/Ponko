@@ -56,11 +56,21 @@ class DrawPage(
      * 配色表（浅色 / 深色由 MainActivity 决定）。
      * 下面三个只是它的便捷取用点；切换主题时整个 Activity 重建，页面随之重画。
      */
-    private val pal: PonkoTheme,
+    pal: PonkoTheme,
 ) {
+    /** 配色表；换主题时先 setPalette 再 build() 重建本页视图（native 句柄等字段都保留） */
+    var pal: PonkoTheme = pal
+        private set
+
     private val primary: Int get() = pal.primary
     private val textColor: Int get() = pal.text
     private val subText: Int get() = pal.subText
+
+    /** 换配色（下次 build() 生效） */
+    fun setPalette(p: PonkoTheme) { pal = p }
+
+    /** 是否正在出图（换主题要重建视图，出图途中不适合重建） */
+    fun isBusy(): Boolean = generating
 
     companion object {
         const val DIR_NAME = "draw"

@@ -684,8 +684,6 @@ class MainActivity : Activity() {
     private lateinit var modelsTabDraw: TextView
     private lateinit var modelsTabTag: TextView
     private lateinit var tabSettings: View
-    /** 设置页「主题」当前值 */
-    private var themeValueTv: TextView? = null
     private lateinit var tabDraw: View
     private lateinit var inputBar: View
 
@@ -780,13 +778,38 @@ class MainActivity : Activity() {
         buildUi()
     }
 
+    /**
+     * 原地换主题：重算配色 → 改系统栏颜色 → 用新配色把界面重建一遍。
+     *
+     * 不走 recreate()：Activity 重建会把 chat 引擎、绘图 native 上下文、ONNX 打标会话
+     * 一起丢掉（用户感受就是"设置一动就重启"）。这里只重建 View，这些对象都留着。
+     */
+    private fun applyThemeInPlace() {
+        pal = PonkoTheme.resolve(this, themeMode)
+        // 记住当前页：buildUi() 末尾会把界面切回来
+        chatPrefs().edit().putInt("restoreTab", currentTab).apply()
+        buildUi()
+        toast(getString(R.string.s_383))
+    }
+
+    /** 状态栏 / 导航栏配色（跟随主题） */
+    private fun applySystemBarColors() {
+        window.statusBarColor = pal.statusBar
+        window.navigationBarColor = pal.navBar
+        // 导航栏图标：浅色底要深色图标，深色底反之
+        var flags = window.decorView.systemUiVisibility
+        flags = if (pal.isDark) flags and View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR.inv()
+        else flags or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+        window.decorView.systemUiVisibility = flags
+    }
+
     /** manifest 里声明了 uiMode，系统切深浅色不会自动重建，这里手动跟上。 */
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         if (themeMode == 0) {
             val dark = (newConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
                 Configuration.UI_MODE_NIGHT_YES
-            if (dark != pal.isDark) recreate()
+            if (dark != pal.isDark) applyThemeInPlace()
         }
     }
 
@@ -854,7 +877,10 @@ class MainActivity : Activity() {
         // 注意顺序：DrawPage 必须先建好并赋给 drawPage，再建「模型」页。
         // 「模型」页构建时就地读取 drawPage 的状态（LoRA 列表 / 已复制绘图模型清单），
         // 顺序反了会拿到 null，每次启动都显示成「未安装」。
-        val dpg = DrawPage(this, scope, pal)
+        // 复用已存在的 DrawPage：换主题时重建的是视图，native 上下文 / 已加载的模型
+        // 都留在同一个实例里（否则换一次主题就要重新加载绘图模型）。
+        val dpg = drawPage ?: DrawPage(this, scope, pal)
+        dpg.setPalette(pal)
         drawPage = dpg
         tabModels = buildModelsPage()
         tabSettings = buildSettingsPage()
@@ -908,10 +934,17 @@ class MainActivity : Activity() {
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         buildDrawer(rootFrame)
         setContentView(rootFrame)
+        applySystemBarColors()
 
         refreshSavedModels()
         restoreSession()
         switchTab(0)
+        // 主题切换导致的重建：回到重建前那一页（一次性，正常启动不受影响）
+        val restoreTab = chatPrefs().getInt("restoreTab", -1)
+        if (restoreTab in 0..3) {
+            chatPrefs().edit().remove("restoreTab").apply()
+            switchTab(restoreTab)
+        }
     }
 
     /** 对话页：消息列表 + 回到底部按钮 + 智能跟随滚动。 */
@@ -1410,46 +1443,73 @@ class MainActivity : Activity() {
         }
         val card = card()
 
-        card.addView(pageTitle(getString(R.string.s_376)))
-        val themeRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(8), 0, 0)
+        // ---- 设置（可折叠，默认展开）----
+        val settingsBody = collapsibleSection(card, getString(R.string.s_381), expanded = true)
+        settingsBody.addView(subTitle(getString(R.string.s_376)))
+        val themeSwitch = SegmentedSwitch(
+            this,
+            arrayOf(
+                getString(R.string.s_378), getString(R.string.s_377), getString(R.string.s_379)
+            ),
+            pal,
+            // 档位顺序：0=亮 1=跟随系统 2=暗；themeMode 的取值是 0=跟随系统 1=浅色 2=深色
+            when (themeMode) {
+                1 -> 0
+                2 -> 2
+                else -> 1
+            },
+        )
+        themeSwitch.onChanged = { i ->
+            val mode = when (i) {
+                0 -> 1
+                2 -> 2
+                else -> 0
+            }
+            if (mode != themeMode) {
+                if (drawPage?.isBusy() == true) {
+                    // 出图途中重建视图会把结果丢掉，先拒绝并弹回原位
+                    toast(getString(R.string.s_382))
+                    themeSwitch.setIndexSilently(
+                        when (themeMode) {
+                            1 -> 0
+                            2 -> 2
+                            else -> 1
+                        }
+                    )
+                } else {
+                    themeMode = mode
+                    chatPrefs().edit().putInt("themeMode", mode).apply()
+                    applyThemeInPlace()
+                }
+            }
         }
-        themeValueTv = TextView(this).apply {
-            textSize = 13f
-            setTextColor(C_SUBTEXT)
-        }
-        themeRow.addView(themeValueTv, LinearLayout.LayoutParams(
-            0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        themeRow.addView(smallButton(getString(R.string.s_361)) { showThemeDialog() })
-        card.addView(themeRow, matchWrap())
-        card.addView(hintText(getString(R.string.s_380)))
-        refreshThemeRow()
+        settingsBody.addView(themeSwitch, matchWrap().apply { topMargin = dp(12) })
+        settingsBody.addView(hintText(getString(R.string.s_380)))
 
-        card.addView(pageTitle(getString(R.string.s_048)), matchWrap().apply { topMargin = dp(16) })
-        card.addView(hintText(getString(R.string.s_142)))
-        card.addView(hintText(getString(R.string.s_322, installedAt())))
+        // ---- 关于（可折叠，默认收起）----
+        val aboutBody = collapsibleSection(card, getString(R.string.s_048), expanded = true)
+        aboutBody.addView(hintText(getString(R.string.s_142)))
+        aboutBody.addView(hintText(getString(R.string.s_322, installedAt())))
         val portrait = ImageView(this).apply {
             setImageResource(R.drawable.about_portrait)
             adjustViewBounds = true
             scaleType = ImageView.ScaleType.FIT_CENTER
             setPadding(0, dp(10), 0, 0)
         }
-        card.addView(portrait, matchWrap())
-        card.addView(hintText(getString(R.string.s_025)))
+        aboutBody.addView(portrait, matchWrap())
+        aboutBody.addView(hintText(getString(R.string.s_025)))
 
-        card.addView(pageTitle(getString(R.string.s_104)), matchWrap().apply { topMargin = dp(16) })
-        card.addView(hintText(getString(R.string.s_097)))
+        aboutBody.addView(pageTitle(getString(R.string.s_104)), matchWrap().apply { topMargin = dp(14) })
+        aboutBody.addView(hintText(getString(R.string.s_097)))
 
-        card.addView(pageTitle(getString(R.string.s_171)), matchWrap().apply { topMargin = dp(16) })
-        card.addView(hintText(getString(R.string.s_140)))
+        aboutBody.addView(pageTitle(getString(R.string.s_171)), matchWrap().apply { topMargin = dp(14) })
+        aboutBody.addView(hintText(getString(R.string.s_140)))
 
-        card.addView(pageTitle(getString(R.string.s_043)), matchWrap().apply { topMargin = dp(16) })
-        card.addView(hintText("visitor257"))
+        aboutBody.addView(pageTitle(getString(R.string.s_043)), matchWrap().apply { topMargin = dp(14) })
+        aboutBody.addView(hintText("visitor257"))
 
-        card.addView(pageTitle(getString(R.string.s_194)), matchWrap().apply { topMargin = dp(16) })
-        card.addView(linkText(getString(R.string.s_107), "https://github.com/visitor257/Ponko"))
+        aboutBody.addView(pageTitle(getString(R.string.s_194)), matchWrap().apply { topMargin = dp(14) })
+        aboutBody.addView(linkText(getString(R.string.s_107), "https://github.com/visitor257/Ponko"))
 
         sv.addView(card, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
@@ -1502,34 +1562,44 @@ class MainActivity : Activity() {
         setPadding(0, dp(5), 0, 0)
     }
 
-    /** 设置页「主题」当前值 */
-    private fun refreshThemeRow() {
-        themeValueTv?.text = getString(
-            when (themeMode) {
-                1 -> R.string.s_378
-                2 -> R.string.s_379
-                else -> R.string.s_377
-            }
-        )
-    }
-
-    /** 主题选择：跟随系统 / 浅色 / 深色（存偏好，选完立刻重建界面生效） */
-    private fun showThemeDialog() {
-        val labels = arrayOf(
-            getString(R.string.s_377), getString(R.string.s_378), getString(R.string.s_379)
-        )
-        AlertDialog.Builder(this)
-            .setTitle(getString(R.string.s_376))
-            .setSingleChoiceItems(labels, themeMode) { d, which ->
-                d.dismiss()
-                if (which != themeMode) {
-                    themeMode = which
-                    chatPrefs().edit().putInt("themeMode", which).apply()
-                    recreate()
-                }
-            }
-            .setNegativeButton(getString(R.string.s_066), null)
-            .show()
+    /**
+     * 设置页里的可折叠分区：返回可往里塞内容的容器。
+     * 标题行（标题 + 箭头）点一下展开 / 收起。
+     */
+    private fun collapsibleSection(
+        parentBox: LinearLayout,
+        title: String,
+        expanded: Boolean,
+    ): LinearLayout {
+        val head = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(10), 0, dp(10))
+            isClickable = true
+        }
+        val arrow = TextView(this).apply {
+            textSize = 12f
+            setTextColor(C_SUBTEXT)
+            setPadding(dp(8), 0, dp(2), 0)
+        }
+        head.addView(pageTitle(title), LinearLayout.LayoutParams(
+            0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        head.addView(arrow, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        var open = expanded
+        fun sync() {
+            body.visibility = if (open) View.VISIBLE else View.GONE
+            arrow.text = if (open) "\u25be" else "\u25b8"
+        }
+        sync()
+        head.setOnClickListener {
+            open = !open
+            sync()
+        }
+        parentBox.addView(head, matchWrap())
+        parentBox.addView(body, matchWrap())
+        return body
     }
 
     /** 关于页的可点击链接（点开系统浏览器） */

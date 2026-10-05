@@ -439,5 +439,8 @@
 <string name="s_377">Follow system</string>
 <string name="s_378">Light</string>
 <string name="s_379">Dark</string>
-<string name="s_380">Dark mode re-colours the whole app (cards, inputs, text and the system bars). Switching takes effect right away.</string>
+<string name="s_380">Drag the slider to Light / Follow system / Dark - it applies right away and is remembered across restarts.</string>
+<string name="s_381">Settings</string>
+<string name="s_382">Still generating - switch the theme after it finishes</string>
+<string name="s_383">Theme applied</string>
 </resources>
