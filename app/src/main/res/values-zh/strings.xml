@@ -437,7 +437,10 @@
     <string name="s_375">生成开始后，这里会逐步刷新预览。</string>
     <string name="s_376">主题</string>
     <string name="s_377">跟随系统</string>
-    <string name="s_378">浅色</string>
-    <string name="s_379">深色</string>
-    <string name="s_380">深色模式会改变整个界面的配色（卡片、输入框、文字与系统栏），切换后立即生效。</string>
+    <string name="s_378">亮</string>
+    <string name="s_379">暗</string>
+    <string name="s_380">把滑块拖到「亮 / 跟随系统 / 暗」，切换立即生效，重启后记住。</string>
+    <string name="s_381">设置</string>
+    <string name="s_382">正在出图，等画完再切换主题</string>
+    <string name="s_383">主题已切换</string>
 </resources>

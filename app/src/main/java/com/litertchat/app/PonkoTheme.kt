@@ -38,6 +38,10 @@ data class PonkoTheme(
     val stop: Int,           // 生成中「停止」按钮
     val mediaBg: Int,        // 图片缩略图底
     val scrim: Int,          // 抽屉遮罩
+    val switchTrack: Int,    // 滑块开关：轨道底
+    val switchThumb: Int,    // 滑块开关：滑块
+    val statusBar: Int,      // 状态栏（顶栏同色）
+    val navBar: Int,         // 导航栏
     val isDark: Boolean,
 ) {
     companion object {
@@ -68,6 +72,10 @@ data class PonkoTheme(
             stop = 0xFFD9534F.toInt(),
             mediaBg = 0xFFEDEDED.toInt(),
             scrim = 0x66000000,
+            switchTrack = 0xFFF1F3F7.toInt(),
+            switchThumb = 0xFFFFFFFF.toInt(),
+            statusBar = 0xFF2F6BFF.toInt(),
+            navBar = 0xFFFFFFFF.toInt(),
             isDark = false,
         )
 
@@ -98,6 +106,10 @@ data class PonkoTheme(
             stop = 0xFFD9534F.toInt(),
             mediaBg = 0xFF22252B.toInt(),
             scrim = 0x99000000.toInt(),
+            switchTrack = 0xFF23262E.toInt(),
+            switchThumb = 0xFF3B4351.toInt(),
+            statusBar = 0xFF2F6BFF.toInt(),
+            navBar = 0xFF15171C.toInt(),
             isDark = true,
         )
 
