@@ -10,6 +10,14 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!-- 对话 API：常驻前台服务（specialUse 类型，避免 dataSync 的 6 小时超时）+ 常驻通知 + 灭屏不掉线 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+
     <!-- Android 11+ 包可见性：声明后才能解析到相机应用 -->
     <queries>
         <intent>
@@ -45,6 +53,16 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- 对话 API 服务器：App 退到后台 / 锁屏后继续响应 OpenAI 兼容请求 -->
+        <service
+            android:name=".ApiService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Serves the on-device language model over a local OpenAI-compatible HTTP API" />
+        </service>
     </application>
 
 </manifest>

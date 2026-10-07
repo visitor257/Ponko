@@ -12,8 +12,8 @@ android {
         applicationId = "com.litertchat.app"
         minSdk = 28
         targetSdk = 36
-        versionCode = 12
-        versionName = "1.6.2"
+        versionCode = 13
+        versionName = "1.7.0"
         ndk {
             // LiteRT-LM 与 llama.cpp 的 native 都只跑 arm64 真机，去掉 x86_64 可减小 APK
             abiFilters += "arm64-v8a"
@@ -65,6 +65,8 @@ dependencies {
     implementation("androidx.viewpager:viewpager:1.0.0")
     // 打标（Tagger）：ONNX Runtime，运行用户导入的 WD14 类 .onnx 模型（arm64-v8a）
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.22.0")
+    // PDF 文本抽取（对话发送 PDF）：Tom Roush 的 PDFBox Android 移植
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0")
     // 绘图（文生图）：自编的 stable-diffusion.cpp（arm64-v8a），源码在 src/main/cpp，
     // 由 NDK/CMake 现场编译出 libstable-diffusion.so + libponko_sd.so（JNI 桥）。
     // 相比现成 AAR，这里能直接控制线程数 / 采样器 / 调度器 / LoRA / 量化类型 / 取消。

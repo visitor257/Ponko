@@ -20,6 +20,9 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import android.animation.ValueAnimator
 import android.view.ViewGroup
 import android.view.animation.AccelerateInterpolator
 import android.view.animation.DecelerateInterpolator
@@ -105,6 +108,8 @@ class MainActivity : Activity() {
         private const val REQ_PICK_MMPROJ = 1008
         private const val REQ_PERM_STORAGE = 1009
         private const val REQ_PICK_FILE = 1010
+        /** Android 13+ 常驻通知权限（对话 API 用） */
+        private const val REQ_NOTIF = 1020
         /** 一轮对话里最多让打标模型「看图」几次（agent 循环上限） */
         private const val MAX_TAG_ROUNDS = 2
         /** 单条消息最多能带的文件数（本地模型上下文有限，文件比图片更吃 token） */
@@ -208,12 +213,13 @@ class MainActivity : Activity() {
     /** 待发送的文本文件（已解析出文字），最多 MAX_FILES 个 */
     private val pendingFiles = ArrayList<PendingFile>()
 
-    /** 用户选的文件：文件名 + 原始字节数 + 解析出的正文（可能已截断） */
+    /** 用户选的文件：文件名 + 原始字节数 + 解析出的正文（可能已截断）+ 结构说明（如「12 页」） */
     private class PendingFile(
         val name: String,
         val bytes: Long,
         var text: String,
         var truncated: Boolean,
+        val detail: String? = null,
     )
 
     /** 文件读取结果：成功给 file，失败给 error（可直接显示的文案） */
@@ -684,6 +690,20 @@ class MainActivity : Activity() {
     private lateinit var modelsTabDraw: TextView
     private lateinit var modelsTabTag: TextView
     private lateinit var tabSettings: View
+
+    // ---- 对话 API（把本机模型开放成 OpenAI 兼容接口）----
+    private lateinit var apiStatusTv: TextView
+    private lateinit var apiAddressTv: TextView
+    private lateinit var apiKeyTv: TextView
+    private lateinit var apiStatsTv: TextView
+    private lateinit var apiToggleBtn: TextView
+    private lateinit var apiPortEdit: EditText
+
+    // ---- 「对话模型」页内再分两个子页：模型 / API ----
+    private lateinit var chatSubTabModel: TextView
+    private lateinit var chatSubTabApi: TextView
+    private lateinit var chatModelPane: View
+    private lateinit var chatApiPane: View
     private lateinit var tabDraw: View
     private lateinit var inputBar: View
 
@@ -757,6 +777,8 @@ class MainActivity : Activity() {
     private var autoFollow = true
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // 最早挂上崩溃钩子：连主题解析 / 建界面阶段的异常也能落盘（崩在 buildUi 里否则没日志）
+        installCrashHandler()
         // 主题必须在 setContentView 之前定好（系统栏/窗口底色来自 style，界面颜色来自 pal）
         themeMode = chatPrefs().getInt("themeMode", 0)
         pal = PonkoTheme.resolve(this, themeMode)
@@ -774,7 +796,6 @@ class MainActivity : Activity() {
             .usePlugin(LinkifyPlugin.create())
             .build()
         loadSessions()
-        installCrashHandler()
         buildUi()
     }
 
@@ -789,7 +810,6 @@ class MainActivity : Activity() {
         // 记住当前页：buildUi() 末尾会把界面切回来
         chatPrefs().edit().putInt("restoreTab", currentTab).apply()
         buildUi()
-        toast(getString(R.string.s_383))
     }
 
     /** 状态栏 / 导航栏配色（跟随主题） */
@@ -817,10 +837,13 @@ class MainActivity : Activity() {
     private fun installCrashHandler() {
         val prev = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { t, e ->
+            val dump = "${java.util.Date()}\nthread=${t.name}\n" + android.util.Log.getStackTraceString(e)
+            // 内部目录（界面里能读回）+ 外部专属目录
+            // （/sdcard/Android/data/com.litertchat.app/files/crash.txt，插 USB 用 MTP 就能取，
+            //   没有 adb 也能定位崩溃）
+            try { File(filesDir, "crash.txt").writeText(dump) } catch (_: Throwable) {}
             try {
-                File(filesDir, "crash.txt").writeText(
-                    "${java.util.Date()}\nthread=${t.name}\n" + android.util.Log.getStackTraceString(e)
-                )
+                getExternalFilesDir(null)?.let { File(it, "crash.txt").writeText(dump) }
             } catch (_: Throwable) {}
             prev?.uncaughtException(t, e)
         }
@@ -854,8 +877,14 @@ class MainActivity : Activity() {
         try { saveSessions() } catch (_: Throwable) {}
         scope.cancel()
         try { drawPage?.release() } catch (_: Throwable) {}
-        try { engine?.close() } catch (_: Throwable) {}
-        try { llamaModel?.close() } catch (_: Throwable) {}
+        if (!ApiService.running) {
+            // 对话 API 没开 → 按老规矩把模型放掉
+            try { engine?.close() } catch (_: Throwable) {}
+            try { llamaModel?.close() } catch (_: Throwable) {}
+            ChatCore.release()
+        }
+        // 对话 API 还开着：模型留给服务继续推理（关掉它会让 API 立刻不可用），
+        // 这里只断开界面自己的引用
         engine = null
         llamaModel = null
         conversation = null
@@ -1177,8 +1206,114 @@ class MainActivity : Activity() {
             matchWrap().apply { topMargin = dp(8) })
         chatCard.addView(smallButton(getString(R.string.s_249)) { resetChatParams() },
             matchWrap().apply { topMargin = dp(8) })
+        // ================= 对话 API（把本机模型开放出去） =================
+        // 单独一张卡片：与「模型」并列成子页，由上方子页签切换（原先是接在同一张卡下面）
+        val apiCard = sectionCard()
+        apiCard.addView(pageTitle(getString(R.string.s_403)))
+        apiCard.addView(hintText(getString(R.string.s_404)), matchWrap().apply { topMargin = dp(4) })
+
+        apiStatusTv = TextView(this).apply {
+            textSize = 12.5f
+            setTextColor(C_SUBTEXT)
+            setPadding(0, dp(6), 0, 0)
+        }
+        apiCard.addView(apiStatusTv, matchWrap())
+
+        apiAddressTv = TextView(this).apply {
+            textSize = 12f
+            setTextColor(C_PRIMARY)
+            isClickable = true
+            setPadding(0, dp(2), 0, 0)
+            setOnClickListener { copyApiAddress() }
+        }
+        apiCard.addView(apiAddressTv, matchWrap())
+
+        val apiPortRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(8), 0, 0)
+        }
+        apiPortRow.addView(TextView(this).apply {
+            text = getString(R.string.s_400)
+            textSize = 12f
+            setTextColor(C_TEXT)
+        }, wrapWrap())
+        apiPortEdit = EditText(this).apply {
+            setText(apiPort().toString())
+            textSize = 13f
+            setTextColor(C_TEXT)
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            setBackgroundColor(C_FIELD_BG)
+            setPadding(dp(10), dp(6), dp(10), dp(6))
+            isSingleLine = true
+            addTextChangedListener(object : android.text.TextWatcher {
+                override fun afterTextChanged(s: android.text.Editable?) {
+                    val v = s?.toString()?.trim()?.toIntOrNull() ?: return
+                    if (v in 1024..65535) chatPrefs().edit().putInt(ApiService.KEY_PORT, v).apply()
+                }
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            })
+        }
+        apiPortRow.addView(apiPortEdit, LinearLayout.LayoutParams(
+            0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(8) })
+        apiCard.addView(apiPortRow, matchWrap())
+        apiCard.addView(hintText(getString(R.string.s_401)), matchWrap().apply { topMargin = dp(4) })
+
+        apiKeyTv = TextView(this).apply {
+            textSize = 12f
+            setTextColor(C_SUBTEXT)
+            setPadding(0, dp(8), 0, 0)
+        }
+        apiCard.addView(apiKeyTv, matchWrap())
+        val apiKeyRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        // 两个按钮拉开距离：原来紧贴着，容易误点到「清除」
+        apiKeyRow.addView(smallButton(getString(R.string.s_411)) { newApiKey() },
+            wrapWrap().apply { rightMargin = dp(12) })
+        apiKeyRow.addView(smallButton(getString(R.string.s_412)) { clearApiKey() }, wrapWrap())
+        apiCard.addView(apiKeyRow, matchWrap().apply { topMargin = dp(6) })
+
+        apiToggleBtn = actionButton(getString(R.string.s_407)) { toggleApiServer() }
+        apiCard.addView(apiToggleBtn, matchWrap().apply { topMargin = dp(8) })
+
+        apiStatsTv = TextView(this).apply {
+            textSize = 11.5f
+            setTextColor(C_SUBTEXT)
+            setPadding(0, dp(6), 0, 0)
+        }
+        apiCard.addView(apiStatsTv, matchWrap())
+        apiCard.addView(hintText(getString(R.string.s_415)), matchWrap().apply { topMargin = dp(6) })
+
+        // ---- 「对话模型」页内再分两个子页：模型 / API（样式同绘图页的结果/过程）----
+        chatSubTabModel = modelsSubTab(getString(R.string.s_419))
+        chatSubTabApi = modelsSubTab(getString(R.string.s_420))
+        chatSubTabModel.setOnClickListener { switchChatSubPage(0) }
+        chatSubTabApi.setOnClickListener { switchChatSubPage(1) }
+        val chatSubBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setBackgroundColor(pal.surface)
+            setPadding(dp(12), dp(2), dp(12), dp(2))
+        }
+        chatSubBar.addView(chatSubTabModel,
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        chatSubBar.addView(chatSubTabApi,
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+
+        chatModelPane = modelsPane(chatCard)
+        chatApiPane = modelsPane(apiCard)
+        val chatPane = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        // 与上面「对话模型 / 绘图模型 / 打标模型」那行拉开距离：两行原来贴在一起，
+        // 底色又都是 surface，看起来像一行四五个页签
+        chatPane.addView(chatSubBar, matchWrap().apply { topMargin = dp(12) })
+        chatPane.addView(chatModelPane, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        chatPane.addView(chatApiPane, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+
+        refreshApiUi()
         // 建完界面后按当前选中的模型回填一次参数
         loadChatParamsIntoUi()
+
 
         // ================= 绘图模型 =================
         val drawCard = sectionCard()
@@ -1363,7 +1498,7 @@ class MainActivity : Activity() {
 
         modelsPager = ViewPager(this).apply {
             adapter = ModelsPaneAdapter(
-                listOf(modelsPane(chatCard), modelsPane(drawCard), modelsPane(taggerCard))
+                listOf(chatPane, modelsPane(drawCard), modelsPane(taggerCard))
             )
             addOnPageChangeListener(object : ViewPager.SimpleOnPageChangeListener() {
                 override fun onPageSelected(position: Int) {
@@ -1377,6 +1512,7 @@ class MainActivity : Activity() {
         refreshLoraUi()
         refreshDrawModels()
         refreshTaggerUi()
+        switchChatSubPage(0)
         switchModelsTab(0)
         return root
     }
@@ -1389,6 +1525,27 @@ class MainActivity : Activity() {
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
     }
 
+    /** 「对话模型」子页签样式（比顶部页签再小一号，同绘图页的 结果/过程） */
+    private fun modelsSubTab(t: String) = TextView(this).apply {
+        text = t
+        textSize = 13f
+        gravity = Gravity.CENTER
+        setPadding(0, dp(9), 0, dp(9))
+    }
+
+    /** 切换「对话模型」页内的子页：0=模型 1=API */
+    private fun switchChatSubPage(p: Int) {
+        if (!::chatSubTabModel.isInitialized) return
+        chatModelPane.visibility = if (p == 0) View.VISIBLE else View.GONE
+        chatApiPane.visibility = if (p == 1) View.VISIBLE else View.GONE
+        for ((tv, sel) in listOf(chatSubTabModel to (p == 0), chatSubTabApi to (p == 1))) {
+            tv.setTextColor(if (sel) C_PRIMARY else C_SUBTEXT)
+            tv.typeface = if (sel) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+            tv.setBackgroundColor(if (sel) pal.primarySoft else pal.surface)
+        }
+        if (p == 1) refreshApiUi()
+    }
+
     /** 模型页顶部页签样式（与绘图页一致） */
     private fun tabItem(t: String) = TextView(this).apply {
         text = t
@@ -1397,12 +1554,90 @@ class MainActivity : Activity() {
         setPadding(0, dp(11), 0, dp(11))
     }
 
+    // ==================== 对话 API ====================
+
+    private fun apiPort(): Int =
+        chatPrefs().getInt(ApiService.KEY_PORT, ApiService.DEF_PORT).coerceIn(1024, 65535)
+
+    /** 刷新 API 区块：状态 / 地址 / key / 统计 */
+    private fun refreshApiUi() {
+        if (!::apiStatusTv.isInitialized) return
+        val running = ApiService.running
+        apiStatusTv.text = if (running) getString(R.string.s_406, ApiService.address ?: "") else getString(R.string.s_405)
+        apiStatusTv.setTextColor(if (running) C_OK else C_SUBTEXT)
+        apiAddressTv.visibility = if (running) View.VISIBLE else View.GONE
+        apiAddressTv.text = if (running) getString(R.string.s_417) else ""
+        val key = chatPrefs().getString(ApiService.KEY_TOKEN, null)
+        apiKeyTv.text = getString(R.string.s_409,
+            if (key.isNullOrBlank()) getString(R.string.s_410) else key)
+        apiToggleBtn.text = getString(if (running) R.string.s_408 else R.string.s_407)
+        apiToggleBtn.background = rounded(
+            if (running) C_SOFT_BTN2 else C_PRIMARY, 12,
+            strokeDp = if (running) 1 else 0, strokeColor = C_BORDER)
+        apiToggleBtn.setTextColor(if (running) C_TEXT else Color.WHITE)
+        val (n, last) = ApiService.statsSnapshot()
+        apiStatsTv.text = if (!running) "" else
+            getString(R.string.s_413, n) + (last?.let { "\n" + getString(R.string.s_414, it) } ?: "")
+    }
+
+    /** 复制服务地址（点一下地址那行即可） */
+    private fun copyApiAddress() {
+        val addr = ApiService.address ?: return
+        runCatching {
+            val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("ponko-api", addr))
+            toast(getString(R.string.s_416))
+        }
+    }
+
+    /** 生成一个新的 API key（形如 sk-ponko-xxxx） */
+    private fun newApiKey() {
+        val chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+        val key = "sk-ponko-" + (1..32).map { chars.random() }.joinToString("")
+        chatPrefs().edit().putString(ApiService.KEY_TOKEN, key).apply()
+        refreshApiUi()
+        toast(getString(R.string.s_418))
+    }
+
+    private fun clearApiKey() {
+        chatPrefs().edit().remove(ApiService.KEY_TOKEN).apply()
+        refreshApiUi()
+        toast(getString(R.string.s_418))
+    }
+
+    /**
+     * 开关对话 API。
+     *
+     * 前置条件：必须先加载一个对话模型——服务只是把已有的模型开放出去，不负责加载。
+     * 端口 / key 改了要重启服务才生效（简单直接，免得中途换端口把客户端晾着）。
+     */
+    private fun toggleApiServer() {
+        if (ApiService.running) {
+            ApiService.stop(this)
+            android.os.Handler(mainLooper).postDelayed({ refreshApiUi() }, 400)
+            return
+        }
+        if (!ChatCore.isReady()) {
+            toast(getString(R.string.s_402))
+            return
+        }
+        // Android 13+ 常驻通知需要运行时权限；不给也能跑，只是看不到通知
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIF)
+        }
+        ApiService.start(this)
+        android.os.Handler(mainLooper).postDelayed({ refreshApiUi() }, 700)
+    }
+
     /** 切换模型页的「对话模型 / 绘图模型 / 打标模型」 */
     private fun switchModelsTab(index: Int) {
         if (::modelsPager.isInitialized) modelsPager.setCurrentItem(index, true)
         highlightModelsTabs(index)
         when (index) {
-            0 -> { refreshSavedModels(); refreshMmprojUi() }
+            0 -> { refreshSavedModels(); refreshMmprojUi(); refreshApiUi() }
             1 -> { refreshDrawModels(); refreshLoraUi() }
             2 -> refreshTaggerUi()
         }
@@ -1484,7 +1719,6 @@ class MainActivity : Activity() {
             }
         }
         settingsBody.addView(themeSwitch, matchWrap().apply { topMargin = dp(12) })
-        settingsBody.addView(hintText(getString(R.string.s_380)))
 
         // ---- 关于（可折叠，默认收起）----
         val aboutBody = collapsibleSection(card, getString(R.string.s_048), expanded = true)
@@ -1586,16 +1820,72 @@ class MainActivity : Activity() {
             0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         head.addView(arrow, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
-        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        var open = expanded
-        fun sync() {
-            body.visibility = if (open) View.VISIBLE else View.GONE
-            arrow.text = if (open) "\u25be" else "\u25b8"
+        // 关键：View 在加入父容器之前 layoutParams 是 null，而下面 render(false) 会立刻用它
+        // （settle）—— 必须先给一份，否则 buildUi 阶段直接 NPE，表现就是「打开立刻闪退」。
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = matchWrap()
         }
-        sync()
+        var open = expanded
+        var anim: ValueAnimator? = null
+
+        /** 收尾：取消动画并把高度还原成 WRAP_CONTENT（否则动画值会被钉死） */
+        fun settle() {
+            anim?.cancel()
+            anim = null
+            body.layoutParams = (body.layoutParams ?: matchWrap()).apply {
+                height = ViewGroup.LayoutParams.WRAP_CONTENT
+            }
+        }
+
+        /** 展开 / 收起。animate=false 用于初始状态（直接摆好，不播动画） */
+        fun render(animate: Boolean) {
+            arrow.text = if (open) "\u25be" else "\u25b8"
+            if (!animate) {
+                settle()
+                body.visibility = if (open) View.VISIBLE else View.GONE
+                return
+            }
+            val target = if (open) {
+                // 先按父容器宽度量一遍，拿到内容的真实高度（收起时高度是 0，量不出来）
+                val w = (parentBox.width - parentBox.paddingLeft - parentBox.paddingRight)
+                    .takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
+                body.measure(
+                    View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+                )
+                body.measuredHeight
+            } else 0
+            if (open) body.visibility = View.VISIBLE
+            val from = body.height.coerceAtLeast(0)
+            anim?.cancel()
+            if (from == target) {
+                settle()
+                if (!open) body.visibility = View.GONE
+                return
+            }
+            anim = ValueAnimator.ofInt(from, target).apply {
+                duration = 180L
+                interpolator = DecelerateInterpolator()
+                addUpdateListener { va ->
+                    body.layoutParams = (body.layoutParams ?: matchWrap()).apply {
+                        height = va.animatedValue as Int
+                    }
+                }
+                addListener(object : AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(a: Animator) {
+                        settle()
+                        if (!open) body.visibility = View.GONE
+                    }
+                })
+                start()
+            }
+        }
+
+        render(animate = false)
         head.setOnClickListener {
             open = !open
-            sync()
+            render(animate = true)
         }
         parentBox.addView(head, matchWrap())
         parentBox.addView(body, matchWrap())
@@ -1659,7 +1949,7 @@ class MainActivity : Activity() {
         tabDraw.visibility = if (index == 2) View.VISIBLE else View.GONE
         tabSettings.visibility = if (index == 3) View.VISIBLE else View.GONE
         // 切到「模型」页时刷新绘图模型 / LoRA 列表，避免导入后状态滞后
-        if (index == 1) { refreshDrawModels(); refreshLoraUi(); refreshTaggerUi() }
+        if (index == 1) { refreshDrawModels(); refreshLoraUi(); refreshTaggerUi(); refreshApiUi() }
         inputBar.visibility = if (index == 0) View.VISIBLE else View.GONE
         val isChat = index == 0
         appBarMenu.visibility = if (isChat) View.VISIBLE else View.INVISIBLE
@@ -2045,21 +2335,29 @@ class MainActivity : Activity() {
     }
 
     /**
-     * 把一个文件读成文字：二进制文件直接拒；UTF-8 解不出来就按 GBK 再试（中文 txt 常见）；
-     * 超过 MAX_FILE_CHARS 就按行截断——本地模型只有 4096 上下文，整篇塞进去会把对话挤没。
+     * 把一个文件读成文字。
+     *
+     * 先按扩展名分流：**文档类**（docx / pptx / xlsx / odt / epub / rtf / html / pdf）交给 DocExtractor；
+     * 其余按纯文本读（UTF-8 解不出来再试 GBK）；二进制直接拒。
+     * 最后统一按 token 预算截断——本地模型上下文有限，整篇塞进去会把对话挤没。
      */
     private fun readTextFile(uri: Uri): FileRead {
+        val name = queryDisplayName(uri) ?: "file.txt"
+        val ext = name.substringAfterLast('.', "").lowercase()
+        if (ext in DocExtractor.LEGACY_DOCS) return FileRead(null, getString(R.string.s_389))
+        if (ext in DocExtractor.ALL) return readDocFile(uri, name, ext, null)
+
         val raw = try {
             contentResolver.openInputStream(uri)?.use { ins -> readAllCapped(ins) }
         } catch (_: Throwable) {
             null
         } ?: return FileRead(null, getString(R.string.s_296))
         if (raw.isEmpty()) return FileRead(null, getString(R.string.s_296))
-        // PDF：先把话说清楚，别让用户以为 App 坏了
+        // 扩展名没写对（或干脆没有）时靠 PDF 魔数兜底
         if (raw.size >= 4 && raw[0] == '%'.code.toByte() && raw[1] == 'P'.code.toByte() &&
             raw[2] == 'D'.code.toByte() && raw[3] == 'F'.code.toByte()
         ) {
-            return FileRead(null, getString(R.string.s_301))
+            return readDocFile(uri, name, "pdf", raw)
         }
         // 前 4KB 里出现 NUL 就当成二进制（zip/apk/exe/图片都过不了这一关）
         for (i in 0 until minOf(raw.size, 4096)) {
@@ -2076,7 +2374,54 @@ class MainActivity : Activity() {
         val clean = text.replace("\u0000", "")
         val body = fitTokens(clean, maxFileTokens())
         val truncated = body.length < clean.length
-        return FileRead(PendingFile(queryDisplayName(uri) ?: "file.txt", raw.size.toLong(), body, truncated), null)
+        return FileRead(PendingFile(name, raw.size.toLong(), body, truncated), null)
+    }
+
+    /**
+     * 文档类文件的解析：先落到 cache 目录（PDFBox 需要能随机访问的文件），抽正文，再按 token 预算截断。
+     * [raw] 不为空时直接用调用方已读到的字节（PDF 魔数兜底那条路），省一次 IO。
+     */
+    private fun readDocFile(uri: Uri, name: String, ext: String, raw: ByteArray?): FileRead {
+        val tmp = File(cacheDir, "doc_${System.nanoTime()}.$ext")
+        val copied: Long = try {
+            if (raw != null) {
+                tmp.outputStream().use { it.write(raw) }
+                raw.size.toLong()
+            } else {
+                contentResolver.openInputStream(uri)?.use { ins ->
+                    tmp.outputStream().use { outs -> copyCapped(ins, outs, DocExtractor.MAX_DOC_BYTES) }
+                } ?: -1L
+            }
+        } catch (_: Throwable) {
+            -1L
+        }
+        if (copied < 0) {
+            tmp.delete()
+            return FileRead(null, getString(R.string.s_296))
+        }
+        val ok = try {
+            DocExtractor.extract(this, tmp, ext)
+        } finally {
+            tmp.delete()
+        }
+        if (ok == null) return FileRead(null, getString(R.string.s_390))
+        val body = fitTokens(ok.text, maxFileTokens())
+        val detail = if (ok.units > 0 && ok.unitRes != 0) "${ok.units} ${getString(ok.unitRes)}" else null
+        return FileRead(PendingFile(name, copied, body, body.length < ok.text.length, detail), null)
+    }
+
+    /** 复制流并限制字节数；超过上限返回 -1（调用方据此给「文件太大 / 读不了」的提示） */
+    private fun copyCapped(ins: java.io.InputStream, outs: java.io.OutputStream, cap: Long): Long {
+        val buf = ByteArray(64 * 1024)
+        var total = 0L
+        while (true) {
+            val n = ins.read(buf)
+            if (n <= 0) break
+            total += n
+            if (total > cap) return -1L
+            outs.write(buf, 0, n)
+        }
+        return total
     }
 
     /** 解码图片并按最长边下采样，避免大图直接吃内存。 */
@@ -2160,7 +2505,8 @@ class MainActivity : Activity() {
             val f = pendingFiles[i]
             val chip = FrameLayout(this)
             chip.addView(TextView(this).apply {
-                text = "📄 ${f.name}\n${f.text.length} ${getString(R.string.s_298)}" +
+                val head = if (f.detail.isNullOrEmpty()) "📄 ${f.name}" else "📄 ${f.name} · ${f.detail}"
+                text = "$head\n${f.text.length} ${getString(R.string.s_298)}" +
                     if (f.truncated) " · ${getString(R.string.s_299)}" else ""
                 textSize = 11f
                 setTextColor(C_TEXT)
@@ -2231,6 +2577,7 @@ class MainActivity : Activity() {
                 arr.put(
                     JSONObject().put("n", f.name).put("b", f.bytes)
                         .put("t", f.text).put("tr", f.truncated)
+                        .put("d", f.detail ?: "")
                 )
             }
             arr.toString()
@@ -2251,7 +2598,10 @@ class MainActivity : Activity() {
                 val body = o.optString("t")
                 if (body.isEmpty()) continue
                 pendingFiles.add(
-                    PendingFile(o.optString("n"), o.optLong("b"), body, o.optBoolean("tr"))
+                    PendingFile(
+                        o.optString("n"), o.optLong("b"), body, o.optBoolean("tr"),
+                        o.optString("d").takeIf { it.isNotEmpty() }
+                    )
                 )
                 n++
             }
@@ -3360,6 +3710,8 @@ class MainActivity : Activity() {
                     withContext(Dispatchers.Main) {
                         llamaModel = m
                         visionOk = vok
+                        // 登记到进程级单例：对话 API 服务要复用同一个模型
+                        ChatCore.attachGguf(m, path.substringAfterLast('/'), vok)
                         loadedModelPath = path
         tagReturnIdx = 0
                         engine = null
@@ -3403,6 +3755,7 @@ class MainActivity : Activity() {
                     withContext(Dispatchers.Main) {
                         engine = eng
                         llamaModel = null
+                        ChatCore.attachLiteRt(eng, path.substringAfterLast('/'), vok)
                         loadedModelPath = path
         tagReturnIdx = 0
                         conversation = conv
@@ -3440,6 +3793,7 @@ class MainActivity : Activity() {
     private fun unloadModel() {
         try { engine?.close() } catch (_: Throwable) {}
         try { llamaModel?.close() } catch (_: Throwable) {}
+        ChatCore.release()
         engine = null
         llamaModel = null
         loadedModelPath = null
@@ -4497,8 +4851,7 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun extractText(m: Message): String =
-        m.contents.contents.filterIsInstance<Content.Text>().joinToString("") { it.text }
+    private fun extractText(m: Message): String = ChatCore.messageText(m)
 
     /**
      * LiteRT 的流式片段语义在版本间不完全一致（可能是增量片段，也可能带累积内容）。
@@ -4508,15 +4861,7 @@ class MainActivity : Activity() {
      *   - 已累积内容以新片段结尾   → 尾部重复片段，丢弃（忽略首尾空白）
      *   - 其余                     → 按增量追加
      */
-    private fun mergeStreamDelta(cur: String, delta: String): String {
-        if (cur.isEmpty() || delta.isEmpty()) return cur + delta
-        if (delta == cur) return cur
-        if (delta.startsWith(cur)) return delta
-        if (cur.endsWith(delta)) return cur
-        val t = delta.trim()
-        if (t.isNotEmpty() && cur.endsWith(t)) return cur
-        return cur + delta
-    }
+    private fun mergeStreamDelta(cur: String, delta: String): String = ChatCore.mergeStream(cur, delta)
 
     private class AiArea(
         val root: LinearLayout,

@@ -58,7 +58,7 @@ Step "1/5 assembleRelease"
 if ($LASTEXITCODE -ne 0) { throw "gradle 构建失败（exit=$LASTEXITCODE），已停止，不交付任何产物" }
 if (-not (Test-Path $unsigned)) { throw "未找到构建产物：$unsigned" }
 
-Step "2/5 签名（ponko-release.jks，v2-only）"
+Step "2/5 签名（ponko-release.jks，v1+v2+v3 全方案）"
 $ks = Join-Path $proj "ponko-release.jks"
 if (-not (Test-Path $ks)) { throw "找不到签名密钥：$ks" }
 Push-Location $proj

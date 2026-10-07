@@ -1,5 +1,7 @@
 package com.litertchat.app
 
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Canvas
@@ -45,6 +47,12 @@ class SegmentedSwitch @JvmOverloads constructor(
     private var downRawX = 0f
     private var downPos = 0f
     private var anim: ValueAnimator? = null
+
+    /**
+     * 待回调的档位。吸附动画结束后才通知外部——外部（换主题）会重建整页视图，
+     * 如果在动画一开始就回调，滑块动画会被当场掐断，看起来像掉帧。
+     */
+    private var pendingNotify: Int? = null
 
     init {
         isClickable = true
@@ -100,6 +108,8 @@ class SegmentedSwitch @JvmOverloads constructor(
             MotionEvent.ACTION_DOWN -> {
                 parent?.requestDisallowInterceptTouchEvent(true)
                 anim?.cancel()
+                // 上一段吸附还没播完就又开始拖：先把它的回调补发掉，别把那次选择吞了
+                flushNotify()
                 downRawX = event.rawX
                 pos = ((event.x - innerPad) / sw - 0.5f).coerceIn(0f, (labels.size - 1).toFloat())
                 downPos = pos
@@ -125,23 +135,36 @@ class SegmentedSwitch @JvmOverloads constructor(
 
     private fun snapTo(target: Int) {
         anim?.cancel()
+        if (target != index) {
+            index = target
+            pendingNotify = target
+        }
         anim = ValueAnimator.ofFloat(pos, target.toFloat()).apply {
             duration = 140L
             addUpdateListener {
                 pos = it.animatedValue as Float
                 invalidate()
             }
+            // 动画跑完再回调：让滑块先稳稳吸附到位，外部再去做重建视图之类的重活
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(a: Animator) = flushNotify()
+            })
             start()
         }
-        if (target != index) {
-            index = target
-            onChanged(target)
-        }
+    }
+
+    /** 补发挂起的档位回调（动画结束 / 下一次触摸 / 静默设值前都会调用） */
+    private fun flushNotify() {
+        val t = pendingNotify ?: return
+        pendingNotify = null
+        onChanged(t)
     }
 
     /** 外部直接设定档位（不触发回调） */
     fun setIndexSilently(i: Int) {
         if (i !in labels.indices) return
+        pendingNotify = null
+        anim?.cancel()
         index = i
         pos = i.toFloat()
         invalidate()

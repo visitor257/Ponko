@@ -10,23 +10,26 @@ import urllib.request
 REPO = "visitor257/Ponko"
 TOKFILE = r"C:\Users\Administrator\Desktop\git_repo_tok.txt"
 APK = r"C:\Users\Administrator\WorkBuddy\智能Agent\LiteRT-Chat\app\build\outputs\apk\release\Ponko-release.apk"
-TAG = "v1.6.2"
-NAME = "Ponko v1.6.2"
+TAG = "v1.7.0"
+NAME = "Ponko v1.7.0"
 
-BODY = """Ponko v1.6.2 - Offline-capable AI app for Android: chat (image + file input) + drawing + tagging.
+BODY = """Ponko v1.7.0 - Offline-capable AI app for Android: chat (image, file and document input, plus an OpenAI-compatible API server) + drawing + tagging.
 
 All inference runs on-device: apart from the optional in-app LoRA download, no feature needs the network. No telemetry; your data stays on your phone.
 See the [README](https://github.com/visitor257/Ponko#readme).
 
-## v1.6.2 Highlights
-- **Dark mode**: Settings now has collapsible **Settings / About** sections, and the theme is a three-position slider - **Light / Follow system / Dark**. It is remembered across restarts and applies in place (no app restart, models and chats stay loaded). Cards, inputs, buttons, text, dialogs, the status bar and the navigation bar all follow it
-- **Samplers expanded**: the sampler list is now aligned 1:1 with sd.cpp - DPM++ 2M SDE (the most requested one), DPM++ 2M SDE B&T, LMS, Res Multistep, Res 2S, ER SDE and Euler GE are now selectable. DPM++ 2M SDE pairs well with the Karras scheduler
-- Version 1.6.1 -> 1.6.2 (versionCode 12)
+## v1.7.0 Highlights
+- **Send documents in chat**: not just plain text any more - `.docx` / `.pptx` / `.xlsx` / `.odt` / `.ods` / `.odp` / `.epub` / `.rtf` / `.html` / **`.pdf`**. The text is extracted **on-device** (PDF via PDFBox-Android, nothing is uploaded), table cells come out tab-separated, and the attachment chip shows the page / slide / sheet count. Legacy `.doc` / `.xls` / `.ppt` ask you to re-save first
+- **API server (use the phone as a server)**: expose the **already loaded** chat model as an **OpenAI-compatible** endpoint - `POST /v1/chat/completions` (SSE streaming or plain), `GET /v1/models`, `GET /health`. Any OpenAI client on the same network can talk to it. Optional API key, custom port, ongoing notification and a WifiLock so it keeps serving with the screen off; the foreground service uses type `specialUse` to avoid the Android 15+ dataSync time limit. One request at a time (429 when busy), and the server reuses the session / KV cache instead of re-prefilling the whole history every turn
+- **Models/API page**: the old "Models" page is now **Models/API**, and the Chat model page has its own **Model / API** sub-tabs (same look as the drawing Result/Process switch) - the API settings are no longer mixed into the model list
+- Version 1.6.2 -> 1.7.0 (versionCode 13)
 
 ## Chat
 - Two backends: LiteRT-LM (`.litertlm`) + llama.cpp (`.gguf`)
 - **Image input**: `.litertlm` multimodal models, or `.gguf` vision models with a matching mmproj
-- **File input**: text-like files, up to 2 per message
+- **File input**: plain text / Markdown / JSON / CSV / logs / source code, up to 2 per message
+- **Document input**: `.docx` / `.pptx` / `.xlsx` / `.odt` / `.ods` / `.odp` / `.epub` / `.rtf` / `.html` / `.pdf`, extracted on-device
+- **API server**: serve the loaded model over an OpenAI-compatible HTTP API (see the highlights above)
 - **Tagger as a chat tool**: a loaded tagger can be called from chat when the chat model cannot see images itself
 - Multiple conversations, history persisted locally
 - Reasoning and answer shown separately, collapsible; the thinking toggle works for both formats
@@ -38,6 +41,7 @@ See the [README](https://github.com/visitor257/Ponko#readme).
 - **Dark mode**: a three-position slider in Settings (Light / Follow system / Dark), persisted and applied without restarting
 - Settings is split into collapsible **Settings / About** groups
 - All interface colours come from a single theme table, so no bright panels are left behind in dark mode
+- The Models page is now **Models/API**; the Chat model page has **Model / API** sub-tabs
 
 ## Drawing
 - Built-in custom stable-diffusion.cpp; loads GGUF drawing models - single-file all-in-one (SD1.5 / SD2 / SDXL) or a multi-file (split) set filled in slot by slot; CPU by default, optional GPU (Vulkan) acceleration with automatic CPU fallback
@@ -52,27 +56,30 @@ See the [README](https://github.com/visitor257/Ponko#readme).
 
 ## Install
 - arm64-v8a only (64-bit ARM devices), minSdk 28 (Android 9+)
-- v1.6.2 (versionCode 12) installs over v1.6.1 / v1.6.0 / v1.5.0 / v1.4.1 / v1.4.0 / v1.3.x / v1.2; uninstall older debug builds or v1.0 first (different signing key)
-- Model files are not bundled: import chat models (`.litertlm` / `.gguf`), a drawing model (GGUF: single file, or a multi-file set) and, optionally, a tagger (`.onnx` + `.csv`) from the in-app "Models" page
+- v1.7.0 (versionCode 13) installs over v1.6.2 / v1.6.1 / v1.6.0 / v1.5.0 / v1.4.1 / v1.4.0 / v1.3.x / v1.2; uninstall older debug builds or v1.0 first (different signing key)
+- Model files are not bundled: import chat models (`.litertlm` / `.gguf`), a drawing model (GGUF: single file, or a multi-file set) and, optionally, a tagger (`.onnx` + `.csv`) from the in-app Models/API page
 
 ## License
-Code is MIT; art assets (icons, artwork) are all rights reserved. Third-party components (stable-diffusion.cpp, ggml, Vulkan-Hpp/Vulkan-Headers, LiteRT-LM, llama.cpp, Markwon, ONNX Runtime, etc.) are distributed under their respective licenses - see the repository NOTICE. ONNX Runtime bundles extra third-party components; their notices are included under `licenses/`. The native runtimes also statically link XNNPACK, protobuf, re2, cpuinfo, zlib and others; see NOTICE and the `licenses/` directory for the full list.
+Code is MIT; art assets (icons, artwork) are all rights reserved. Third-party components (stable-diffusion.cpp, ggml, Vulkan-Hpp/Vulkan-Headers, LiteRT-LM, llama.cpp, Markwon, PDFBox-Android, ONNX Runtime, etc.) are distributed under their respective licenses - see the repository NOTICE. ONNX Runtime bundles extra third-party components; their notices are included under `licenses/`. The native runtimes also statically link XNNPACK, protobuf, re2, cpuinfo, zlib and others; see NOTICE and the `licenses/` directory for the full list.
 
 ---
 
-Ponko v1.6.2 —— 本地 AI App（Android）：聊天（可发图、可发文件）+ 绘图 + 打标
+Ponko v1.7.0 —— 本地 AI App（Android）：聊天（可发图、可发文件与文档，还能把手机当 API 服务端）+ 绘图 + 打标
 
 所有推理都在本机完成：除了「手动下载 LoRA」，其余功能都不需要联网；无遥测，数据只留在设备本地。
 
-### v1.6.2 亮点
-- **深色模式**：设置页改为「设置 / 关于」两个可折叠分区，主题是**三档滑块**（亮 / 跟随系统 / 暗）；重启后记住，切换时**就地换色**（不重启 App，已加载的模型与会话都保留）；卡片、输入框、按钮、文字、对话框、状态栏与导航栏全部跟随
-- **采样器补齐**：可选采样器现与 sd.cpp 完全对齐——新增 DPM++ 2M SDE（这次被点名要的那个）、DPM++ 2M SDE B&T、LMS、Res Multistep、Res 2S、ER SDE、Euler GE；DPM++ 2M SDE 建议配 Karras 调度器
-- 版本 1.6.1 -> 1.6.2（versionCode 12）
+### v1.7.0 亮点
+- **对话可以直接发文档了**：不再只有纯文本——支持 `.docx` / `.pptx` / `.xlsx` / `.odt` / `.ods` / `.odp` / `.epub` / `.rtf` / `.html` / **`.pdf`**，正文**全部在本机抽取**（PDF 用 PDFBox-Android，不上传任何内容）；表格按制表符分列，附件上会标注页数 / 幻灯片数 / 工作表数；`.doc` / `.xls` / `.ppt` 老格式会提示先另存
+- **API 服务端（把手机当服务器）**：把**已经加载**的对话模型开放成 **OpenAI 兼容**接口——`POST /v1/chat/completions`（支持 SSE 流式）、`GET /v1/models`、`GET /health`，同一网络下任何 OpenAI 客户端都能直接连。支持可选 API key、自定义端口；常驻通知 + WifiLock，锁屏也继续服务；前台服务用 `specialUse` 类型，避开 Android 15+ 对 dataSync 的时限。一次只服务一个请求（忙时返回 429），并会复用会话 / KV 缓存，不会每轮把整段历史重新算一遍
+- **「模型」页更名「模型/API」**：对话模型页内再分 **「模型 / API」两个子页**（样式同绘图页的「结果 / 过程」），API 设置不再混在模型列表中间
+- 版本 1.6.2 -> 1.7.0（versionCode 13）
 
 ### 对话功能
 - 双后端：LiteRT-LM（`.litertlm`）+ llama.cpp（`.gguf`）
 - **图片输入**：`.litertlm` 多模态模型，或配了 mmproj 的 `.gguf` 视觉模型
-- **文件输入**：文本类文件，一条最多 2 个
+- **文件输入**：纯文本 / Markdown / JSON / CSV / 日志 / 代码等，一条最多 2 个
+- **文档输入**：`.docx` / `.pptx` / `.xlsx` / `.odt` / `.ods` / `.odp` / `.epub` / `.rtf` / `.html` / `.pdf`，本机抽取正文
+- **API 服务端**：把已加载的模型开放成 OpenAI 兼容接口（见上面亮点）
 - **打标当工具用**：对话模型看不见图片时，可在聊天里调用已加载的打标模型
 - 多对话管理，历史本地持久化
 - 思考过程与正文分离、可折叠；思考开关对两种格式均生效
@@ -84,6 +91,7 @@ Ponko v1.6.2 —— 本地 AI App（Android）：聊天（可发图、可发文�
 - **深色模式**：设置页三档滑块（亮 / 跟随系统 / 暗），重启后记住，切换就地生效不重启
 - 设置页分成「设置 / 关于」两个可折叠分区
 - 界面颜色统一走一张主题表，深色下不会残留白块
+- 「模型」页更名「模型/API」；对话模型页内分「模型 / API」两个子页
 
 ### 绘图功能
 - 内置自编 stable-diffusion.cpp；读 GGUF 格式的绘图模型——单文件整合版（SD1.5 / SD2 / SDXL）或按槽位补齐的多文件（拆包）组合；默认 CPU，可选 GPU（Vulkan）加速，失败自动回退 CPU
@@ -98,17 +106,21 @@ Ponko v1.6.2 —— 本地 AI App（Android）：聊天（可发图、可发文�
 
 ### 安装
 - 仅支持 arm64-v8a（64 位 ARM 真机），minSdk 28（Android 9 及以上）
-- v1.6.2（versionCode 12）可直接覆盖安装 v1.6.1 / v1.6.0 / v1.5.0 / v1.4.1 / v1.4.0 / v1.3.x / v1.2；更早的 debug 版或 v1.0 请先卸载（签名不同）
-- 模型文件需自备：对话模型（`.litertlm` / `.gguf`）、绘图模型（GGUF：单文件或多文件组合），打标模型（`.onnx` + `.csv`）可选，都在 App 内「模型」页导入
+- v1.7.0（versionCode 13）可直接覆盖安装 v1.6.2 / v1.6.1 / v1.6.0 / v1.5.0 / v1.4.1 / v1.4.0 / v1.3.x / v1.2；更早的 debug 版或 v1.0 请先卸载（签名不同）
+- 模型文件需自备：对话模型（`.litertlm` / `.gguf`）、绘图模型（GGUF：单文件或多文件组合），打标模型（`.onnx` + `.csv`）可选，都在 App 内「模型/API」页导入
 
 ### 许可
-代码 MIT；美术资源（图标、立绘）版权归作者所有。本项目包含的第三方组件（stable-diffusion.cpp、ggml、Vulkan-Hpp/Vulkan-Headers、LiteRT-LM、llama.cpp、Markwon、ONNX Runtime 等）按各自许可证分发，详见仓库 NOTICE。ONNX Runtime 另自带若干第三方组件，其声明收录在 `licenses/` 目录。各运行时原生库还静态链入 XNNPACK、protobuf、re2、cpuinfo、zlib 等，完整清单见 NOTICE 与 `licenses/` 目录。
+代码 MIT；美术资源（图标、立绘）版权归作者所有。本项目包含的第三方组件（stable-diffusion.cpp、ggml、Vulkan-Hpp/Vulkan-Headers、LiteRT-LM、llama.cpp、Markwon、PDFBox-Android、ONNX Runtime 等）按各自许可证分发，详见仓库 NOTICE。ONNX Runtime 另自带若干第三方组件，其声明收录在 `licenses/` 目录。各运行时原生库还静态链入 XNNPACK、protobuf、re2、cpuinfo、zlib 等，完整清单见 NOTICE 与 `licenses/` 目录。
 """
 
 
 def token():
     txt = open(TOKFILE, encoding="utf-8", errors="replace").read()
-    return re.search(r"ghp_\w+", txt).group(0)
+    # 只认 token 本体；别用「删非字母数字」的清洗法，会把第二行的 ddl 到期日拼进来
+    m = re.search(r"gh[pousr]_[A-Za-z0-9]+", txt)
+    if not m:
+        raise SystemExit("在 %s 里没找到 GitHub token（应以 gh?_ 开头）" % TOKFILE)
+    return m.group(0)
 
 
 def req(url, data=None, ctype=None, method=None, timeout=180):

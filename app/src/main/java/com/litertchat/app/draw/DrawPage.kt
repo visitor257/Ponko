@@ -1077,7 +1077,7 @@ class DrawPage(
         if (TaggerEngine.isLoaded() && mName == model.name && cName == csv.name &&
             TaggerEngine.loadedWithGpu() == useGpu) return null
         val threads = Runtime.getRuntime().availableProcessors().coerceIn(2, 8)
-        return TaggerEngine.load(model, csv, useGpu, threads)
+        return TaggerEngine.load(c, model, csv, useGpu, threads)
     }
 
     /**

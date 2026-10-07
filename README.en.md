@@ -4,7 +4,7 @@
 
 English · [中文](README.md)
 
-An **offline-capable** Android app for local AI: chat with LLMs (**image and file input included**), generate images, and tag them.
+An **offline-capable** Android app for local AI: chat with LLMs (**image, file and document input included**, and it can serve your phone as an API server), generate images, and tag them.
 
 All inference runs on-device: apart from the optional in-app LoRA download, no feature needs the network.
 
@@ -17,7 +17,7 @@ Two model formats are supported:
 | `.litertlm` | Google LiteRT-LM | CPU / GPU / NPU backends, thinking channel, multimodal extension |
 | `.gguf` | llama.cpp | Multi-threaded CPU, in-session KV prefix reuse (no re-prefill on long chats) |
 
-- **Model management**: pick a model file from local storage; it is copied into the app's private directory and can be reused anytime. The Models page has a run-mode selector (CPU / GPU) on top and three sub-pages below (**Chat model / Draw model / Tagger model**, swipe to switch), where each kind of model can be viewed, selected or deleted.
+- **Model management**: pick a model file from local storage; it is copied into the app's private directory and can be reused anytime. The Models/API page has a run-mode selector (CPU / GPU) on top and three sub-pages below (**Chat model / Draw model / Tagger**, swipe to switch); the **Chat model** page itself splits into **Model / API** sub-tabs, where each kind of model can be viewed, selected or deleted.
   - What the run mode covers: **only three paths carry GPU code** - **drawing** (Vulkan), **tagging** (NNAPI) and **`.litertlm` chat** (LiteRT-LM GPU, i.e. OpenCL / Vulkan underneath); **GGUF chat always runs on CPU** (the binding has no GPU backend). All three GPU paths have **only been verified at build time and never on a real device** - they are expected to work in theory, but whether they do depends on the phone's drivers and VRAM; if the device does not support it or init fails, the app falls back to CPU automatically and the drawing status line shows the backend actually in use
 - **Multiple conversations**: create / switch / delete chats. History is persisted on-device (`sessions.json`).
 - **Separate thinking**: reasoning and answer are shown apart and collapsible; the thinking toggle works for both formats.
@@ -26,10 +26,15 @@ Two model formats are supported:
 - **Regenerate**: one tap to rerun, and it **carries the images and files of that turn along** (restored to the attachment strip above the input box, so you can see them); a random seed keeps results from repeating.
 - **Image input (multimodal)**: the "+" button left of the input box opens an upward drawer with **Take photo / Gallery**, up to 4 images per message. Images appear inline in the bubble: **tap to view fullscreen (pinch-zoom / pan / double-tap)** and **long-press** for a menu: Save to gallery / Quote (put it into the input bar) / Send to Image-to-Image / Send to Tagger
   - `.litertlm`: needs a **multimodal model** (e.g. Gemma 3n). The app probes the model and tells you right away if it has no vision input
-  - `.gguf`: needs a **vision model plus its matching `mmproj` file**. Import and select the mmproj on the Models page, Chat model card, and **pick the mmproj before loading the model**
-- **File input (text-like files)**: the third item in the same "+" drawer, **File**, up to 2 per message; supports `.txt` / `.md` / `.json` / `.csv` / `.log` / `.xml` / source code and similar text files (UTF-8 / GBK auto-detected; binary files are rejected, PDF is not supported yet). The text is trimmed to the context budget and sent **with that one message only**, never added to the history; the file name shows up in the bubble
-- **Chat parameters**: on the Models page, Chat model card, you can tune context size, max output, temperature, Top-K, Top-P, repeat penalty, thinking budget and random seed; **saved per model**, as you type. Context size and max output take effect **after reloading the model**
+  - `.gguf`: needs a **vision model plus its matching `mmproj` file**. Import and select the mmproj on the Models/API page, Chat model, and **pick the mmproj before loading the model**
+- **File and document input**: the third item in the same "+" drawer, **File**, up to 2 per message
+  - **Plain text**: `.txt` / `.md` / `.json` / `.csv` / `.log` / `.xml` / source code and similar (UTF-8 / GBK auto-detected)
+  - **Documents**: `.docx` / `.pptx` / `.xlsx` / `.odt` / `.ods` / `.odp` / `.epub` / `.rtf` / `.html` / **`.pdf`** - the text is extracted (table cells as tabs, paragraphs as lines, and the page / slide / sheet count is shown on the attachment chip) and trimmed to the context budget
+  - `.doc` / `.xls` / `.ppt` (legacy 97-2003 binary formats) are rejected with a clear hint to save them as `.docx` / `.xlsx` / `.pptx` or PDF
+  - The text is sent **with that one message only**, never added to the history; the chip shows the file name and character count (truncation is marked)
+- **Chat parameters**: on the Models/API page, Chat model, you can tune context size, max output, temperature, Top-K, Top-P, repeat penalty, thinking budget and random seed; **saved per model**, as you type. Context size and max output take effect **after reloading the model**
 - **Text-only chat models can borrow the tagger to "see" an image**: when the chat model cannot see images itself (no multimodal, no mmproj) but a tagger model is loaded, the model calls the tagger on its own (it emits a `<tag>` command, the app tags the image, the tags come back as a tool result) and then answers based on them; threshold and tag count are chosen by the model, BGR/RGB follows the Tagger setting on the drawing page. Models that can see images never take this path
+- **API server (use the phone as a server)**: on the Models/API page → Chat model → the top **API** sub-tab, one tap turns the **already loaded** model into an **OpenAI-compatible** endpoint (`POST /v1/chat/completions` stream or not, `GET /v1/models`, `GET /health`); phones, computers and any OpenAI client on the same network can talk to it. Optional API key, custom port, ongoing notification, survives screen-off (see the section below)
 
 ## Drawing
 
@@ -51,9 +56,27 @@ The engine is [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.
 - **Model import**: two ways - **single file** (one `.gguf`: all-in-one builds of SD1.x/2, SDXL, SD3/3.5, Flux, Qwen-Image, ...) and **multi-file** (fill in the slots for a family: SD3/3.5, Flux, Qwen-Image, HiDream, video models, ...). For multi-file, pick the type (family) and the main model first, then add the companion files one by one under "Model slots"; each model set keeps its files in its own folder and can be selected / long-pressed to delete in the list
   - **SDXL is single-file only**: upstream sd.cpp only recognizes SDXL when the second text encoder sits in the same file as the main model, so a split unet + CLIP-L/CLIP-G SDXL fails to load - use a single-file SDXL (quantized single files around 2.5 GB exist)
   - Multi-file is really meant for families that upstream ships split apart: Flux, SD3.5, Qwen-Image and friends; the smallest set for those is 8 GB+, which a phone can hardly run (the mechanism is there for big-memory devices / desktop use).
-- **GPU acceleration (optional; build-time-verified only, not tested on a real device)**: switch the run mode to **GPU** on the Models page and drawing uses the device's Vulkan backend (both text-to-image and image-to-image); if the device has no Vulkan or init fails it **falls back to CPU automatically**, and the backend actually in use is shown in the drawing status line
+- **GPU acceleration (optional; build-time-verified only, not tested on a real device)**: switch the run mode to **GPU** on the Models/API page and drawing uses the device's Vulkan backend (both text-to-image and image-to-image); if the device has no Vulkan or init fails it **falls back to CPU automatically**, and the backend actually in use is shown in the drawing status line
 - **Draw from chat**: when both a chat model and a draw model are loaded, just say "draw me ..." and the draw model is invoked.
 - The "Parameters" / "Result" views can be swiped left/right; save images to the gallery from the Result view.
+
+## API server (use the phone as a server)
+
+Serves the **already loaded** chat model over an OpenAI-compatible HTTP API, so other devices can use ready-made clients while the phone does the inference.
+
+- **How to start**: Models/API page → Chat model → switch the top **Model / API** tabs to **API** → load a chat model, then tap "Start API server"
+- **Endpoints**
+  | Method | Path | Notes |
+  |---|---|---|
+  | POST | `/v1/chat/completions` | Chat; `"stream": true` switches to SSE (`data: {...}` chunks + `data: [DONE]`) |
+  | GET | `/v1/models` | The loaded model, in OpenAI format |
+  | GET | `/health` | Liveness: model name / ready / busy |
+- **Client settings**: Base URL = `http://<phone-lan-ip>:8080/v1` (the app shows the address, tap it to copy), API key = the one you set (if you set none, clients still usually require a non-empty value - anything works)
+- **Port and key**: port defaults to 8080 (changeable; restart the service to apply). The API key is **optional** - leaving it unset means no check at all
+- **How it runs**: a foreground service (`specialUse`, avoiding the 6-hour limit Android 15+ puts on `dataSync`) with an ongoing notification and a WifiLock, so it keeps serving in the background and with the screen off; the notification has a Stop action
+- **One request at a time**: a local model cannot run concurrently, so a busy server answers 429 (the standard rate-limit semantic); clients just retry
+- **Context reuse**: clients resend the whole history each turn; the server recognises "same history + new question" and continues the existing session (for gguf it is llama.cpp's KV reuse) instead of recomputing from scratch
+- **Security**: the server listens on **every** network interface of the phone, including public ones. Without an API key, anyone who can reach the address can use your model and battery - **exposing it to the internet is your call** (set a key, or keep it on a trusted network)
 
 ## Tagging (Tagger)
 
@@ -61,13 +84,13 @@ The engine is [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.
 - The "Tagger" page: pick an image → set threshold (default 0.35) / max tags (default 40) / **channel order** (BGR by default) → get tags
   - "Channel order" exists for different preprocessing: the official WD-family pipeline is BGR; a few re-exported models baked BGR into their weights, so those need RGB (switch it if colours / hair colour come out wrong)
 - Send the tags to **Text-to-Image / Image-to-Image** (with a confirmation prompt); from the Result view you can also send a generated image to **Image-to-Image** or to **Tagger**
-- Multiple taggers / tag lists can be switched from the list on the Models page; "Load / Unload tagger" loads on demand and frees memory when you are done
+- Multiple taggers / tag lists can be switched from the list on the Models/API page; "Load / Unload tagger" loads on demand and frees memory when you are done
 - A loaded tagger can also be called as a **tool by chat models that cannot see images** (the model emits a `<tag>` command, the app tags the image, the tags are sent back and the model answers from them) - see the Chat section
-- Backend follows the Models page run mode: CPU, or NNAPI when GPU is selected
+- Backend follows the Models/API page run mode: CPU, or NNAPI when GPU is selected
 
 ## Permissions
 
-The app declares **only three permissions** and none of them is sensitive: taking a photo, picking an image and saving to the gallery require **no storage access permission at all**.
+Taking a photo, picking an image and saving to the gallery require **no storage access permission at all**; apart from the entries below the app declares no other permissions.
 
 | What | Permission | Why |
 | --- | --- | --- |
@@ -77,16 +100,17 @@ The app declares **only three permissions** and none of them is sensitive: takin
 | Save an image / take a photo | **Needed on Android 9 and below** | These need `WRITE_EXTERNAL_STORAGE` (declared with `maxSdkVersion="28"`, so it only applies on Android 9 or older), and the app **only prompts on Android 9, at the first save/photo**; on Android 10+ it is never requested |
 | Downloading LoRA | `INTERNET`, `ACCESS_NETWORK_STATE` | Used only by the manual LCM-LoRA download (HuggingFace / hf-mirror) on the LoRA card. **No download, no network** - everything else needs no network |
 | Models / chats / images | **No permission** | Everything lives in the app's private directory (`filesDir/`), the app sandbox |
+| **API server** (optional, off by default) | `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE`, `POST_NOTIFICATIONS`, `WAKE_LOCK`, `ACCESS_WIFI_STATE`, `CHANGE_WIFI_STATE` | Used only while the API server runs: a persistent foreground service (`specialUse`) + an ongoing notification + a WifiLock (survives screen-off). **Unused entirely when the feature is off**; denying notification access does not stop the service, it only hides the ongoing notification |
 
 - The `content://` grant returned by the camera or gallery is **temporary**, so imported files are copied into the private directory right away (this is why picking a model copies it)
 - The `IMAGE_CAPTURE` entry under `<queries>` is an Android 11+ package-visibility declaration, not a permission
-- No location, contacts, microphone, notification or background-execution permission is requested
+- No location, contacts or microphone permission is requested; **`POST_NOTIFICATIONS` and the foreground-service permissions are only used while the API server is on**
 
 ## Languages
 
 All UI strings are externalized (`res/values` = English, `res/values-zh` = Chinese) and **follow the system language** automatically - no setting needed.
 
-The fourth tab is an **About** page: version and install time, app intro, notes on the thinking mode, license and third-party component list, author and project link.
+The fourth tab is an **About** page with two collapsible sections: **Settings** (the three-position theme slider: Light / Follow system / Dark) and **About** (version and install time, app intro, notes on the thinking mode, license and third-party component list, author and project link).
 
 ## Building
 
@@ -100,15 +124,16 @@ gradle assembleRelease
 Signing and delivery scripts are in `tools/`:
 
 ```powershell
-# Sign with the keystore (always v2-only)
-powershell -File tools/sign-apk.ps1
+# Sign with the keystore (v1 + v2 + v3)
+# Passwords are not in the script: it reads keystore.properties at the project root (gitignored), or PONKO_KS_PASS
+powershell -ExecutionPolicy Bypass -File tools/sign-apk.ps1 -Apk app\build\outputs\apk\release\app-release-unsigned.apk
 # All-in-one: build + sign + copy to share + upload
 powershell -File tools/build-release.ps1
 ```
 
 - `minSdk 28` / `targetSdk 36`, **arm64-v8a only** (native library constraint; a real device is required, emulators won't run it)
 - The first full compile of sd.cpp + ggml takes about 8-9 minutes; with C++ unchanged, incremental builds take ~10 seconds
-- Main dependencies: `com.google.ai.edge.litertlm:litertlm-android:0.17.0`, `net.ladenthin:llama-android:5.1.0`, `com.microsoft.onnxruntime:onnxruntime-android:1.22.0`, `io.noties.markwon:*:4.6.2`
+- Main dependencies: `com.google.ai.edge.litertlm:litertlm-android:0.17.0`, `net.ladenthin:llama-android:5.1.0`, `com.microsoft.onnxruntime:onnxruntime-android:1.22.0`, `com.tom-roush:pdfbox-android:2.0.27.0`, `io.noties.markwon:*:4.6.2`
 - Built by CMake: `libstable-diffusion.so` (sd.cpp itself), `libponko_sd.so` (JNI bridge)
 - The Vulkan backend (optional GPU drawing) needs **no Vulkan SDK**: `glslc` and the SPIRV headers come from the NDK, plus a **host compiler** to build the shader generator (MSVC on Windows - `tools/build-release.ps1` loads the `vcvars64` environment for you)
 
@@ -122,7 +147,7 @@ powershell -File tools/build-release.ps1
 
 ## Known limitations
 
-- Chat context defaults to 4096 tokens (adjustable on the Models page; on the LiteRT-LM side it cannot exceed the limit built into the model); beyond that it relies on llama.cpp's context-shift sliding window
+- Chat context defaults to 4096 tokens (adjustable on the Models/API page; on the LiteRT-LM side it cannot exceed the limit built into the model); beyond that it relies on llama.cpp's context-shift sliding window
 - The GGUF chat path currently uses CPU only (the binding used does not include GPU backends)
 - "Disable thinking" depends on the model's own chat template; some models may still emit reasoning
 - Drawing is CPU-only by default: 256×256 with LCM-LoRA at 6 steps takes about a minute; 512×512 is noticeably slower. Switch the run mode to GPU to try Vulkan acceleration; devices without it fall back to CPU (the backend in use is shown in the drawing status line)
@@ -131,10 +156,11 @@ powershell -File tools/build-release.ps1
 - The drawing native library is built with `-march=armv8.2-a+dotprod+fp16`, requiring a 64-bit ARM device from 2019 or later
 - Tagging supports Danbooru-style ONNX taggers (WD14 and its derivatives; the tag list must be in `tag_id,name,category,count` format); the `.onnx` and the tag-list CSV must be imported as a matching pair
 - If tagging looks wrong (e.g. wrong colours or hair colour), try switching the **channel order** (BGR / RGB): BGR is the official WD-family preprocessing, but a few re-exported models already baked BGR into their weights and need RGB; threshold and tag count also change the output a lot
-- The tagger model is loaded lazily on first use (it holds hundreds of MB of memory) and can be unloaded manually from the Models page
+- The tagger model is loaded lazily on first use (it holds hundreds of MB of memory) and can be unloaded manually from the Models/API page
 - On **Android 9**, saving to the gallery / taking a photo requires the storage permission (prompted on first use); denying it makes those actions fail (Android 10+ is unaffected)
 - Image input is capped at 4 images and 2 files per message; a `.gguf` vision model must be paired with its matching `mmproj`, selected before the model is loaded
-- File input accepts text-like files only: PDF is not supported yet (the plan is to convert pages to images and use the multimodal path), binary files are rejected; the text is trimmed to roughly 1200 tokens
+- File input accepts plain text and the common document formats (`.docx` / `.pptx` / `.xlsx` / `.odt` / `.ods` / `.odp` / `.epub` / `.rtf` / `.html` / `.pdf`); `.doc` / `.xls` / `.ppt` have to be re-saved first; scanned (image-only) PDFs yield no text; binary files are rejected; per-file size cap (4 MB for plain text, 48 MB for documents); the text is trimmed to the context budget (about a quarter of the context by default)
+- API server: a chat model must be loaded first (the API only serves what is loaded); one request at a time; port / key changes need a service restart; with **no API key set there is no check at all**, so exposing it publicly is at your own risk
 - When the context does not fit, older turns and file text are trimmed automatically; if it still does not fit, the app tells you what to do: start a new chat, send a shorter file, or drop some old turns
 
 ## License
@@ -154,6 +180,7 @@ powershell -File tools/build-release.ps1
 | [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM) | Apache-2.0 | Gradle dependency |
 | [llama.cpp](https://github.com/ggerganov/llama.cpp) (via java-llama.cpp binding) | MIT | Gradle dependency |
 | [Markwon](https://github.com/noties/Markwon) | Apache-2.0 | Gradle dependency |
+| [PDFBox-Android](https://github.com/TomRoush/PdfBox-Android) | Apache-2.0 | Gradle dependency (PDF text extraction) |
 | [ONNX Runtime](https://github.com/microsoft/onnxruntime) | MIT | Gradle dependency (Tagger) |
 | Kotlin / kotlin-reflect / kotlinx.coroutines / AndroidX | Apache-2.0 | Gradle dependency |
 | [commonmark-java](https://github.com/commonmark/commonmark-java) (via Markwon) | BSD-2-Clause | Gradle transitive dependency |

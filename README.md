@@ -4,7 +4,7 @@
 
 [English](README.en.md) · 中文
 
-一个**能够离线运行**的 Android 本地 AI App：聊大语言模型（**支持发图片、发文件**）、画图、给图片反推标签。
+一个**能够离线运行**的 Android 本地 AI App：聊大语言模型（**支持发图片、发文件与文档**，还能把手机当 API 服务器）、画图、给图片反推标签。
 
 模型推理全部在本机完成：除了「手动下载 LoRA」，其余功能都不需要联网。
 
@@ -17,7 +17,7 @@
 | `.litertlm` | Google LiteRT-LM | CPU / GPU / NPU 后端、思考通道、多模态扩展 |
 | `.gguf` | llama.cpp | CPU 多线程、会话内 KV 前缀复用（长对话不重复 prefill）|
 
-- **模型管理**：从本地存储选择模型文件，复制到 App 私有目录后可反复选用；「模型」页顶部选运行方式（CPU / GPU），下面分「对话模型 / 绘图模型 / 打标模型」三个子页（左右滑动切换），各类模型均可查看 / 选择 / 删除
+- **模型管理**：从本地存储选择模型文件，复制到 App 私有目录后可反复选用；「模型/API」页顶部选运行方式（CPU / GPU），下面分「对话模型 / 绘图模型 / 打标（Tagger）」三个子页（左右滑动切换），其中「对话模型」页内再分「模型 / API」两个子页；各类模型均可查看 / 选择 / 删除
   - 运行方式（CPU / GPU）的作用范围：**只有三条路径带 GPU 代码**——**绘图**（Vulkan）、**打标**（NNAPI）、**对话 `.litertlm`**（LiteRT-LM 的 GPU，底层是 OpenCL / Vulkan）；**对话 GGUF 始终 CPU**（所用绑定未含 GPU 后端）。这三条 GPU 路径**目前都只在构建侧验证过，均未经真机实测**——理论上可用，实际能不能用取决于机型的驱动与显存；设备不支持或初始化失败会自动回退 CPU，绘图页状态行会显示实际使用的后端
 - **多对话**：新建 / 切换 / 删除对话，记录持久化在设备本地（`sessions.json`），互不干扰
 - **思考分离**：思考过程与正文分开显示、可折叠；思考开关对两种格式都生效
@@ -26,10 +26,15 @@
 - **重新生成**：一键重跑，**会带上这一轮原来的图片与文件**（还原到输入框上方的附件条，可直接看到）；用随机种子保证结果不重复
 - **图片输入（多模态）**：输入框左侧「＋」向上展开抽屉，可选「拍照 / 图库」，一次最多 4 张；图片直接显示在气泡里，**点击全屏查看（双指缩放 / 拖动 / 双击放大）**，**长按**弹出菜单：保存到相册 / 引用（放进输入栏待发）/ 发送至图生图 / 发送至 Tagger
   - `.litertlm`：需**多模态模型**（如 Gemma 3n）；App 会自动探测模型是否支持视觉输入，不支持时点「＋」直接提示
-  - `.gguf`：需**视觉模型 + 配套 `mmproj` 文件**；在「模型」页·对话模型卡片里导入并选择 mmproj，**必须选好 mmproj 再加载模型**
-- **文件输入（纯文本类）**：同一个「＋」抽屉里的第三项「文件」，一次最多 2 个；支持 `.txt` / `.md` / `.json` / `.csv` / `.log` / `.xml` / 各类代码等文本文件（UTF-8 / GBK 自动识别；二进制文件直接拒收，PDF 暂不支持）；正文按上下文预算自动截断后**随那一条消息**发给模型，不进历史；气泡上显示文件名
-- **对话参数**：「模型」页·对话模型里可调上下文长度、最大输出、温度、Top-K、Top-P、重复惩罚、思考预算、随机种子；**按模型分别保存**，输入即存；上下文长度与最大输出要**重新加载模型**才生效
+  - `.gguf`：需**视觉模型 + 配套 `mmproj` 文件**；在「模型/API」页·对话模型里导入并选择 mmproj，**必须选好 mmproj 再加载模型**
+- **文件 / 文档输入**：同一个「＋」抽屉里的第三项「文件」，一次最多 2 个
+  - **纯文本**：`.txt` / `.md` / `.json` / `.csv` / `.log` / `.xml` / 各类代码等（UTF-8 / GBK 自动识别）
+  - **文档**：`.docx` / `.pptx` / `.xlsx` / `.odt` / `.ods` / `.odp` / `.epub` / `.rtf` / `.html` / **`.pdf`** —— 抽出正文（表格按制表符分列、段落分行、幻灯片 / 工作表 / 页数会标注在附件上）后按上下文预算截断
+  - `.doc` / `.xls` / `.ppt`（97-2003 老二进制格式）会明确提示「请另存为 .docx / .xlsx / .pptx 或 PDF」
+  - 正文**随那一条消息**发给模型，不进历史；气泡上显示文件名与字数（截断会标注）
+- **对话参数**：「模型/API」页·对话模型里可调上下文长度、最大输出、温度、Top-K、Top-P、重复惩罚、思考预算、随机种子；**按模型分别保存**，输入即存；上下文长度与最大输出要**重新加载模型**才生效
 - **看不见图的对话模型可以「借」打标模型看图**：对话模型本身不支持图片（没有多模态、也没配 mmproj）但已加载打标模型时，模型会自己调用打标模型（输出 `<tag>` 命令 → App 对图片打标 → 标签作为工具结果回传），再据此回答；阈值与标签数由模型自定，BGR/RGB 跟随绘图页 Tagger 的设置；自己能看图的模型不会走这条路
+- **API 服务端（把手机当服务器）**：在「模型/API」页 · 对话模型 · 顶部「API」子页里一键开启，把**已加载**的本地模型开放成 **OpenAI 兼容**接口（`POST /v1/chat/completions` 流式/非流式、`GET /v1/models`、`GET /health`），同一网络的手机 / 电脑 / 任何 OpenAI 客户端都能直接连；支持可选 API key、自定义端口、常驻通知与锁屏不断线（详见下节）
 
 ## 绘图
 
@@ -50,9 +55,27 @@
 - **模型导入**：两种方式——**单文件**（一个 `.gguf`；SD1.x/2、SDXL、SD3/3.5、Flux、Qwen-Image 的 all-in-one 版都走这条）与**多文件**（按家族补齐槽位：SD3/3.5、Flux、Qwen-Image、HiDream、视频等）。多文件时先选类型（家族）与主模型，再在「模型槽位」里逐个补配套文件；每个模型集的文件存在各自子目录里，列表里可点选 / 长按删除
   - **SDXL 只支持单文件**：上游 sd.cpp 要在「第二个文本编码器与主模型在同一个文件里」才能认出 SDXL，拆成 unet + CLIP-L/CLIP-G 多个文件的 SDXL 加载会直接失败——请用单文件 SDXL（有 2.5GB 级的量化单文件）
   - 多文件真正适用的是「官方本来就拆开分发」的家族：Flux、SD3.5、Qwen-Image 等；这类模型最小组合也在 8GB 以上，手机上基本跑不动（机制已支持，留给大内存设备 / 桌面端使用）
-- **GPU 加速（可选，⚠️ 仅构建侧验证、未真机实测）**：在「模型」页把运行方式切到 **GPU**，绘图会使用设备的 Vulkan 后端（文生图 / 图生图都生效）；设备没有 Vulkan 或初始化失败会**自动回退 CPU**，实际用的是哪个后端会显示在绘图页状态行
+- **GPU 加速（可选，⚠️ 仅构建侧验证、未真机实测）**：在「模型/API」页把运行方式切到 **GPU**，绘图会使用设备的 Vulkan 后端（文生图 / 图生图都生效）；设备没有 Vulkan 或初始化失败会**自动回退 CPU**，实际用的是哪个后端会显示在绘图页状态行
 - **对话页出图**：语言模型与绘图模型都加载时，直接说「画一张…」就会调用绘图模型生成
 - 顶部「参数 / 结果」两个视图可左右滑动切换；结果页可把图片保存到相册
+
+## API 服务端（把手机当服务器）
+
+把手机上**已经加载**的对话模型开放成 OpenAI 兼容接口，其它设备用现成的客户端就能调用——手机上跑推理，客户端只当界面。
+
+- **怎么开**：「模型/API」页 → 对话模型 → 上方「模型 / API」子页签切到 **API** → 先加载一个对话模型，再点「启动 API 服务」
+- **接口**
+  | 方法 | 路径 | 说明 |
+  |---|---|---|
+  | POST | `/v1/chat/completions` | 对话；`"stream": true` 走 SSE 流式（标准 `data: {...}` + `data: [DONE]`） |
+  | GET | `/v1/models` | 当前模型（OpenAI 格式） |
+  | GET | `/health` | 存活探测：模型名 / 是否就绪 / 是否忙 |
+- **客户端怎么填**：Base URL = `http://<手机在局域网里的 IP>:8080/v1`（App 里会直接显示地址，点一下即复制），API Key 填你设置的（没设就随便填，客户端一般要求非空）
+- **端口 / key**：端口默认 8080（可改，改动后重启服务生效）；API key **可选**——不设就是不校验
+- **运行方式**：前台服务（`specialUse` 类型，避开 Android 15+ 对 dataSync 的 6 小时限制）+ 常驻通知 + WifiLock，App 退到后台、锁屏都继续服务；通知里可直接「停止」
+- **一次一个请求**：本地模型跑不了并发，忙时返回 429（标准限流语义），客户端重试即可
+- **上下文续跑**：客户端每轮会重发整段历史；服务端能识别「同一段历史 + 新问题」并复用已有会话（gguf 走 llama.cpp 的 KV 复用），不会每轮从头算
+- **安全提示**：服务监听本机**所有**网络接口（含公网地址）。不设 key 时，任何能连到该地址的人都能调用你的模型和电量——**是否对公网开放请自行评估**（建议设 key，或只在可信网络里用）
 
 ## 打标（Tagger）
 
@@ -60,13 +83,13 @@
 - 参数区「Tagger」页：选图 → 设阈值（默认 0.35）/ 最多标签数（默认 40）/ **通道顺序**（默认 BGR）→ 输出标签
   - 「通道顺序」是给不同预处理模型留的开关：WD 系官方预处理是 BGR；少数重导出模型把 BGR 烘进了权重，这时切到 RGB 才对（颜色 / 发色识别错时可切换试试）
 - 标签可一键**发送至文生图 / 图生图**（发送前弹确认框）；结果页也可把生成的图**发送至图生图**或**发送至 Tagger**
-- 多份打标模型 / 标签表可在「模型」页列表里点选切换；「加载 / 卸载打标模型」按需加载，用完可卸载释放内存
+- 多份打标模型 / 标签表可在「模型/API」页列表里点选切换；「加载 / 卸载打标模型」按需加载，用完可卸载释放内存
 - 加载后的打标模型还可以被**看不见图的对话模型当工具调用**（模型输出 `<tag>` 命令 → App 打标 → 标签回传 → 模型据此作答），详见「对话」一节
-- 后端跟随「模型」页的运行方式：CPU，或选 GPU 时走 NNAPI
+- 后端跟随「模型/API」页的运行方式：CPU，或选 GPU 时走 NNAPI
 
 ## 权限
 
-App **只声明 3 个权限**，且都不是敏感权限：拍照、选图、保存到相册都**不需要**申请存储读取权限。
+拍照、选图、保存到相册都**不需要**申请存储读取权限；除下表列出的以外，App 不再声明其它权限。
 
 | 用途 | 是否需要权限 | 说明 |
 | --- | --- | --- |
@@ -76,16 +99,17 @@ App **只声明 3 个权限**，且都不是敏感权限：拍照、选图、保
 | 保存图片 / 拍照 | **Android 9 及以下需要** | 这两项需要 `WRITE_EXTERNAL_STORAGE`（manifest 里以 `maxSdkVersion="28"` 声明，仅在 9 及以下生效），且**只在 Android 9 上首次保存/拍照时才弹窗申请**；Android 10 及以上永远不会请求它 |
 | 下载 LoRA | `INTERNET`、`ACCESS_NETWORK_STATE` | 只用于「LoRA 加速」里手动下载 LCM-LoRA（HuggingFace / hf-mirror）。**不下载就不联网**，其余功能无需联网 |
 | 模型 / 会话 / 图片存储 | **不需要权限** | 全部存在 App 私有目录（`filesDir/`），属应用沙箱 |
+| **API 服务端**（可选功能，默认关闭） | `FOREGROUND_SERVICE`、`FOREGROUND_SERVICE_SPECIAL_USE`、`POST_NOTIFICATIONS`、`WAKE_LOCK`、`ACCESS_WIFI_STATE`、`CHANGE_WIFI_STATE` | 只在开启「API 服务端」时用到：常驻前台服务（`specialUse`）+ 常驻通知 + WifiLock（灭屏不断线）；**不开这个功能就完全用不到**；拒绝通知授权也不影响服务本身，只是看不到常驻通知 |
 
 - 相机、图库返回的 `content://` 授权是**临时的**，所以导入时会立刻复制一份到私有目录（这也是「选完模型要复制」的原因）
 - `<queries>` 里的 `IMAGE_CAPTURE` 是 Android 11+ 的**包可见性**声明，不是权限
-- 不申请位置、通讯录、麦克风、通知、后台运行等任何权限
+- 不申请位置、通讯录、麦克风等权限；**通知（`POST_NOTIFICATIONS`）与前台服务相关权限只在开启「API 服务端」时才会用到**
 
 ## 多语言
 
 界面文案全部资源化（`res/values` = 英文，`res/values-zh` = 中文），**跟随系统语言**自动切换，无需设置项。
 
-底部第四个标签是「关于」页：版本号与安装时间、应用简介、思考模式说明、许可与第三方组件清单、作者与项目地址。
+底部第四个标签是「关于」页，里面分两个可折叠分区：**「设置」**（主题三档滑块：亮 / 跟随系统 / 暗）与 **「关于」**（版本号与安装时间、应用简介、思考模式说明、许可与第三方组件清单、作者与项目地址）。
 
 ## 构建
 
@@ -99,15 +123,16 @@ gradle assembleRelease
 签名与交付脚本见 `tools/`：
 
 ```powershell
-# 用 keystore 签名（固定 v2-only）
-powershell -File tools/sign-apk.ps1
+# 用 keystore 签名（v1 + v2 + v3 全方案）
+# 口令不在脚本里：读项目根 keystore.properties（已 gitignore），或环境变量 PONKO_KS_PASS
+powershell -ExecutionPolicy Bypass -File tools/sign-apk.ps1 -Apk app\build\outputs\apk\release\app-release-unsigned.apk
 # 一键：构建 + 签名 + 拷共享盘 + 上传网盘
 powershell -File tools/build-release.ps1
 ```
 
 - `minSdk 28` / `targetSdk 36`，**仅 arm64-v8a**（原生库限制，需真机，模拟器跑不了）
 - 首次全量编译 sd.cpp + ggml 约 8~9 分钟，C++ 未改动时增量仅约 10 秒
-- 主要依赖：`com.google.ai.edge.litertlm:litertlm-android:0.17.0`、`net.ladenthin:llama-android:5.1.0`、`com.microsoft.onnxruntime:onnxruntime-android:1.22.0`、`io.noties.markwon:*:4.6.2`
+- 主要依赖：`com.google.ai.edge.litertlm:litertlm-android:0.17.0`、`net.ladenthin:llama-android:5.1.0`、`com.microsoft.onnxruntime:onnxruntime-android:1.22.0`、`com.tom-roush:pdfbox-android:2.0.27.0`、`io.noties.markwon:*:4.6.2`
 - CMake 现场产出：`libstable-diffusion.so`（sd.cpp 本体）、`libponko_sd.so`（JNI 桥）
 - Vulkan 后端（可选 GPU 绘图）不需要安装 Vulkan SDK：`glslc` 与 SPIRV 头文件都用 NDK 自带的；交叉编译时还需要一个**宿主编译器**来构建着色器生成工具（Windows 上是 MSVC，`tools/build-release.ps1` 会自动载入 `vcvars64` 环境）
 
@@ -121,7 +146,7 @@ powershell -File tools/build-release.ps1
 
 ## 已知限制
 
-- 对话上下文默认 4096 tokens（可在「模型」页调整；LiteRT-LM 侧不能超过模型自带的上限），超出后依赖 llama.cpp 的 context shift 滑动窗口
+- 对话上下文默认 4096 tokens（可在「模型/API」页调整；LiteRT-LM 侧不能超过模型自带的上限），超出后依赖 llama.cpp 的 context shift 滑动窗口
 - 对话用的 GGUF 目前仅走 CPU（所用绑定未包含 GPU 后端）
 - 「关闭思考」依赖模型自带的对话模板，个别模型可能仍会输出思考内容
 - 绘图默认是纯 CPU 推理：256×256 + LCM-LoRA 6 步约 1 分钟，512×512 明显更慢；把运行方式切到 GPU 可尝试 Vulkan 加速，设备不支持会自动回退 CPU（实际后端显示在绘图页状态行）
@@ -130,10 +155,11 @@ powershell -File tools/build-release.ps1
 - 绘图原生库用 `-march=armv8.2-a+dotprod+fp16` 编译，需要 2019 年后的 64 位 ARM 设备
 - 打标支持 Danbooru 系的 ONNX 打标模型（WD14 及其衍生版本等；标签表需为 `tag_id,name,category,count` 格式）；`.onnx` 与标签表 CSV 必须配套导入
 - 打标结果离谱（例如发色 / 颜色认错）时先试切换「通道顺序」（BGR / RGB）：BGR 是 WD 系官方预处理，个别重导出模型已把 BGR 烘进权重、需要切 RGB；阈值与标签数也会明显影响结果
-- 打标首次运行时才加载模型（常驻数百 MB 内存），可在「模型」页手动卸载
+- 打标首次运行时才加载模型（常驻数百 MB 内存），可在「模型/API」页手动卸载
 - 保存到相册 / 拍照在 **Android 9** 上需要存储权限（首次操作会弹窗）；拒绝授权则该操作失败（Android 10+ 不受影响）
 - 图片输入的张数上限为 4 张、文件上限 2 个；`.gguf` 视觉模型必须搭配对应的 `mmproj`，且需在加载模型前选好
-- 文件输入只支持纯文本类文件：PDF 暂不支持（后续计划转成图片走多模态），二进制文件直接拒收；正文默认按约 1200 tokens 截断
+- 文件输入支持纯文本与常见文档（`.docx` / `.pptx` / `.xlsx` / `.odt` / `.ods` / `.odp` / `.epub` / `.rtf` / `.html` / `.pdf`）；`.doc` / `.xls` / `.ppt` 老二进制格式需先另存；扫描版 PDF（图片型）抽不出文字；二进制文件直接拒收；单个文件大小上限（纯文本 4 MB、文档 48 MB）；正文按上下文预算截断（默认约为上下文的 1/4）
+- API 服务端：必须先加载对话模型（API 只开放已加载的模型）；同时只服务一个请求；端口 / key 改动要重启服务生效；**不设 key 时完全不校验**，公网暴露风险自负
 - 上下文放不下时会自动裁剪更早的对话与文件正文；仍然放不下会给出提示：开个新会话、换短一点的文件、少带几轮旧对话
 
 ## 许可
@@ -153,6 +179,7 @@ powershell -File tools/build-release.ps1
 | [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM) | Apache-2.0 | Gradle 依赖 |
 | [llama.cpp](https://github.com/ggerganov/llama.cpp)（经 java-llama.cpp 绑定） | MIT | Gradle 依赖 |
 | [Markwon](https://github.com/noties/Markwon) | Apache-2.0 | Gradle 依赖 |
+| [PDFBox-Android](https://github.com/TomRoush/PdfBox-Android) | Apache-2.0 | Gradle 依赖（PDF 文本抽取） |
 | [ONNX Runtime](https://github.com/microsoft/onnxruntime) | MIT | Gradle 依赖（打标 Tagger） |
 | Kotlin / kotlin-reflect / kotlinx.coroutines / AndroidX | Apache-2.0 | Gradle 依赖 |
 | [commonmark-java](https://github.com/commonmark/commonmark-java)（Markwon 引入） | BSD-2-Clause | Gradle 传递依赖 |
