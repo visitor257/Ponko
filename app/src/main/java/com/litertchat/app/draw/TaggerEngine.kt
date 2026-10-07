@@ -4,9 +4,11 @@ import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import ai.onnxruntime.TensorInfo
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import com.litertchat.app.R
 import java.io.File
 import java.nio.FloatBuffer
 
@@ -62,11 +64,11 @@ object TaggerEngine {
      * 加载模型 + 标签表。返回 null = 成功，否则为错误文案。
      * 可能耗时（几秒），务必在 IO 线程调用。
      */
-    fun load(model: File, csv: File, useGpu: Boolean, threads: Int): String? {
+    fun load(ctx: Context, model: File, csv: File, useGpu: Boolean, threads: Int): String? {
         return try {
             unload()
             val tagList = parseCsv(csv)
-            if (tagList.isEmpty()) return "标签表为空或格式不对"
+            if (tagList.isEmpty()) return ctx.getString(R.string.s_384)
 
             val e = OrtEnvironment.getEnvironment()
             val opts = OrtSession.SessionOptions()
@@ -80,7 +82,7 @@ object TaggerEngine {
             val inputEntry = s.inputInfo.entries.firstOrNull()
             if (inputEntry == null) {
                 runCatching { s.close() }
-                return "模型没有输入节点"
+                return ctx.getString(R.string.s_385)
             }
             inputName = inputEntry.key
             val shape = (inputEntry.value.info as? TensorInfo)?.shape
