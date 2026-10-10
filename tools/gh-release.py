@@ -10,26 +10,28 @@ import urllib.request
 REPO = "visitor257/Ponko"
 TOKFILE = r"C:\Users\Administrator\Desktop\git_repo_tok.txt"
 APK = r"C:\Users\Administrator\WorkBuddy\智能Agent\LiteRT-Chat\app\build\outputs\apk\release\Ponko-release.apk"
-TAG = "v1.7.0"
-NAME = "Ponko v1.7.0"
+TAG = "v1.7.1"
+NAME = "Ponko v1.7.1"
 
-BODY = """Ponko v1.7.0 - Offline-capable AI app for Android: chat (image, file and document input, plus an OpenAI-compatible API server) + drawing + tagging.
+BODY = """Ponko v1.7.1 - Offline-capable AI app for Android: chat (image, file and document input) + drawing + tagging, each of which can be served over its own OpenAI-compatible API.
 
 All inference runs on-device: apart from the optional in-app LoRA download, no feature needs the network. No telemetry; your data stays on your phone.
 See the [README](https://github.com/visitor257/Ponko#readme).
 
-## v1.7.0 Highlights
-- **Send documents in chat**: not just plain text any more - `.docx` / `.pptx` / `.xlsx` / `.odt` / `.ods` / `.odp` / `.epub` / `.rtf` / `.html` / **`.pdf`**. The text is extracted **on-device** (PDF via PDFBox-Android, nothing is uploaded), table cells come out tab-separated, and the attachment chip shows the page / slide / sheet count. Legacy `.doc` / `.xls` / `.ppt` ask you to re-save first
-- **API server (use the phone as a server)**: expose the **already loaded** chat model as an **OpenAI-compatible** endpoint - `POST /v1/chat/completions` (SSE streaming or plain), `GET /v1/models`, `GET /health`. Any OpenAI client on the same network can talk to it. Optional API key, custom port, ongoing notification and a WifiLock so it keeps serving with the screen off; the foreground service uses type `specialUse` to avoid the Android 15+ dataSync time limit. One request at a time (429 when busy), and the server reuses the session / KV cache instead of re-prefilling the whole history every turn
-- **Models/API page**: the old "Models" page is now **Models/API**, and the Chat model page has its own **Model / API** sub-tabs (same look as the drawing Result/Process switch) - the API settings are no longer mixed into the model list
-- Version 1.6.2 -> 1.7.0 (versionCode 13)
+## v1.7.1 Highlights
+- **Drawing API**: the loaded drawing model can now be served over an OpenAI-compatible image endpoint - `POST /v1/images/generations` (returns `b64_json`), plus `GET /v1/models` and `GET /health`. Send `{"prompt": "..."}` and the phone renders it; `n` (1-4), `size`, `seed`, `steps`, `cfg_scale` and `negative_prompt` are all optional, and anything you omit falls back to the drawing page's current settings
+- **The chat API and the drawing API are two independent services**: separate ports (8080 / 8081), separate API keys, separate on/off switches and separate request counters, so you can expose one without the other. They share a single foreground service and one notification, whose text lists every address that is actually listening. Changing a port or key restarts that service for you. Off by default: one image pins the CPU for tens of seconds, so the drawing endpoint is not reachable from the network unless you turn it on
+- **Fixes**
+  - The About page showed a stale version number ("Version 1.7.0" while running 1.7.1). It is now read from the installed package, so it can never go out of sync again
+  - The **Settings / About** sections forgot whether you had collapsed them; the state is now remembered across restarts
+  - Starting an API service no longer requires a chat model to be loaded first (it never actually did - only the endpoints need models, and they answer 503 with an explanation until one is loaded)
+- Version 1.7.0 -> 1.7.1 (versionCode 14)
 
 ## Chat
 - Two backends: LiteRT-LM (`.litertlm`) + llama.cpp (`.gguf`)
 - **Image input**: `.litertlm` multimodal models, or `.gguf` vision models with a matching mmproj
 - **File input**: plain text / Markdown / JSON / CSV / logs / source code, up to 2 per message
 - **Document input**: `.docx` / `.pptx` / `.xlsx` / `.odt` / `.ods` / `.odp` / `.epub` / `.rtf` / `.html` / `.pdf`, extracted on-device
-- **API server**: serve the loaded model over an OpenAI-compatible HTTP API (see the highlights above)
 - **Tagger as a chat tool**: a loaded tagger can be called from chat when the chat model cannot see images itself
 - Multiple conversations, history persisted locally
 - Reasoning and answer shown separately, collapsible; the thinking toggle works for both formats
@@ -37,11 +39,25 @@ See the [README](https://github.com/visitor257/Ponko#readme).
 - Keep typing while generating; interrupt and continue; one-tap "regenerate" (keeps images and files)
 - Auto-follow scroll, pause on scroll-up, jump-to-bottom button
 
+## API (served from the phone)
+Two independent services - start either, or both, from the Models/API page:
+
+| | Chat API | Drawing API |
+|---|---|---|
+| Endpoints | `POST /v1/chat/completions` (SSE streaming or plain), `GET /v1/models`, `GET /health` | `POST /v1/images/generations` (`b64_json`), `GET /v1/models`, `GET /health` |
+| Default port | 8080 | 8081 |
+| API key | optional, its own | optional, its own |
+| Switch | its own | its own (off by default) |
+
+- Runs as a foreground service (type `specialUse`, avoiding the 6-hour limit Android 15+ puts on `dataSync`) with a notification and a WifiLock, so it keeps serving in the background and with the screen off
+- One request at a time (a local model cannot run concurrently): a busy server answers 429
+- Context reuse: clients resend the whole history each turn, but the server recognises "same history + new question" and continues the existing session instead of recomputing from scratch
+- Security: the servers listen on **every** network interface of the phone, including public ones. Without an API key anyone who can reach the address can use your model and battery - set a key, or keep it on a trusted network
+
 ## UI
 - **Dark mode**: a three-position slider in Settings (Light / Follow system / Dark), persisted and applied without restarting
-- Settings is split into collapsible **Settings / About** groups
-- All interface colours come from a single theme table, so no bright panels are left behind in dark mode
-- The Models page is now **Models/API**; the Chat model page has **Model / API** sub-tabs
+- Settings is split into collapsible **Settings / About** groups, and their collapsed state is remembered
+- The Models page is **Models/API**; the Chat model and Draw model pages each have **Model / API** sub-tabs with the full set of API settings
 
 ## Drawing
 - Built-in custom stable-diffusion.cpp; loads GGUF drawing models - single-file all-in-one (SD1.5 / SD2 / SDXL) or a multi-file (split) set filled in slot by slot; CPU by default, optional GPU (Vulkan) acceleration with automatic CPU fallback
@@ -56,7 +72,7 @@ See the [README](https://github.com/visitor257/Ponko#readme).
 
 ## Install
 - arm64-v8a only (64-bit ARM devices), minSdk 28 (Android 9+)
-- v1.7.0 (versionCode 13) installs over v1.6.2 / v1.6.1 / v1.6.0 / v1.5.0 / v1.4.1 / v1.4.0 / v1.3.x / v1.2; uninstall older debug builds or v1.0 first (different signing key)
+- v1.7.1 (versionCode 14) installs over v1.7.0 / v1.6.2 / v1.6.1 / v1.6.0 / v1.5.0 / v1.4.1 / v1.4.0 / v1.3.x / v1.2; uninstall older debug builds or v1.0 first (different signing key)
 - Model files are not bundled: import chat models (`.litertlm` / `.gguf`), a drawing model (GGUF: single file, or a multi-file set) and, optionally, a tagger (`.onnx` + `.csv`) from the in-app Models/API page
 
 ## License
@@ -64,22 +80,24 @@ Code is MIT; art assets (icons, artwork) are all rights reserved. Third-party co
 
 ---
 
-Ponko v1.7.0 —— 本地 AI App（Android）：聊天（可发图、可发文件与文档，还能把手机当 API 服务端）+ 绘图 + 打标
+Ponko v1.7.1 —— 本地 AI App（Android）：聊天（可发图、可发文件与文档）+ 绘图 + 打标，三者都能各自开放成 OpenAI 兼容接口
 
 所有推理都在本机完成：除了「手动下载 LoRA」，其余功能都不需要联网；无遥测，数据只留在设备本地。
 
-### v1.7.0 亮点
-- **对话可以直接发文档了**：不再只有纯文本——支持 `.docx` / `.pptx` / `.xlsx` / `.odt` / `.ods` / `.odp` / `.epub` / `.rtf` / `.html` / **`.pdf`**，正文**全部在本机抽取**（PDF 用 PDFBox-Android，不上传任何内容）；表格按制表符分列，附件上会标注页数 / 幻灯片数 / 工作表数；`.doc` / `.xls` / `.ppt` 老格式会提示先另存
-- **API 服务端（把手机当服务器）**：把**已经加载**的对话模型开放成 **OpenAI 兼容**接口——`POST /v1/chat/completions`（支持 SSE 流式）、`GET /v1/models`、`GET /health`，同一网络下任何 OpenAI 客户端都能直接连。支持可选 API key、自定义端口；常驻通知 + WifiLock，锁屏也继续服务；前台服务用 `specialUse` 类型，避开 Android 15+ 对 dataSync 的时限。一次只服务一个请求（忙时返回 429），并会复用会话 / KV 缓存，不会每轮把整段历史重新算一遍
-- **「模型」页更名「模型/API」**：对话模型页内再分 **「模型 / API」两个子页**（样式同绘图页的「结果 / 过程」），API 设置不再混在模型列表中间
-- 版本 1.6.2 -> 1.7.0（versionCode 13）
+### v1.7.1 亮点
+- **绘图 API**：已加载的绘图模型现在也能开放成 OpenAI 兼容的图像生成接口——`POST /v1/images/generations`（返回 `b64_json`），另有 `GET /v1/models` 与 `GET /health`。传一句 `{"prompt": "..."}` 手机就出图；`n`（1~4）、`size`、`seed`、`steps`、`cfg_scale`、`negative_prompt` 都可选，没传的沿用绘图页当前设置
+- **对话 API 与绘图 API 是两套独立服务**：各自的端口（8080 / 8081）、各自的 API key、各自的开关与请求计数，可以只开放其中一个。两者**共用一个前台服务与一条通知**，通知里会列出真正在监听的地址；端口或 key 改动会自动重启对应的服务。绘图接口**默认关闭**——出一张图要吃满 CPU 几十秒，不开就不对局域网开放
+- **修复**
+  - 「关于」页显示的版本号是写死的，升级到 1.7.1 后仍显示 1.7.0。现改为从安装包读取，以后不可能再对不上
+  - 「设置 / 关于」两个分区的**折叠状态没有被记住**，合上后重启又会展开；现在会记住
+  - 启动 API 服务不再要求「先加载一个对话模型」（本来就不需要——只有各接口需要模型，未加载时接口会返回 503 并说明原因）
+- 版本 1.7.0 -> 1.7.1（versionCode 14）
 
 ### 对话功能
 - 双后端：LiteRT-LM（`.litertlm`）+ llama.cpp（`.gguf`）
 - **图片输入**：`.litertlm` 多模态模型，或配了 mmproj 的 `.gguf` 视觉模型
 - **文件输入**：纯文本 / Markdown / JSON / CSV / 日志 / 代码等，一条最多 2 个
 - **文档输入**：`.docx` / `.pptx` / `.xlsx` / `.odt` / `.ods` / `.odp` / `.epub` / `.rtf` / `.html` / `.pdf`，本机抽取正文
-- **API 服务端**：把已加载的模型开放成 OpenAI 兼容接口（见上面亮点）
 - **打标当工具用**：对话模型看不见图片时，可在聊天里调用已加载的打标模型
 - 多对话管理，历史本地持久化
 - 思考过程与正文分离、可折叠；思考开关对两种格式均生效
@@ -87,11 +105,25 @@ Ponko v1.7.0 —— 本地 AI App（Android）：聊天（可发图、可发文�
 - 生成中可继续打字；中断后可继续对话；一键「重新生成」（会带上图片与文件）
 - 自动跟随滚动，上滑暂停、一键回到底部
 
+### API（把手机当服务器）
+两套独立服务，在「模型/API」页各自启停：
+
+| | 对话 API | 绘图 API |
+|---|---|---|
+| 接口 | `POST /v1/chat/completions`（SSE 流式 / 非流式）、`GET /v1/models`、`GET /health` | `POST /v1/images/generations`（`b64_json`）、`GET /v1/models`、`GET /health` |
+| 默认端口 | 8080 | 8081 |
+| API key | 可选，各自一套 | 可选，各自一套 |
+| 开关 | 独立 | 独立（默认关闭） |
+
+- 以前台服务运行（`specialUse` 类型，避开 Android 15+ 对 dataSync 的 6 小时限制）+ 常驻通知 + WifiLock，App 退到后台、锁屏都继续服务
+- **一次一个请求**：本地模型跑不了并发，忙时返回 429
+- **上下文续跑**：客户端每轮重发整段历史，服务端能识别「同一段历史 + 新问题」并复用已有会话，不从头重算
+- **安全提示**：两个服务都监听本机**所有**网络接口（含公网地址）。不设 key 时，任何能连到该地址的人都能调用你的模型和电量——建议设 key，或只在可信网络里用
+
 ### 界面
 - **深色模式**：设置页三档滑块（亮 / 跟随系统 / 暗），重启后记住，切换就地生效不重启
-- 设置页分成「设置 / 关于」两个可折叠分区
-- 界面颜色统一走一张主题表，深色下不会残留白块
-- 「模型」页更名「模型/API」；对话模型页内分「模型 / API」两个子页
+- 设置页分成「设置 / 关于」两个可折叠分区，**折叠状态会被记住**
+- 「模型」页更名「模型/API」；对话模型与绘图模型页内各有「模型 / API」两个子页，API 那一侧的设置两边完全一致
 
 ### 绘图功能
 - 内置自编 stable-diffusion.cpp；读 GGUF 格式的绘图模型——单文件整合版（SD1.5 / SD2 / SDXL）或按槽位补齐的多文件（拆包）组合；默认 CPU，可选 GPU（Vulkan）加速，失败自动回退 CPU
@@ -106,7 +138,7 @@ Ponko v1.7.0 —— 本地 AI App（Android）：聊天（可发图、可发文�
 
 ### 安装
 - 仅支持 arm64-v8a（64 位 ARM 真机），minSdk 28（Android 9 及以上）
-- v1.7.0（versionCode 13）可直接覆盖安装 v1.6.2 / v1.6.1 / v1.6.0 / v1.5.0 / v1.4.1 / v1.4.0 / v1.3.x / v1.2；更早的 debug 版或 v1.0 请先卸载（签名不同）
+- v1.7.1（versionCode 14）可直接覆盖安装 v1.7.0 / v1.6.2 / v1.6.1 / v1.6.0 / v1.5.0 / v1.4.1 / v1.4.0 / v1.3.x / v1.2；更早的 debug 版或 v1.0 请先卸载（签名不同）
 - 模型文件需自备：对话模型（`.litertlm` / `.gguf`）、绘图模型（GGUF：单文件或多文件组合），打标模型（`.onnx` + `.csv`）可选，都在 App 内「模型/API」页导入
 
 ### 许可

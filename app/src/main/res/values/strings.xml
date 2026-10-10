@@ -138,7 +138,7 @@
 <string name="s_139">Clear the current chat?</string>
 <string name="s_140">Source code: MIT License\nArtwork (app icon, character art, original drawing): © the author, all rights reserved, not covered by MIT.\nThird-party components (each © its authors): LiteRT-LM (Apache-2.0), llama.cpp (MIT), stable-diffusion.cpp (MIT), ggml (MIT), Vulkan-Hpp/Vulkan-Headers (Apache-2.0 OR MIT), Markwon (Apache-2.0), ONNX Runtime (MIT), commonmark-java (BSD-2-Clause), Jackson/Gson (Apache-2.0), SLF4J (MIT), Kotlin/AndroidX (Apache-2.0). The sources of stable-diffusion.cpp and ggml are distributed with this project under app/src/main/cpp/ (the Vulkan headers used by the optional GPU backend are at app/src/main/cpp/thirdparty/include/); ONNX Runtime bundles extra third-party components (see licenses/onnxruntime-ThirdPartyNotices.txt); the native runtimes also statically link XNNPACK, protobuf, re2, cpuinfo, zlib and more. See the repository NOTICE and the licenses/ directory for the full list and licenses.</string>
 <string name="s_141">Tap to enlarge, long-press to save to your gallery</string>
-<string name="s_142">Version 1.7.0</string>
+<string name="s_142">Version %1$s</string>
 <string name="s_143">Generating (tap ■ to interrupt)…</string>
 <string name="s_144">Generating, please wait</string>
 <string name="s_145">Generation error</string>
@@ -427,6 +427,12 @@
 <string name="s_390">Could not read this document (it may be damaged or password-protected)</string>
 <string name="s_391">API server is running</string>
 <string name="s_393">API server</string>
+<string name="s_431">Chat %1$s</string>
+<string name="s_432">Draw %1$s</string>
+<string name="s_434">Starting&#8230;</string>
+<string name="s_435">a service failed to start (port in use?)</string>
+<string name="s_436">Chat model: %1$s</string>
+<string name="s_437">No chat model loaded yet</string>
 <string name="s_394">Ongoing notification for the local API server</string>
 <string name="s_395">%1$s:%2$d - %3$s</string>
 <string name="s_396">Stop</string>
@@ -434,13 +440,12 @@
 <string name="s_399">no key</string>
 <string name="s_400">Port</string>
 <string name="s_401">Default 8080. Changing the port takes effect after restarting the service.</string>
-<string name="s_402">Load a chat model first - the API serves the model that is already loaded</string>
 <string name="s_403">API Server</string>
-<string name="s_404">Serve the on-device model over an OpenAI-compatible HTTP API (/v1/chat/completions, /v1/models, /health). Any device that can reach this phone can use it.</string>
+<string name="s_404">Serve the loaded **chat** model over an OpenAI-compatible HTTP API (/v1/chat/completions, /v1/models, /health). Any device that can reach this phone can use it. Independent from the drawing API: its own port, its own key, its own switch.</string>
 <string name="s_405">Not running</string>
 <string name="s_406">Running at %1$s</string>
-<string name="s_407">Start API server</string>
-<string name="s_408">Stop API server</string>
+<string name="s_407">Start service</string>
+<string name="s_408">Stop service</string>
 <string name="s_409">API key: %1$s</string>
 <string name="s_410">not set (no check at all - anyone reaching this address can call it)</string>
 <string name="s_411">New key</string>
@@ -453,4 +458,9 @@
 <string name="s_418">Saved - restart the service to apply</string>
 <string name="s_419">Model</string>
 <string name="s_420">API</string>
+<string name="s_422">Serve the loaded **drawing** model over an OpenAI-compatible text-to-image endpoint (POST /v1/images/generations, returns b64_json). Independent from the chat API: its own port, its own key, its own switch, so you can expose one without the other.</string>
+<string name="s_425">Off by default: one image takes tens of seconds to minutes and pins the CPU, so it is not reachable from the network unless you ask for it. Parameters the client does not send (steps / CFG / size / sampler / LoRA) fall back to the drawing page\'s current settings, and only response_format=b64_json is supported.</string>
+<string name="s_426">Drawing model: %1$s</string>
+<string name="s_427">No drawing model loaded yet</string>
+<string name="s_428">The drawing API is generating an image, please wait</string>
 </resources>
