@@ -17,7 +17,7 @@ Two model formats are supported:
 | `.litertlm` | Google LiteRT-LM | CPU / GPU / NPU backends, thinking channel, multimodal extension |
 | `.gguf` | llama.cpp | Multi-threaded CPU, in-session KV prefix reuse (no re-prefill on long chats) |
 
-- **Model management**: pick a model file from local storage; it is copied into the app's private directory and can be reused anytime. The Models/API page has a run-mode selector (CPU / GPU) on top and three sub-pages below (**Chat model / Draw model / Tagger**, swipe to switch); the **Chat model** page itself splits into **Model / API** sub-tabs, where each kind of model can be viewed, selected or deleted.
+- **Model management**: pick a model file from local storage; it is copied into the app's private directory and can be reused anytime. The Models/API page has a run-mode selector (CPU / GPU) on top and three sub-pages below (**Chat model / Draw model / Tagger**, swipe to switch); both the **Chat model** and **Draw model** pages split into **Model / API** sub-tabs, where each kind of model can be viewed, selected or deleted.
   - What the run mode covers: **only three paths carry GPU code** - **drawing** (Vulkan), **tagging** (NNAPI) and **`.litertlm` chat** (LiteRT-LM GPU, i.e. OpenCL / Vulkan underneath); **GGUF chat always runs on CPU** (the binding has no GPU backend). All three GPU paths have **only been verified at build time and never on a real device** - they are expected to work in theory, but whether they do depends on the phone's drivers and VRAM; if the device does not support it or init fails, the app falls back to CPU automatically and the drawing status line shows the backend actually in use
 - **Multiple conversations**: create / switch / delete chats. History is persisted on-device (`sessions.json`).
 - **Separate thinking**: reasoning and answer are shown apart and collapsible; the thinking toggle works for both formats.
@@ -34,7 +34,7 @@ Two model formats are supported:
   - The text is sent **with that one message only**, never added to the history; the chip shows the file name and character count (truncation is marked)
 - **Chat parameters**: on the Models/API page, Chat model, you can tune context size, max output, temperature, Top-K, Top-P, repeat penalty, thinking budget and random seed; **saved per model**, as you type. Context size and max output take effect **after reloading the model**
 - **Text-only chat models can borrow the tagger to "see" an image**: when the chat model cannot see images itself (no multimodal, no mmproj) but a tagger model is loaded, the model calls the tagger on its own (it emits a `<tag>` command, the app tags the image, the tags come back as a tool result) and then answers based on them; threshold and tag count are chosen by the model, BGR/RGB follows the Tagger setting on the drawing page. Models that can see images never take this path
-- **API server (use the phone as a server)**: on the Models/API page → Chat model → the top **API** sub-tab, one tap turns the **already loaded** model into an **OpenAI-compatible** endpoint (`POST /v1/chat/completions` stream or not, `GET /v1/models`, `GET /health`); phones, computers and any OpenAI client on the same network can talk to it. Optional API key, custom port, ongoing notification, survives screen-off (see the section below)
+- **API server (use the phone as a server)**: on the Models/API page → Chat model → the top **API** sub-tab, one tap turns the **already loaded** model into an **OpenAI-compatible** endpoint (`POST /v1/chat/completions` stream or not, `GET /v1/models`, `GET /health`); phones, computers and any OpenAI client on the same network can talk to it. Optional API key, custom port, ongoing notification, survives screen-off (see the section below). **The drawing model can be exposed too** - it has a complete set of its own settings (port / key / switch) and does not affect the chat side
 
 ## Drawing
 
@@ -58,13 +58,21 @@ The engine is [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.
   - Multi-file is really meant for families that upstream ships split apart: Flux, SD3.5, Qwen-Image and friends; the smallest set for those is 8 GB+, which a phone can hardly run (the mechanism is there for big-memory devices / desktop use).
 - **GPU acceleration (optional; build-time-verified only, not tested on a real device)**: switch the run mode to **GPU** on the Models/API page and drawing uses the device's Vulkan backend (both text-to-image and image-to-image); if the device has no Vulkan or init fails it **falls back to CPU automatically**, and the backend actually in use is shown in the drawing status line
 - **Draw from chat**: when both a chat model and a draw model are loaded, just say "draw me ..." and the draw model is invoked.
+- **Drawing API (optional)**: exposes the loaded drawing model as an OpenAI-compatible `/v1/images/generations` endpoint for clients on the same network; off by default, toggled on the Models/API page -> Draw model -> API tab (see the API server section)
 - The "Parameters" / "Result" views can be swiped left/right; save images to the gallery from the Result view.
 
 ## API server (use the phone as a server)
 
 Serves the **already loaded** chat model over an OpenAI-compatible HTTP API, so other devices can use ready-made clients while the phone does the inference.
 
-- **How to start**: Models/API page → Chat model → switch the top **Model / API** tabs to **API** → load a chat model, then tap "Start API server"
+> **Chat and drawing are two separate things**, each with its own port, key, switch and stats
+> (defaults 8080 / 8081). You can run either one, or both. They differ in who they serve, how much
+> they cost and how much they expose - one image pins the CPU for tens of seconds and usually
+> belongs on a trusted network only, while the chat endpoint is what you connect to daily.
+> They **share a single foreground service and one notification** (a foreground service only exists
+> to keep the process alive; two of them would just mean two persistent notifications).
+
+- **How to start**: Models/API page → Chat model → switch the top **Model / API** tabs to **API** → tap "Start service". **Starting the service does not require a model to be loaded** - the service just opens the HTTP port; with no chat model the chat endpoint returns 503 (that one endpoint only), and it becomes usable as soon as a model is loaded
 - **Endpoints**
   | Method | Path | Notes |
   |---|---|---|
@@ -72,10 +80,22 @@ Serves the **already loaded** chat model over an OpenAI-compatible HTTP API, so 
   | GET | `/v1/models` | The loaded model, in OpenAI format |
   | GET | `/health` | Liveness: model name / ready / busy |
 - **Client settings**: Base URL = `http://<phone-lan-ip>:8080/v1` (the app shows the address, tap it to copy), API key = the one you set (if you set none, clients still usually require a non-empty value - anything works)
-- **Port and key**: port defaults to 8080 (changeable; restart the service to apply). The API key is **optional** - leaving it unset means no check at all
+- **Port and key**: port defaults to **8080** (changeable - that service is restarted for you so it applies right away). The API key is **optional** - leaving it unset means no check at all
 - **How it runs**: a foreground service (`specialUse`, avoiding the 6-hour limit Android 15+ puts on `dataSync`) with an ongoing notification and a WifiLock, so it keeps serving in the background and with the screen off; the notification has a Stop action
 - **One request at a time**: a local model cannot run concurrently, so a busy server answers 429 (the standard rate-limit semantic); clients just retry
 - **Context reuse**: clients resend the whole history each turn; the server recognises "same history + new question" and continues the existing session (for gguf it is llama.cpp's KV reuse) instead of recomputing from scratch
+
+### Drawing API (`/v1/images/generations`)
+
+Serves the **already loaded** drawing model over an OpenAI-compatible text-to-image endpoint, so a client can render an image on the phone from a single prompt.
+**It is a separate service**: its own port (default **8081**), its own key and its own switch, fully independent of the chat API.
+
+- **How to enable**: Models/API page -> Draw model -> switch the top **Model / API** tabs to **API** -> tap "Start service". No need to go to the Chat model page
+- **Off by default**: one image takes tens of seconds to minutes and pins the CPU, so it is not reachable from the network unless you ask for it
+- **Client settings**: Base URL = `http://<phone-lan-ip>:8081/v1` (**note the different port**; the app shows both addresses and copies on tap)
+- **Request**: `{"prompt": "..."}` is enough. Optional `n` (1-4), `size` (e.g. `"512x512"`), `seed`, `steps`, `cfg_scale`, `negative_prompt`; **anything you do not send comes from the drawing page's current settings** (steps / CFG / size / sampler / scheduler / LoRA)
+- **Response**: `{"created": ..., "data": [{"b64_json": "..."}]}` - only `response_format=b64_json` is supported, as this server has no public URL to serve images from
+
 - **Security**: the server listens on **every** network interface of the phone, including public ones. Without an API key, anyone who can reach the address can use your model and battery - **exposing it to the internet is your call** (set a key, or keep it on a trusted network)
 
 ## Tagging (Tagger)
@@ -160,7 +180,8 @@ powershell -File tools/build-release.ps1
 - On **Android 9**, saving to the gallery / taking a photo requires the storage permission (prompted on first use); denying it makes those actions fail (Android 10+ is unaffected)
 - Image input is capped at 4 images and 2 files per message; a `.gguf` vision model must be paired with its matching `mmproj`, selected before the model is loaded
 - File input accepts plain text and the common document formats (`.docx` / `.pptx` / `.xlsx` / `.odt` / `.ods` / `.odp` / `.epub` / `.rtf` / `.html` / `.pdf`); `.doc` / `.xls` / `.ppt` have to be re-saved first; scanned (image-only) PDFs yield no text; binary files are rejected; per-file size cap (4 MB for plain text, 48 MB for documents); the text is trimmed to the context budget (about a quarter of the context by default)
-- API server: a chat model must be loaded first (the API only serves what is loaded); one request at a time; port / key changes need a service restart; with **no API key set there is no check at all**, so exposing it publicly is at your own risk
+- API server: **chat and drawing are fully independent** (own port / key / switch, defaults 8080 and 8081) sharing one foreground service and one notification; **starting a service does not require a model to be loaded** (the affected endpoint returns 503 until one is); the API only serves what is loaded; one request at a time; port / key changes restart that service automatically; with **no API key set there is no check at all**, so exposing it publicly is at your own risk
+- The drawing endpoint is **text-to-image only** (no image-to-image), supports only `response_format=b64_json`, and once started a request cannot be cancelled midway (it finishes the current image, even if the client disconnects); while the app itself is generating the endpoint returns 429, and while the API is generating the app tells you to wait (one drawing engine, no concurrency)
 - When the context does not fit, older turns and file text are trimmed automatically; if it still does not fit, the app tells you what to do: start a new chat, send a shorter file, or drop some old turns
 
 ## License

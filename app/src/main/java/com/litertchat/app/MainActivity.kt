@@ -110,6 +110,10 @@ class MainActivity : Activity() {
         private const val REQ_PICK_FILE = 1010
         /** Android 13+ 常驻通知权限（对话 API 用） */
         private const val REQ_NOTIF = 1020
+
+        // ---- 关于页两个折叠分区的展开状态（存盘：重启后保持用户上次的选择）----
+        private const val KEY_UI_SETTINGS_OPEN = "uiSettingsOpen"
+        private const val KEY_UI_ABOUT_OPEN = "uiAboutOpen"
         /** 一轮对话里最多让打标模型「看图」几次（agent 循环上限） */
         private const val MAX_TAG_ROUNDS = 2
         /** 单条消息最多能带的文件数（本地模型上下文有限，文件比图片更吃 token） */
@@ -691,19 +695,26 @@ class MainActivity : Activity() {
     private lateinit var modelsTabTag: TextView
     private lateinit var tabSettings: View
 
-    // ---- 对话 API（把本机模型开放成 OpenAI 兼容接口）----
-    private lateinit var apiStatusTv: TextView
-    private lateinit var apiAddressTv: TextView
-    private lateinit var apiKeyTv: TextView
-    private lateinit var apiStatsTv: TextView
-    private lateinit var apiToggleBtn: TextView
-    private lateinit var apiPortEdit: EditText
+    // ---- API 设置区块：对话 / 绘图各一套，由 buildApiBlock() 生成，结构完全一致 ----
+    private var chatApiBlock: ApiBlockView? = null
+    private var drawApiBlock: ApiBlockView? = null
+    /** 两边各有一行「xx模型：xxx」，插在 API 区块的地址下面 */
+    private lateinit var chatApiModelTv: TextView
 
     // ---- 「对话模型」页内再分两个子页：模型 / API ----
     private lateinit var chatSubTabModel: TextView
     private lateinit var chatSubTabApi: TextView
     private lateinit var chatModelPane: View
     private lateinit var chatApiPane: View
+
+    // ---- 「绘图模型」页内再分两个子页：模型 / API ----
+    private lateinit var drawSubTabModel: TextView
+    private lateinit var drawSubTabApi: TextView
+    private lateinit var drawModelPane: View
+    private lateinit var drawApiPane: View
+    /** 「绘图模型：xxx」那一行（绘图侧独有，插在 API 区块的地址下面） */
+    private lateinit var drawApiModelTv: TextView
+
     private lateinit var tabDraw: View
     private lateinit var inputBar: View
 
@@ -876,8 +887,13 @@ class MainActivity : Activity() {
         super.onDestroy()
         try { saveSessions() } catch (_: Throwable) {}
         scope.cancel()
-        try { drawPage?.release() } catch (_: Throwable) {}
-        if (!ApiService.running) {
+        // 绘图引擎：只有「绘图 API 在跑」时才把句柄留给服务继续出图，否则正常释放（别白占内存）。
+        // 顺序不能反——先断开 DrawCore 的引用，再真正 free。
+        if (!ApiService.isRunning(ApiServer.Role.DRAW)) {
+            DrawCore.release()
+            try { drawPage?.release() } catch (_: Throwable) {}
+        }
+        if (!ApiService.isRunning(ApiServer.Role.CHAT)) {
             // 对话 API 没开 → 按老规矩把模型放掉
             try { engine?.close() } catch (_: Throwable) {}
             try { llamaModel?.close() } catch (_: Throwable) {}
@@ -921,6 +937,7 @@ class MainActivity : Activity() {
                 updateThinkEnabled()
                 drawModelStatus?.text = dpg.modelSummary()
                 refreshDrawModels()
+                refreshDrawApiUi()   // 绘图接口那边要跟着显示「绘图模型：xxx」
             }
         }
         dpg.onSaveImage = { bmp, name -> saveImageToGallery(bmp, name) }
@@ -1206,83 +1223,18 @@ class MainActivity : Activity() {
             matchWrap().apply { topMargin = dp(8) })
         chatCard.addView(smallButton(getString(R.string.s_249)) { resetChatParams() },
             matchWrap().apply { topMargin = dp(8) })
-        // ================= 对话 API（把本机模型开放出去） =================
-        // 单独一张卡片：与「模型」并列成子页，由上方子页签切换（原先是接在同一张卡下面）
-        val apiCard = sectionCard()
-        apiCard.addView(pageTitle(getString(R.string.s_403)))
-        apiCard.addView(hintText(getString(R.string.s_404)), matchWrap().apply { topMargin = dp(4) })
-
-        apiStatusTv = TextView(this).apply {
-            textSize = 12.5f
-            setTextColor(C_SUBTEXT)
-            setPadding(0, dp(6), 0, 0)
-        }
-        apiCard.addView(apiStatusTv, matchWrap())
-
-        apiAddressTv = TextView(this).apply {
-            textSize = 12f
-            setTextColor(C_PRIMARY)
-            isClickable = true
-            setPadding(0, dp(2), 0, 0)
-            setOnClickListener { copyApiAddress() }
-        }
-        apiCard.addView(apiAddressTv, matchWrap())
-
-        val apiPortRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(8), 0, 0)
-        }
-        apiPortRow.addView(TextView(this).apply {
-            text = getString(R.string.s_400)
+        // ================= 对话 API（把自己的模型开放出去） =================
+        // 独立成「API」子页；控件由 buildApiBlock 统一生成，与绘图那套一模一样
+        chatApiModelTv = TextView(this).apply {
             textSize = 12f
             setTextColor(C_TEXT)
-        }, wrapWrap())
-        apiPortEdit = EditText(this).apply {
-            setText(apiPort().toString())
-            textSize = 13f
-            setTextColor(C_TEXT)
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER
-            setBackgroundColor(C_FIELD_BG)
-            setPadding(dp(10), dp(6), dp(10), dp(6))
-            isSingleLine = true
-            addTextChangedListener(object : android.text.TextWatcher {
-                override fun afterTextChanged(s: android.text.Editable?) {
-                    val v = s?.toString()?.trim()?.toIntOrNull() ?: return
-                    if (v in 1024..65535) chatPrefs().edit().putInt(ApiService.KEY_PORT, v).apply()
-                }
-                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
-                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
-            })
-        }
-        apiPortRow.addView(apiPortEdit, LinearLayout.LayoutParams(
-            0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(8) })
-        apiCard.addView(apiPortRow, matchWrap())
-        apiCard.addView(hintText(getString(R.string.s_401)), matchWrap().apply { topMargin = dp(4) })
-
-        apiKeyTv = TextView(this).apply {
-            textSize = 12f
-            setTextColor(C_SUBTEXT)
-            setPadding(0, dp(8), 0, 0)
-        }
-        apiCard.addView(apiKeyTv, matchWrap())
-        val apiKeyRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        // 两个按钮拉开距离：原来紧贴着，容易误点到「清除」
-        apiKeyRow.addView(smallButton(getString(R.string.s_411)) { newApiKey() },
-            wrapWrap().apply { rightMargin = dp(12) })
-        apiKeyRow.addView(smallButton(getString(R.string.s_412)) { clearApiKey() }, wrapWrap())
-        apiCard.addView(apiKeyRow, matchWrap().apply { topMargin = dp(6) })
-
-        apiToggleBtn = actionButton(getString(R.string.s_407)) { toggleApiServer() }
-        apiCard.addView(apiToggleBtn, matchWrap().apply { topMargin = dp(8) })
-
-        apiStatsTv = TextView(this).apply {
-            textSize = 11.5f
-            setTextColor(C_SUBTEXT)
             setPadding(0, dp(6), 0, 0)
         }
-        apiCard.addView(apiStatsTv, matchWrap())
-        apiCard.addView(hintText(getString(R.string.s_415)), matchWrap().apply { topMargin = dp(6) })
+        chatApiBlock = buildApiBlock(
+            role = ApiServer.Role.CHAT,
+            extraAfterAddress = listOf(chatApiModelTv),
+        )
+        val apiCard = chatApiBlock!!.card
 
         // ---- 「对话模型」页内再分两个子页：模型 / API（样式同绘图页的结果/过程）----
         chatSubTabModel = modelsSubTab(getString(R.string.s_419))
@@ -1447,6 +1399,44 @@ class MainActivity : Activity() {
             matchWrap().apply { topMargin = dp(10) }
         )
 
+        // ---- 「绘图模型」页内的「API」子页 ----
+        // 与对话那套**共用同一组控件**（buildApiBlock），只是多插两处绘图特有的说明
+        drawApiModelTv = TextView(this).apply {
+            textSize = 12f
+            setTextColor(C_TEXT)
+            setPadding(0, dp(6), 0, 0)
+        }
+        drawApiBlock = buildApiBlock(
+            role = ApiServer.Role.DRAW,
+            extraAfterAddress = listOf(drawApiModelTv),
+            extraNotes = listOf(hintText(getString(R.string.s_425))),
+        )
+        val drawApiCard = drawApiBlock!!.card
+
+        drawSubTabModel = modelsSubTab(getString(R.string.s_419))
+        drawSubTabApi = modelsSubTab(getString(R.string.s_420))
+        drawSubTabModel.setOnClickListener { switchDrawSubPage(0) }
+        drawSubTabApi.setOnClickListener { switchDrawSubPage(1) }
+        val drawSubBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setBackgroundColor(pal.surface)
+            setPadding(dp(12), dp(2), dp(12), dp(2))
+        }
+        drawSubBar.addView(drawSubTabModel,
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        drawSubBar.addView(drawSubTabApi,
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+
+        drawModelPane = modelsPane(drawCard)
+        drawApiPane = modelsPane(drawApiCard)
+        val drawPane = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        drawPane.addView(drawSubBar, matchWrap().apply { topMargin = dp(12) })
+        drawPane.addView(drawModelPane, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        drawPane.addView(drawApiPane, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        refreshDrawApiUi()
+
         // ================= 打标模型（Tagger）：独立成页 =================
         val taggerCard = sectionCard()
         taggerCard.addView(pageTitle(getString(R.string.s_241)))
@@ -1498,7 +1488,7 @@ class MainActivity : Activity() {
 
         modelsPager = ViewPager(this).apply {
             adapter = ModelsPaneAdapter(
-                listOf(chatPane, modelsPane(drawCard), modelsPane(taggerCard))
+                listOf(chatPane, drawPane, modelsPane(taggerCard))
             )
             addOnPageChangeListener(object : ViewPager.SimpleOnPageChangeListener() {
                 override fun onPageSelected(position: Int) {
@@ -1513,6 +1503,7 @@ class MainActivity : Activity() {
         refreshDrawModels()
         refreshTaggerUi()
         switchChatSubPage(0)
+        switchDrawSubPage(0)
         switchModelsTab(0)
         return root
     }
@@ -1546,6 +1537,19 @@ class MainActivity : Activity() {
         if (p == 1) refreshApiUi()
     }
 
+    /** 切换「绘图模型」页内的子页：0=模型 1=API */
+    private fun switchDrawSubPage(p: Int) {
+        if (!::drawSubTabModel.isInitialized) return
+        drawModelPane.visibility = if (p == 0) View.VISIBLE else View.GONE
+        drawApiPane.visibility = if (p == 1) View.VISIBLE else View.GONE
+        for ((tv, sel) in listOf(drawSubTabModel to (p == 0), drawSubTabApi to (p == 1))) {
+            tv.setTextColor(if (sel) C_PRIMARY else C_SUBTEXT)
+            tv.typeface = if (sel) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+            tv.setBackgroundColor(if (sel) pal.primarySoft else pal.surface)
+        }
+        if (p == 1) refreshDrawApiUi()
+    }
+
     /** 模型页顶部页签样式（与绘图页一致） */
     private fun tabItem(t: String) = TextView(this).apply {
         text = t
@@ -1554,35 +1558,190 @@ class MainActivity : Activity() {
         setPadding(0, dp(11), 0, dp(11))
     }
 
-    // ==================== 对话 API ====================
+    // ==================== API 服务（对话 / 绘图两套，结构完全一致） ====================
 
-    private fun apiPort(): Int =
-        chatPrefs().getInt(ApiService.KEY_PORT, ApiService.DEF_PORT).coerceIn(1024, 65535)
+    /** 一个 API 设置区块的全部控件。两边共用同一套，保证长得一模一样。 */
+    private class ApiBlockView(
+        val card: LinearLayout,
+        val statusTv: TextView,
+        val addrTv: TextView,
+        val portEdit: EditText,
+        val keyTv: TextView,
+        val toggleBtn: TextView,
+        val statsTv: TextView,
+    )
 
-    /** 刷新 API 区块：状态 / 地址 / key / 统计 */
-    private fun refreshApiUi() {
-        if (!::apiStatusTv.isInitialized) return
-        val running = ApiService.running
-        apiStatusTv.text = if (running) getString(R.string.s_406, ApiService.address ?: "") else getString(R.string.s_405)
-        apiStatusTv.setTextColor(if (running) C_OK else C_SUBTEXT)
-        apiAddressTv.visibility = if (running) View.VISIBLE else View.GONE
-        apiAddressTv.text = if (running) getString(R.string.s_417) else ""
-        val key = chatPrefs().getString(ApiService.KEY_TOKEN, null)
-        apiKeyTv.text = getString(R.string.s_409,
+    /**
+     * 生成一个 API 设置区块：状态 / 地址 / 端口 / key / 开关 / 统计 / 安全提示。
+     *
+     * **对话与绘图调的是同一个函数** —— 这样两边的设置项、顺序、样式必然一致。
+     * 第一版是手工写了两遍，结果绘图那边少了端口、key、统计，还共用着对话的配置，
+     * 看起来活像个残废的附属功能。
+     *
+     * @param extraAfterAddress 插在「地址」与「端口」之间的额外内容（绘图侧用来放「绘图模型：xxx」）
+     * @param extraNotes        插在开关下方、统计上方的额外说明（绘图侧用来放 CPU 开销提示）
+     */
+    private fun buildApiBlock(
+        role: ApiServer.Role,
+        extraAfterAddress: List<View> = emptyList(),
+        extraNotes: List<View> = emptyList(),
+    ): ApiBlockView {
+        val isChat = role == ApiServer.Role.CHAT
+        val card = sectionCard()
+        // 标题两边一模一样：区分靠所在的页（对话模型 / 绘图模型）与下面那行说明
+        card.addView(pageTitle(getString(R.string.s_403)))
+        card.addView(
+            hintText(getString(if (isChat) R.string.s_404 else R.string.s_422)),
+            matchWrap().apply { topMargin = dp(4) }
+        )
+
+        val statusTv = TextView(this).apply {
+            textSize = 12.5f
+            setTextColor(C_SUBTEXT)
+            setPadding(0, dp(6), 0, 0)
+        }
+        card.addView(statusTv, matchWrap())
+
+        val addrTv = TextView(this).apply {
+            textSize = 12f
+            setTextColor(C_PRIMARY)
+            isClickable = true
+            setPadding(0, dp(2), 0, 0)
+            setOnClickListener { copyApiAddress(role) }
+        }
+        card.addView(addrTv, matchWrap())
+
+        extraAfterAddress.forEach { card.addView(it, matchWrap()) }
+
+        val portRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(8), 0, 0)
+        }
+        portRow.addView(TextView(this).apply {
+            text = getString(R.string.s_400)
+            textSize = 12f
+            setTextColor(C_TEXT)
+        }, wrapWrap())
+        val portEdit = EditText(this).apply {
+            setText(apiPort(role).toString())
+            textSize = 13f
+            setTextColor(C_TEXT)
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            setBackgroundColor(C_FIELD_BG)
+            setPadding(dp(10), dp(6), dp(10), dp(6))
+            isSingleLine = true
+            addTextChangedListener(object : android.text.TextWatcher {
+                override fun afterTextChanged(s: android.text.Editable?) {
+                    val v = s?.toString()?.trim()?.toIntOrNull() ?: return
+                    if (v in 1024..65535) {
+                        chatPrefs().edit().putInt(ApiService.keyPort(role), v).apply()
+                    }
+                }
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            })
+            // 焦点离开才真正重启服务：一边打字一边重启会把服务反复打断
+            setOnFocusChangeListener { _, hasFocus ->
+                if (!hasFocus && ApiService.isRunning(role)) {
+                    ApiService.sync(this@MainActivity)
+                    android.os.Handler(mainLooper).postDelayed({ refreshApiSurfaces() }, 500)
+                }
+            }
+        }
+        portRow.addView(portEdit, LinearLayout.LayoutParams(
+            0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(8) })
+        card.addView(portRow, matchWrap())
+        card.addView(hintText(getString(R.string.s_401)), matchWrap().apply { topMargin = dp(4) })
+
+        val keyTv = TextView(this).apply {
+            textSize = 12f
+            setTextColor(C_SUBTEXT)
+            setPadding(0, dp(8), 0, 0)
+        }
+        card.addView(keyTv, matchWrap())
+        val keyRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        // 两个按钮拉开距离：原来紧贴着，容易误点到「清除」
+        keyRow.addView(
+            smallButton(getString(R.string.s_411)) { newApiKey(role) },
+            wrapWrap().apply { rightMargin = dp(12) })
+        keyRow.addView(smallButton(getString(R.string.s_412)) { clearApiKey(role) }, wrapWrap())
+        card.addView(keyRow, matchWrap().apply { topMargin = dp(6) })
+
+        val toggleBtn = actionButton(getString(R.string.s_407)) { toggleApi(role) }
+        card.addView(toggleBtn, matchWrap().apply { topMargin = dp(8) })
+
+        extraNotes.forEach { card.addView(it, matchWrap().apply { topMargin = dp(6) }) }
+
+        val statsTv = TextView(this).apply {
+            textSize = 11.5f
+            setTextColor(C_SUBTEXT)
+            setPadding(0, dp(6), 0, 0)
+        }
+        card.addView(statsTv, matchWrap())
+        card.addView(hintText(getString(R.string.s_415)), matchWrap().apply { topMargin = dp(6) })
+
+        return ApiBlockView(card, statusTv, addrTv, portEdit, keyTv, toggleBtn, statsTv)
+    }
+
+    private fun apiPort(role: ApiServer.Role): Int =
+        chatPrefs().getInt(ApiService.keyPort(role), ApiService.defaultPort(role))
+            .coerceIn(1024, 65535)
+
+    /** 刷新某个 API 区块：状态 / 地址 / key / 开关 / 统计 */
+    private fun refreshApiBlock(role: ApiServer.Role, b: ApiBlockView?) {
+        if (b == null) return
+        val running = ApiService.isRunning(role)
+        b.statusTv.text =
+            if (running) getString(R.string.s_406, ApiService.addressOf(role) ?: "")
+            else getString(R.string.s_405)
+        b.statusTv.setTextColor(if (running) C_OK else C_SUBTEXT)
+        b.addrTv.visibility = if (running) View.VISIBLE else View.GONE
+        b.addrTv.text = if (running) getString(R.string.s_417) else ""
+        val key = chatPrefs().getString(ApiService.keyToken(role), null)
+        b.keyTv.text = getString(R.string.s_409,
             if (key.isNullOrBlank()) getString(R.string.s_410) else key)
-        apiToggleBtn.text = getString(if (running) R.string.s_408 else R.string.s_407)
-        apiToggleBtn.background = rounded(
+        b.toggleBtn.text = getString(if (running) R.string.s_408 else R.string.s_407)
+        b.toggleBtn.background = rounded(
             if (running) C_SOFT_BTN2 else C_PRIMARY, 12,
             strokeDp = if (running) 1 else 0, strokeColor = C_BORDER)
-        apiToggleBtn.setTextColor(if (running) C_TEXT else Color.WHITE)
-        val (n, last) = ApiService.statsSnapshot()
-        apiStatsTv.text = if (!running) "" else
+        b.toggleBtn.setTextColor(if (running) C_TEXT else Color.WHITE)
+        val (n, last) = ApiService.statsSnapshot(role)
+        b.statsTv.text = if (!running) "" else
             getString(R.string.s_413, n) + (last?.let { "\n" + getString(R.string.s_414, it) } ?: "")
     }
 
-    /** 复制服务地址（点一下地址那行即可） */
-    private fun copyApiAddress() {
-        val addr = ApiService.address ?: return
+    private fun refreshApiUi() {
+        // 「对话模型：xxx」——告诉用户这个接口到底在服务哪个模型
+        if (::chatApiModelTv.isInitialized) {
+            val name = ChatCore.modelName
+            chatApiModelTv.text =
+                if (name != null) getString(R.string.s_436, name) else getString(R.string.s_437)
+            chatApiModelTv.setTextColor(if (name != null) C_TEXT else C_SUBTEXT)
+        }
+        refreshApiBlock(ApiServer.Role.CHAT, chatApiBlock)
+    }
+
+    /** 绘图侧除了通用内容，还多一行「绘图模型：xxx」——那是句柄层面的状态，与服务无关 */
+    private fun refreshDrawApiUi() {
+        if (::drawApiModelTv.isInitialized) {
+            val name = DrawCore.modelName
+            drawApiModelTv.text =
+                if (name != null) getString(R.string.s_426, name) else getString(R.string.s_427)
+            drawApiModelTv.setTextColor(if (name != null) C_TEXT else C_SUBTEXT)
+        }
+        refreshApiBlock(ApiServer.Role.DRAW, drawApiBlock)
+    }
+
+    /** 两个区块一起刷新：两者共用一个前台服务，一边变化常会牵动另一边 */
+    private fun refreshApiSurfaces() {
+        refreshApiUi()
+        refreshDrawApiUi()
+    }
+
+    /** 复制某个服务的地址（点一下地址那行即可） */
+    private fun copyApiAddress(role: ApiServer.Role) {
+        val addr = ApiService.addressOf(role) ?: return
         runCatching {
             val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
             cm.setPrimaryClip(android.content.ClipData.newPlainText("ponko-api", addr))
@@ -1591,45 +1750,48 @@ class MainActivity : Activity() {
     }
 
     /** 生成一个新的 API key（形如 sk-ponko-xxxx） */
-    private fun newApiKey() {
+    private fun newApiKey(role: ApiServer.Role) {
         val chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
         val key = "sk-ponko-" + (1..32).map { chars.random() }.joinToString("")
-        chatPrefs().edit().putString(ApiService.KEY_TOKEN, key).apply()
-        refreshApiUi()
+        chatPrefs().edit().putString(ApiService.keyToken(role), key).apply()
+        afterApiConfigChanged(role)
         toast(getString(R.string.s_418))
     }
 
-    private fun clearApiKey() {
-        chatPrefs().edit().remove(ApiService.KEY_TOKEN).apply()
-        refreshApiUi()
+    private fun clearApiKey(role: ApiServer.Role) {
+        chatPrefs().edit().remove(ApiService.keyToken(role)).apply()
+        afterApiConfigChanged(role)
         toast(getString(R.string.s_418))
+    }
+
+    /** 端口 / key 改完之后：该服务在跑就重启它，让新配置立刻生效（不用用户自己记得重启） */
+    private fun afterApiConfigChanged(role: ApiServer.Role) {
+        refreshApiSurfaces()
+        if (ApiService.isRunning(role)) {
+            ApiService.sync(this)
+            android.os.Handler(mainLooper).postDelayed({ refreshApiSurfaces() }, 500)
+        }
     }
 
     /**
-     * 开关对话 API。
+     * 开关某一类 API。
      *
-     * 前置条件：必须先加载一个对话模型——服务只是把已有的模型开放出去，不负责加载。
-     * 端口 / key 改了要重启服务才生效（简单直接，免得中途换端口把客户端晾着）。
+     * **不检查有没有加载模型** —— 服务只是把 HTTP 端口架起来，加载模型是各接口自己的事：
+     * 没加载时对应接口返回 503 并说明原因。早期版本要求「先加载对话模型」，
+     * 那是把可选前置条件错当成了拦路条件，逼着想开绘图接口的人去加一个无关的模型。
      */
-    private fun toggleApiServer() {
-        if (ApiService.running) {
-            ApiService.stop(this)
-            android.os.Handler(mainLooper).postDelayed({ refreshApiUi() }, 400)
-            return
-        }
-        if (!ChatCore.isReady()) {
-            toast(getString(R.string.s_402))
-            return
-        }
-        // Android 13+ 常驻通知需要运行时权限；不给也能跑，只是看不到通知
-        if (Build.VERSION.SDK_INT >= 33 &&
+    private fun toggleApi(role: ApiServer.Role) {
+        val wasOn = ApiService.isRunning(role)
+        chatPrefs().edit().putBoolean(ApiService.keyEnabled(role), !wasOn).apply()
+        if (!wasOn && Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
             android.content.pm.PackageManager.PERMISSION_GRANTED
         ) {
+            // Android 13+ 常驻通知需要运行时权限；不给也能跑，只是看不到通知
             requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIF)
         }
-        ApiService.start(this)
-        android.os.Handler(mainLooper).postDelayed({ refreshApiUi() }, 700)
+        ApiService.sync(this)
+        android.os.Handler(mainLooper).postDelayed({ refreshApiSurfaces() }, 700)
     }
 
     /** 切换模型页的「对话模型 / 绘图模型 / 打标模型」 */
@@ -1638,7 +1800,7 @@ class MainActivity : Activity() {
         highlightModelsTabs(index)
         when (index) {
             0 -> { refreshSavedModels(); refreshMmprojUi(); refreshApiUi() }
-            1 -> { refreshDrawModels(); refreshLoraUi() }
+            1 -> { refreshDrawModels(); refreshLoraUi(); refreshDrawApiUi() }
             2 -> refreshTaggerUi()
         }
     }
@@ -1678,8 +1840,9 @@ class MainActivity : Activity() {
         }
         val card = card()
 
-        // ---- 设置（可折叠，默认展开）----
-        val settingsBody = collapsibleSection(card, getString(R.string.s_381), expanded = true)
+        // ---- 设置（可折叠，默认展开；展开状态记在偏好里，重启后保持）----
+        val settingsBody = collapsibleSection(
+            card, getString(R.string.s_381), expanded = true, prefKey = KEY_UI_SETTINGS_OPEN)
         settingsBody.addView(subTitle(getString(R.string.s_376)))
         val themeSwitch = SegmentedSwitch(
             this,
@@ -1720,9 +1883,10 @@ class MainActivity : Activity() {
         }
         settingsBody.addView(themeSwitch, matchWrap().apply { topMargin = dp(12) })
 
-        // ---- 关于（可折叠，默认收起）----
-        val aboutBody = collapsibleSection(card, getString(R.string.s_048), expanded = true)
-        aboutBody.addView(hintText(getString(R.string.s_142)))
+        // ---- 关于（可折叠，默认展开；展开状态同样记在偏好里）----
+        val aboutBody = collapsibleSection(
+            card, getString(R.string.s_048), expanded = true, prefKey = KEY_UI_ABOUT_OPEN)
+        aboutBody.addView(hintText(getString(R.string.s_142, appVersion())))
         aboutBody.addView(hintText(getString(R.string.s_322, installedAt())))
         val portrait = ImageView(this).apply {
             setImageResource(R.drawable.about_portrait)
@@ -1800,10 +1964,19 @@ class MainActivity : Activity() {
      * 设置页里的可折叠分区：返回可往里塞内容的容器。
      * 标题行（标题 + 箭头）点一下展开 / 收起。
      */
+    /**
+     * 可折叠分区。
+     *
+     * @param expanded 首次使用（还没有存过偏好）时的默认展开状态
+     * @param prefKey  记住展开状态的偏好键；**null = 不持久化**（每次都回到 [expanded]）。
+     *                 不传 key 的话用户合上分区、切走再回来就会弹回去——这正是「关于」页
+     *                 之前的问题：状态只存在 `open` 这个内存变量里。
+     */
     private fun collapsibleSection(
         parentBox: LinearLayout,
         title: String,
         expanded: Boolean,
+        prefKey: String? = null,
     ): LinearLayout {
         val head = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -1826,7 +1999,8 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             layoutParams = matchWrap()
         }
-        var open = expanded
+        // 展开状态从偏好里读；没存过才用 expanded 的默认值
+        var open = prefKey?.let { chatPrefs().getBoolean(it, expanded) } ?: expanded
         var anim: ValueAnimator? = null
 
         /** 收尾：取消动画并把高度还原成 WRAP_CONTENT（否则动画值会被钉死） */
@@ -1885,6 +2059,8 @@ class MainActivity : Activity() {
         render(animate = false)
         head.setOnClickListener {
             open = !open
+            // 落盘：不然合上之后切走/重启又会弹回来
+            prefKey?.let { chatPrefs().edit().putBoolean(it, open).apply() }
             render(animate = true)
         }
         parentBox.addView(head, matchWrap())
@@ -1949,7 +2125,7 @@ class MainActivity : Activity() {
         tabDraw.visibility = if (index == 2) View.VISIBLE else View.GONE
         tabSettings.visibility = if (index == 3) View.VISIBLE else View.GONE
         // 切到「模型」页时刷新绘图模型 / LoRA 列表，避免导入后状态滞后
-        if (index == 1) { refreshDrawModels(); refreshLoraUi(); refreshTaggerUi(); refreshApiUi() }
+        if (index == 1) { refreshDrawModels(); refreshLoraUi(); refreshTaggerUi(); refreshApiUi(); refreshDrawApiUi() }
         inputBar.visibility = if (index == 0) View.VISIBLE else View.GONE
         val isChat = index == 0
         appBarMenu.visibility = if (isChat) View.VISIBLE else View.INVISIBLE
@@ -2612,6 +2788,18 @@ class MainActivity : Activity() {
     }
 
     /** 安装/更新时间（用来确认装的是哪一版） */
+    /**
+     * 当前安装包的版本名，**从包信息读**。
+     *
+     * 以前这里是在 strings.xml 里写死的字面量（如「版本 1.7.0」），每次发版都要记得手改——
+     * 1.7.1 就漏改了一次，装上新包却还显示 1.7.0。改成读包信息后不可能再不同步。
+     */
+    private fun appVersion(): String = try {
+        packageManager.getPackageInfo(packageName, 0).versionName ?: ""
+    } catch (_: Throwable) {
+        ""
+    }
+
     private fun installedAt(): String = try {
         val pi = packageManager.getPackageInfo(packageName, 0)
         java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
@@ -3424,6 +3612,7 @@ class MainActivity : Activity() {
             setStatus(getString(R.string.s_116), C_IDLE)
             toast(getString(R.string.s_160))
             refreshDrawToggle()
+            refreshDrawApiUi()   // 模型卸载了，绘图接口那边要变回「尚未加载绘图模型」
             return
         }
         if (!dpg.hasModel()) {

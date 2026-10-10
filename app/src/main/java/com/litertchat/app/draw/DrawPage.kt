@@ -1,5 +1,6 @@
 package com.litertchat.app.draw
 
+import com.litertchat.app.DrawCore
 import com.litertchat.app.PonkoTheme
 import com.litertchat.app.R
 
@@ -244,6 +245,32 @@ class DrawPage(
 
     /** 是否已就绪（可生成） */
     fun isReady(): Boolean = sdHandle != 0L
+
+    /**
+     * 把**已经解析好的出图参数**同步给 [DrawCore]，供 API 的绘图接口使用。
+     *
+     * 必须在主线程调用：EditText 只能在主线程读，而且 Activity 销毁后控件也不该再被依赖，
+     * 所以 DrawCore 存的是「值」而不是控件引用。
+     */
+    fun syncDrawCore() {
+        if (!::stepsEdit.isInitialized || sdHandle == 0L) return
+        val lora = if (useLora) activeLora() else null
+        DrawCore.updateParams(
+            DrawCore.Params(
+                steps = stepsEdit.text.toString().toIntOrNull()?.coerceIn(1, 150) ?: 20,
+                cfg = cfgEdit.text.toString().toFloatOrNull()?.coerceIn(1f, 30f) ?: 7.0f,
+                width = (widthEdit.text.toString().toIntOrNull() ?: 512)
+                    .let { (it / 64) * 64 }.coerceIn(64, 2048),
+                height = (heightEdit.text.toString().toIntOrNull() ?: 512)
+                    .let { (it / 64) * 64 }.coerceIn(64, 2048),
+                negative = negEdit.text.toString(),
+                sampler = pickSampler(lora != null),
+                scheduler = pickScheduler(lora != null),
+                loraPath = lora?.absolutePath,
+                loraScale = loraScaleEdit.text.toString().toFloatOrNull()?.coerceIn(0f, 2f) ?: 1.0f,
+            )
+        )
+    }
 
     // 控件
     private lateinit var statusText: TextView
@@ -1827,6 +1854,8 @@ class DrawPage(
             sdHandle = h
             mainModel = set.mainFile()
             vaeModel = set.files["vae"]
+            // 登记到进程级单例：API 的绘图接口要复用同一个句柄（界面重建/换主题都不影响）
+            DrawCore.attach(h, mainModel?.name ?: set.name, used)
             stage(c.getString(R.string.s_011))
             runCatching {
                 stage(c.getString(R.string.s_010) + SdCppEngine.lastParams().replace("\n", "  |  "))
@@ -1838,6 +1867,8 @@ class DrawPage(
             }
             statusText.post { statusText.text = summary }
             statusText.post { refreshQuantText() }
+            // 参数快照同步给 API（此时控件都已建好）
+            statusText.post { runCatching { syncDrawCore() } }
             runCatching { stageFile.delete() }
             onPipelineReady?.invoke()
             null
@@ -1849,6 +1880,7 @@ class DrawPage(
     }
 
     fun unloadModel() {
+        DrawCore.release()   // 先清引用，别让 API 拿到已经 free 的句柄
         if (sdHandle != 0L) runCatching { SdCppEngine.nativeFree(sdHandle) }
         sdHandle = 0L
         activeBackend = "CPU"
@@ -1915,6 +1947,10 @@ class DrawPage(
             val msg = if (llmLoaded) c.getString(R.string.s_100)
             else c.getString(R.string.s_173)
             Toast.makeText(c, msg, Toast.LENGTH_LONG).show()
+            return
+        }
+        if (DrawCore.busy) {
+            Toast.makeText(c, c.getString(R.string.s_428), Toast.LENGTH_LONG).show()
             return
         }
         val prompt = promptEdit.text.toString().trim()
@@ -2012,6 +2048,8 @@ class DrawPage(
         onProgress: (Int, Int) -> Unit = { _, _ -> },
         onPreview: ((Int, Int, Int, ByteArray) -> Unit)? = null,
     ): ImageData {
+        // 绘图接口正在出图时别插队：同一个 native 句柄同时跑两个任务会错乱
+        if (DrawCore.busy) throw IllegalStateException(c.getString(R.string.s_428))
         val steps = stepsEdit.text.toString().toIntOrNull()?.coerceIn(1, 150) ?: 20
         val cfg = cfgEdit.text.toString().toFloatOrNull()?.coerceIn(1f, 30f) ?: 7.0f
         val seed = seedEdit.text.toString().toLongOrNull() ?: -1L
@@ -2037,30 +2075,37 @@ class DrawPage(
         // LoRA 权重：0 = 不挂，1.0 是标准
         val loraScale = loraScaleEdit.text.toString().toFloatOrNull()?.coerceIn(0f, 2f) ?: 1.0f
 
-        // 推理是同步阻塞的 native 调用（一张几百秒），绝不能跟调用方同线程——
-        // 调用方基本都在 Dispatchers.Main，否则整个 UI 会卡死到出图为止。
-        val bmp = withContext(Dispatchers.IO) {
-            SdCppEngine.render(
-                handle = h,
-                prompt = prompt,
-                negative = negative,
-                loraPath = lora?.absolutePath,
-                loraScale = loraScale,
-                width = w,
-                height = hgt,
-                steps = steps,
-                cfg = cfg,
-                seed = useSeed,
-                sampler = sampler,
-                scheduler = scheduler,
-                cb = { cur, total -> onProgress(cur, total) },
-                onPreview = onPreview?.let { f ->
-                    SdCppEngine.PreviewCallback { st, w, h, rgb -> f(st, w, h, rgb) }
-                },
-            )
-        } ?: throw IllegalStateException(c.getString(R.string.s_147))
-        onProgress(steps, steps)
-        return ImageData(bmp, useSeed)
+        // 对话页出图不走界面的 setGenerating，这里手动上报一句：
+        // 否则 API 侧不知道界面在出图，会插进来抢同一个 native 句柄
+        DrawCore.uiBusy = true
+        try {
+            // 推理是同步阻塞的 native 调用（一张几百秒），绝不能跟调用方同线程——
+            // 调用方基本都在 Dispatchers.Main，否则整个 UI 会卡死到出图为止。
+            val bmp = withContext(Dispatchers.IO) {
+                SdCppEngine.render(
+                    handle = h,
+                    prompt = prompt,
+                    negative = negative,
+                    loraPath = lora?.absolutePath,
+                    loraScale = loraScale,
+                    width = w,
+                    height = hgt,
+                    steps = steps,
+                    cfg = cfg,
+                    seed = useSeed,
+                    sampler = sampler,
+                    scheduler = scheduler,
+                    cb = { cur, total -> onProgress(cur, total) },
+                    onPreview = onPreview?.let { f ->
+                        SdCppEngine.PreviewCallback { st, w, h, rgb -> f(st, w, h, rgb) }
+                    },
+                )
+            } ?: throw IllegalStateException(c.getString(R.string.s_147))
+            onProgress(steps, steps)
+            return ImageData(bmp, useSeed)
+        } finally {
+            DrawCore.uiBusy = false
+        }
     }
 
     /** 采样器选择：索引 0 = 自动；其余按 SdCppEngine.Sampler 顺序 */
@@ -2100,6 +2145,10 @@ class DrawPage(
             val msg = if (llmLoaded) c.getString(R.string.s_100)
             else c.getString(R.string.s_173)
             Toast.makeText(c, msg, Toast.LENGTH_LONG).show()
+            return
+        }
+        if (DrawCore.busy) {
+            Toast.makeText(c, c.getString(R.string.s_428), Toast.LENGTH_LONG).show()
             return
         }
         if (i2iBitmap == null) {
@@ -2258,6 +2307,7 @@ class DrawPage(
     /** 统一切换按钮的「开始生成 / 中断生成」外观与行为 */
     private fun setGenerating(g: Boolean) {
         generating = g
+        DrawCore.uiBusy = g   // 上报给 API 侧：界面在出图，别来抢同一个句柄
         genBtn.post {
             genBtn.isEnabled = true
             genBtn.text = if (g) c.getString(R.string.s_040) else c.getString(R.string.s_098)
@@ -2293,6 +2343,7 @@ class DrawPage(
     }
 
     fun release() {
+        DrawCore.release()   // 顺序不能反：先断开 API 侧的引用，再真正释放 native 句柄
         if (sdHandle != 0L) runCatching { SdCppEngine.nativeFree(sdHandle) }
         sdHandle = 0L
     }
@@ -2555,6 +2606,7 @@ class DrawPage(
             e.putInt(KEY_TAG_CHAN, taggerChanSpinner.selectedItemPosition)
         }
         e.apply()
+        syncDrawCore()   // 参数一改就同步给 API 侧（下一次请求即生效）
     }
 
     /** Spinner 选择落盘 */
