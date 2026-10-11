@@ -1,3 +1,4 @@
+// Ponko · (c) 2026 visitor257 · MIT License · github.com/visitor257/Ponko
 plugins {
     id("com.android.application")
 }

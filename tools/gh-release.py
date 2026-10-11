@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# Ponko · (c) 2026 visitor257 · MIT License · github.com/visitor257/Ponko
 """在 GitHub 上为 visitor257/Ponko 创建 Release 并上传 APK 附件。
 Release 说明为中英双语（英文在前，中文在后）。"""
 import json

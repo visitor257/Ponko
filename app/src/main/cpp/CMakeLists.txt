@@ -1,3 +1,4 @@
+# Ponko · (c) 2026 visitor257 · MIT License · github.com/visitor257/Ponko
 # Ponko —— 自编 stable-diffusion.cpp 的构建脚本
 #
 # 这里做三件事：

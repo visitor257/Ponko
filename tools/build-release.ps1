@@ -1,4 +1,5 @@
-﻿# 构建 Ponko release APK 并交付（Z 盘 + 网盘）
+﻿# Ponko · (c) 2026 visitor257 · MIT License · github.com/visitor257/Ponko
+# 构建 Ponko release APK 并交付（Z 盘 + 网盘）
 #
 # 为什么需要这个脚本：手工把 assembleRelease / 签名 / 拷贝 / 上传串成一行时，
 # 一旦编译失败，后面的步骤照样会用【上一次的旧 APK】继续跑，容易把旧包当新包发出去。

@@ -1,4 +1,5 @@
-﻿<#
+﻿# Ponko · (c) 2026 visitor257 · MIT License · github.com/visitor257/Ponko
+<#
   用 keystore 重签 APK，固定 v1 + v2 + v3 三方案全开。
 
   为什么三方案全开：

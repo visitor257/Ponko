@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# Ponko · (c) 2026 visitor257 · MIT License · github.com/visitor257/Ponko
 """一次性：设置 Ponko 仓库的英文描述 + Topics。"""
 import json
 import re

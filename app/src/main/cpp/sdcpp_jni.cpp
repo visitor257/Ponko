@@ -1,3 +1,4 @@
+// Ponko · (c) 2026 visitor257 · MIT License · github.com/visitor257/Ponko
 // sdcpp_jni.cpp — Ponko 自编 stable-diffusion.cpp 的 JNI 桥
 // 目标：把 sd.cpp 的 C API 暴露给 Kotlin（可控线程数 / 采样器 / 调度器 / LoRA / 量化类型 / 取消）
 #include <jni.h>

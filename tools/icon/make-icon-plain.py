@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# Ponko · (c) 2026 visitor257 · MIT License · github.com/visitor257/Ponko
 """原图等比缩小、完整放进图标画布（不裁切、不抠底、不换背景、不变形）
 
 系统启动器会按自己的形状（圆形/圆角/方形）裁切图标边缘，108dp 画布里真正可见的

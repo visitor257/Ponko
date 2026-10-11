@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+# Ponko · (c) 2026 visitor257 · MIT License · github.com/visitor257/Ponko
 """
 Ponko 启动图标生成器
 ====================

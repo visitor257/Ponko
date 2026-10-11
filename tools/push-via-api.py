@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+# Ponko · (c) 2026 visitor257 · MIT License · github.com/visitor257/Ponko
 """
 通过 GitHub REST API 推送本地提交（git push 网络受限时的替代方案）
 
