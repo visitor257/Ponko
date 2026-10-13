@@ -1,5 +1,7 @@
 # Ponko
 
+![License](https://img.shields.io/badge/license-MIT-blue.svg) ![Release](https://img.shields.io/github/v/release/visitor257/Ponko?label=release&color=success) ![Platform](https://img.shields.io/badge/platform-Android-3DDC84?logo=android&logoColor=white) ![minSdk](https://img.shields.io/badge/minSdk-28-orange.svg) ![ABI](https://img.shields.io/badge/ABI-arm64--v8a-lightgrey.svg) ![Offline](https://img.shields.io/badge/offline-no%20telemetry-success.svg)
+
 > 名字来自日语「ポンコツ」(ponkotsu)——破铜烂铁。脑子不中用，但可以随时换成最好的模型。
 
 [English](README.en.md) · 中文
@@ -7,6 +9,31 @@
 一个**能够离线运行**的 Android 本地 AI App：聊大语言模型（**支持发图片、发文件与文档**，还能把手机当 API 服务器）、画图、给图片反推标签。
 
 模型推理全部在本机完成：除了「手动下载 LoRA」，其余功能都不需要联网。
+
+## 特性速览
+
+| 模块 | 一句话 |
+|---|---|
+| **对话** | `.litertlm` / `.gguf` 双后端；可发图片、文件与文档；思考分离、流式 Markdown |
+| **绘图** | stable-diffusion.cpp；文生图 / 图生图 / LCM-LoRA 加速；可选 Vulkan |
+| **打标** | 本机离线 ONNX（WD14 系）；标签可发送至文生图 / 图生图 |
+| **API 服务端** | 把已加载的模型开放成 OpenAI 兼容接口；对话 8080 / 绘图 8081，两套独立 |
+| **本地优先** | 无遥测、无账号；除手动下载 LoRA 外全程无需联网 |
+
+## 目录
+
+- [对话](#对话)
+- [绘图](#绘图)
+- [API 服务端（把手机当服务器）](#api-服务端把手机当服务器)
+- [打标（Tagger）](#打标tagger)
+- [权限](#权限)
+- [多语言](#多语言)
+- [构建](#构建)
+- [模型从哪来](#模型从哪来)
+- [已知限制](#已知限制)
+- [许可](#许可)
+- [第三方组件](#第三方组件)
+- [致谢](#致谢)
 
 ## 对话
 
@@ -108,6 +135,9 @@
 
 拍照、选图、保存到相册都**不需要**申请存储读取权限；除下表列出的以外，App 不再声明其它权限。
 
+<details>
+<summary>展开权限明细</summary>
+
 | 用途 | 是否需要权限 | 说明 |
 | --- | --- | --- |
 | 拍照 | **不需要 `CAMERA`** | 通过 `ACTION_IMAGE_CAPTURE` 交给系统相机 App 去拍，拍照由相机应用完成，App 只接收结果。若声明了 `CAMERA` 却未获授权，反而会抛 `SecurityException`，所以是故意不声明的 |
@@ -121,6 +151,8 @@
 - 相机、图库返回的 `content://` 授权是**临时的**，所以导入时会立刻复制一份到私有目录（这也是「选完模型要复制」的原因）
 - `<queries>` 里的 `IMAGE_CAPTURE` 是 Android 11+ 的**包可见性**声明，不是权限
 - 不申请位置、通讯录、麦克风等权限；**通知（`POST_NOTIFICATIONS`）与前台服务相关权限只在开启「API 服务端」时才会用到**
+
+</details>
 
 ## 多语言
 
@@ -147,11 +179,16 @@ powershell -ExecutionPolicy Bypass -File tools/sign-apk.ps1 -Apk app\build\outpu
 powershell -File tools/build-release.ps1
 ```
 
+<details>
+<summary>展开构建细节</summary>
+
 - `minSdk 28` / `targetSdk 36`，**仅 arm64-v8a**（原生库限制，需真机，模拟器跑不了）
 - 首次全量编译 sd.cpp + ggml 约 8~9 分钟，C++ 未改动时增量仅约 10 秒
 - 主要依赖：`com.google.ai.edge.litertlm:litertlm-android:0.17.0`、`net.ladenthin:llama-android:5.1.0`、`com.microsoft.onnxruntime:onnxruntime-android:1.22.0`、`com.tom-roush:pdfbox-android:2.0.27.0`、`io.noties.markwon:*:4.6.2`
 - CMake 现场产出：`libstable-diffusion.so`（sd.cpp 本体）、`libponko_sd.so`（JNI 桥）
 - Vulkan 后端（可选 GPU 绘图）不需要安装 Vulkan SDK：`glslc` 与 SPIRV 头文件都用 NDK 自带的；交叉编译时还需要一个**宿主编译器**来构建着色器生成工具（Windows 上是 MSVC，`tools/build-release.ps1` 会自动载入 `vcvars64` 环境）
+
+</details>
 
 ## 模型从哪来
 
@@ -162,6 +199,9 @@ powershell -File tools/build-release.ps1
 - **打标模型**：Danbooru 系 tagger 的 `.onnx` + 配套标签表 CSV（两者必须成对；如 WD14 的 `wd-v1-4-swinv2-tagger-v2` 与 `selected_tags.csv`）
 
 ## 已知限制
+
+<details>
+<summary>展开 16 条已知限制</summary>
 
 - 对话上下文默认 4096 tokens（可在「模型/API」页调整；LiteRT-LM 侧不能超过模型自带的上限），超出后依赖 llama.cpp 的 context shift 滑动窗口
 - 对话用的 GGUF 目前仅走 CPU（所用绑定未包含 GPU 后端）
@@ -180,6 +220,8 @@ powershell -File tools/build-release.ps1
 - 绘图接口只做**文生图**，没有图生图接口；只支持 `response_format=b64_json`；请求一旦开始无法中途取消（会跑完当前这张，客户端断开也一样）；界面正在出图时接口返回 429、API 出图时界面会提示等待（同一个绘图引擎，不能并发）
 - 上下文放不下时会自动裁剪更早的对话与文件正文；仍然放不下会给出提示：开个新会话、换短一点的文件、少带几轮旧对话
 
+</details>
+
 ## 许可
 
 - **代码**：[MIT](LICENSE)
@@ -187,6 +229,9 @@ powershell -File tools/build-release.ps1
 - **第三方组件**：按各自许可证分发，完整清单见 [NOTICE](NOTICE)
 
 ## 第三方组件
+
+<details>
+<summary>展开第三方组件清单</summary>
 
 | 组件 | 许可证 | 分发方式 |
 | --- | --- | --- |
@@ -215,6 +260,8 @@ powershell -File tools/build-release.ps1
 > ONNX Runtime 自身还打包了若干第三方组件，其声明见 [licenses/onnxruntime-ThirdPartyNotices.txt](licenses/onnxruntime-ThirdPartyNotices.txt)。
 > commonmark / Jackson / Gson / SLF4J 等为**传递依赖**，由所选的 Markwon、llama.cpp 绑定、LiteRT-LM 自动引入。
 > 第三方原生库里静态链入的组件（XNNPACK、protobuf、re2、cpuinfo、zlib 等）与各类许可证全文见 [licenses/](licenses/) 与 [NOTICE](NOTICE)。
+
+</details>
 
 ## 致谢
 
