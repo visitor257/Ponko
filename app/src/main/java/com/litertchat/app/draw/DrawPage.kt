@@ -2,6 +2,7 @@
 package com.litertchat.app.draw
 
 import com.litertchat.app.DrawCore
+import com.litertchat.app.InferConfig
 import com.litertchat.app.PonkoTheme
 import com.litertchat.app.R
 
@@ -130,36 +131,43 @@ class DrawPage(
             "llm" -> R.string.s_355
             "llm_vision" -> R.string.s_356
             "vae" -> R.string.s_357
+            "taesd" -> R.string.s_442
             else -> R.string.s_358
         }
 
         /** 某个类型需要哪些槽位（key to 是否必填）。
          *  多文件模型的配套文件各家不一样，这里按家族给模板；用户选了类型就按模板列槽位。
          *  必填只是「加载前的检查」，不阻止用户尝试（可选槽位留空也允许加载）。 */
-        fun familySlots(kind: String, family: String): List<Pair<String, Boolean>> = when {
-            kind == KIND_SINGLE && family == FAM_OTHER -> listOf(
-                "model" to true, "vae" to false, "clip_l" to false, "clip_g" to false,
-                "clip_vision" to false, "t5xxl" to false, "llm" to false, "llm_vision" to false,
-                "diffusion" to false, "high_noise" to false, "uncond" to false, "audio_vae" to false)
-            kind == KIND_SINGLE -> listOf("model" to true, "vae" to false)
-            family == FAM_SDXL -> listOf(
-                "diffusion" to true, "clip_l" to true, "clip_g" to true, "vae" to true)
-            family == FAM_SD3 -> listOf(
-                "diffusion" to true, "clip_l" to true, "clip_g" to true, "t5xxl" to true, "vae" to true)
-            family == FAM_FLUX -> listOf(
-                "diffusion" to true, "clip_l" to true, "t5xxl" to true, "vae" to true)
-            family == FAM_QWEN -> listOf(
-                "diffusion" to true, "llm" to true, "llm_vision" to true, "vae" to true)
-            family == FAM_HIDREAM -> listOf(
-                "diffusion" to true, "high_noise" to false, "clip_l" to false, "clip_g" to false,
-                "t5xxl" to false, "llm" to false, "vae" to true)
-            family == FAM_VIDEO -> listOf(
-                "diffusion" to true, "clip_vision" to false, "t5xxl" to false, "llm" to false,
-                "vae" to true, "audio_vae" to false)
-            else -> listOf(
-                "diffusion" to true, "vae" to false, "clip_l" to false, "clip_g" to false,
-                "clip_vision" to false, "t5xxl" to false, "llm" to false, "llm_vision" to false,
-                "high_noise" to false, "uncond" to false, "audio_vae" to false)
+        fun familySlots(kind: String, family: String): List<Pair<String, Boolean>> {
+            val base = when {
+                kind == KIND_SINGLE && family == FAM_OTHER -> listOf(
+                    "model" to true, "vae" to false, "clip_l" to false, "clip_g" to false,
+                    "clip_vision" to false, "t5xxl" to false, "llm" to false, "llm_vision" to false,
+                    "diffusion" to false, "high_noise" to false, "uncond" to false, "audio_vae" to false)
+                kind == KIND_SINGLE -> listOf("model" to true, "vae" to false)
+                family == FAM_SDXL -> listOf(
+                    "diffusion" to true, "clip_l" to true, "clip_g" to true, "vae" to true)
+                family == FAM_SD3 -> listOf(
+                    "diffusion" to true, "clip_l" to true, "clip_g" to true, "t5xxl" to true, "vae" to true)
+                family == FAM_FLUX -> listOf(
+                    "diffusion" to true, "clip_l" to true, "t5xxl" to true, "vae" to true)
+                family == FAM_QWEN -> listOf(
+                    "diffusion" to true, "llm" to true, "llm_vision" to true, "vae" to true)
+                family == FAM_HIDREAM -> listOf(
+                    "diffusion" to true, "high_noise" to false, "clip_l" to false, "clip_g" to false,
+                    "t5xxl" to false, "llm" to false, "vae" to true)
+                family == FAM_VIDEO -> listOf(
+                    "diffusion" to true, "clip_vision" to false, "t5xxl" to false, "llm" to false,
+                    "vae" to true, "audio_vae" to false)
+                else -> listOf(
+                    "diffusion" to true, "vae" to false, "clip_l" to false, "clip_g" to false,
+                    "clip_vision" to false, "t5xxl" to false, "llm" to false, "llm_vision" to false,
+                    "high_noise" to false, "uncond" to false, "audio_vae" to false)
+            }
+            // TAESD 是可选的附加项，只在图像模型上出现：
+            // 视频走 TinyVideoAutoEncoder（权重格式不同）、Qwen / HiDream 的 VAE 各走特殊路径，先不暴露。
+            return if (family == FAM_VIDEO || family == FAM_QWEN || family == FAM_HIDREAM) base
+            else base + ("taesd" to false)
         }
 
         /** SharedPreferences 文件名与键（只存 UI 偏好） */
@@ -208,8 +216,9 @@ class DrawPage(
     /** true = 下一个导入的文件用来开一个新模型集 */
     var pendingNewSet: Boolean = false
 
-    /** 推理线程数：默认 4（多数手机的大核数；开太多会跑到小核上，反而变慢） */
-    private var nThreads: Int = 4
+    /** 推理线程数：**全局设置**（[InferConfig]），绘图 / 对话 gguf / 打标三条路径共用。
+     *  现读不缓存 —— 在「关于 → 设置」里改完，下次加载模型就用到新值。 */
+    private val nThreads: Int get() = InferConfig.threads(c)
 
     /** FlashAttention（CLIP + UNet）。实测不开每步慢约 28%（6 步 125s vs 98s）。 */
     private var flashAttn: Boolean = true
@@ -1104,7 +1113,8 @@ class DrawPage(
         val (mName, cName) = TaggerEngine.fileNames()
         if (TaggerEngine.isLoaded() && mName == model.name && cName == csv.name &&
             TaggerEngine.loadedWithGpu() == useGpu) return null
-        val threads = Runtime.getRuntime().availableProcessors().coerceIn(2, 8)
+        // 线程数走全局设置（InferConfig）——与对话 gguf、打标共用同一个值
+        val threads = InferConfig.threads(c)
         return TaggerEngine.load(c, model, csv, useGpu, threads)
     }
 
@@ -1507,7 +1517,10 @@ class DrawPage(
         val dir: File?,
         val files: MutableMap<String, File> = LinkedHashMap(),
     ) {
-        fun mainFile(): File? = files["model"] ?: files["diffusion"] ?: files.values.firstOrNull()
+        /** 主模型文件。末尾那个兜底要跳过 taesd —— 它是可选附件，
+         *  万一某个集只有 taesd，也不该把它当成主模型。 */
+        fun mainFile(): File? = files["model"] ?: files["diffusion"]
+            ?: files.entries.firstOrNull { it.key != "taesd" }?.value
         fun sizeBytes(): Long = files.values.sumOf { it.length() }
         fun slotCount(): Int = files.size
     }
@@ -1535,7 +1548,12 @@ class DrawPage(
             o.put("kind", s.kind)
             o.put("family", s.family)
             val a = org.json.JSONObject()
-            s.files.forEach { (k, f) -> a.put(k, f.name) }
+            // 集目录里的文件只存文件名；集外的文件（旧版散落模型提升成集时会引用到）存绝对路径，
+            // 否则读回来会按集目录去拼、拼不到。两种情况靠 File.isAbsolute 区分。
+            s.files.forEach { (k, f) ->
+                val inSet = f.parentFile?.absoluteFile == d.absoluteFile
+                a.put(k, if (inSet) f.name else f.absolutePath)
+            }
             o.put("slots", a)
             File(d, "ponko-set.json").writeText(o.toString())
         }
@@ -1549,7 +1567,8 @@ class DrawPage(
             while (keys.hasNext()) {
                 val k = keys.next()
                 val fn = a.optString(k, "")
-                val f = File(dir, fn)
+                val stored = File(fn)
+                val f = if (stored.isAbsolute) stored else File(dir, fn)
                 if (fn.isNotEmpty() && f.isFile) files[k] = f
             }
         }
@@ -1646,15 +1665,31 @@ class DrawPage(
                 return@withContext c.getString(R.string.s_368)
             }
             val key = slotKey ?: if (pendingKind == KIND_SINGLE) "model" else "diffusion"
+            // TAESD 只认 sd.cpp 读得动的两种格式；.ckpt / .pt 是 torch 系，
+            // 而且 ComfyUI 常被引用的 taesd_decoder.pth 只有解码器、本来就用不了，提前说清楚。
+            if (key == "taesd" && ext !in listOf("safetensors", "gguf")) {
+                return@withContext c.getString(R.string.s_445)
+            }
             val cur = activeSet
-            val useSet: ModelSet = if (cur == null || cur.dir == null || pendingNewSet) {
-                val id = newSetId(name.substringBeforeLast('.'))
-                val dir = File(setsDir(), id).apply { mkdirs() }
-                ModelSet(id, id, pendingKind, pendingFamily, dir).also {
-                    activeSet = it
-                    pendingNewSet = false
+            val useSet: ModelSet = when {
+                pendingNewSet || cur == null -> {
+                    val id = newSetId(name.substringBeforeLast('.'))
+                    val dir = File(setsDir(), id).apply { mkdirs() }
+                    ModelSet(id, id, pendingKind, pendingFamily, dir).also {
+                        activeSet = it
+                        pendingNewSet = false
+                    }
                 }
-            } else cur
+                cur.dir == null -> {
+                    // 旧版散落单文件（不是模型集）：要补配套文件就得先提升成模型集。
+                    // 主模型动辄几 GB，**不复制、不搬动**——沿用原文件，写 json 时记绝对路径引用。
+                    val dir = File(setsDir(), newSetId(cur.name)).apply { mkdirs() }
+                    ModelSet(dir.name, cur.name, cur.kind, cur.family, dir, LinkedHashMap(cur.files)).also {
+                        activeSet = it
+                    }
+                }
+                else -> cur
+            }
             val dir: File = useSet.dir ?: return@withContext c.getString(R.string.s_106)
 
             withContext(Dispatchers.Main) { onStage(c.getString(R.string.v_033, name)) }
@@ -1684,6 +1719,14 @@ class DrawPage(
                 }
             } ?: return@withContext c.getString(R.string.s_106)
 
+            // TAESD 要能用，权重里必须同时有编码器和解码器（图生图要靠编码器）。
+            // 校验不过就别登记进模型集，免得用户在「加载」时才撞上一个含糊的 native 失败。
+            if (key == "taesd") {
+                taesdWeightsProblem(dest)?.let { msg ->
+                    runCatching { dest.delete() }
+                    return@withContext msg
+                }
+            }
             useSet.files[key] = dest
             writeSetJson(useSet)
             selectSet(useSet)
@@ -1693,6 +1736,40 @@ class DrawPage(
             null
         } catch (e: Throwable) {
             c.getString(R.string.v_038, (e.message ?: e.javaClass.simpleName))
+        }
+    }
+
+    /**
+     * TAESD 权重能不能用：不能用则返回给用户看的原因，能用返回 null。
+     *
+     * 只校验 `.safetensors`（能读出张量名）；`.gguf` 交给 native 自己报错。
+     * 必须**编码器和解码器都在**：sd.cpp 加载 TAESD 时会同时建这两个子模块，
+     * 只有解码器的话，图生图没编码器可用，文生图也可能拿到未初始化的权重。
+     */
+    private fun taesdWeightsProblem(f: File): String? {
+        if (!f.name.endsWith(".safetensors", ignoreCase = true)) return null
+        val names = runCatching { safetensorsKeys(f) }.getOrNull() ?: return c.getString(R.string.s_444)
+        val hasDec = names.any { it.startsWith("decoder.layers.") || it.startsWith("tae.decoder.layers.") }
+        val hasEnc = names.any { it.startsWith("encoder.layers.") || it.startsWith("tae.encoder.layers.") }
+        return when {
+            !hasDec -> c.getString(R.string.s_444)
+            !hasEnc -> c.getString(R.string.s_443)
+            else -> null
+        }
+    }
+
+    /** 读 `.safetensors` 头里列出的张量名。格式：8 字节小端「头长度」+ 该长度的 JSON 头。 */
+    private fun safetensorsKeys(f: File): List<String> {
+        java.io.DataInputStream(java.io.BufferedInputStream(java.io.FileInputStream(f))).use { ins ->
+            val head = ByteArray(8)
+            ins.readFully(head)
+            var len = 0L
+            for (i in 7 downTo 0) len = (len shl 8) or (head[i].toLong() and 0xFFL)
+            if (len <= 0L || len > 16L * 1024 * 1024) throw IllegalStateException("safetensors header length=$len")
+            val raw = ByteArray(len.toInt())
+            ins.readFully(raw)
+            val o = org.json.JSONObject(String(raw, Charsets.UTF_8))
+            return o.keys().asSequence().filter { it != "__metadata__" }.toList()
         }
     }
 
@@ -1864,7 +1941,10 @@ class DrawPage(
 
             val summary = buildString {
                 append(c.getString(R.string.s_094)).append(set.name)
-                append(" · ").append(activeBackend).append(" · ").append(nThreads).append(c.getString(R.string.s_001)).append(if (flashAttn) "FA" else c.getString(R.string.s_110)).append(" · sd.cpp")
+                append(" · ").append(activeBackend).append(" · ").append(nThreads).append(c.getString(R.string.s_001))
+                append(if (flashAttn) "FA" else c.getString(R.string.s_110))
+                if (set.files["taesd"] != null) append(" · TAESD")
+                append(" · sd.cpp")
             }
             statusText.post { statusText.text = summary }
             statusText.post { refreshQuantText() }
@@ -1898,11 +1978,15 @@ class DrawPage(
             val q = mainModel?.let { GgufProbe.quantType(it) }
             c.getString(R.string.s_094) + (mainModel?.name ?: c.getString(R.string.s_155)) +
                 (if (q != null) "（$q）" else "") +
-                " · CPU · " + nThreads + c.getString(R.string.s_002)
+                " · CPU · " + nThreads + c.getString(R.string.s_002) +
+                (if (activeTaesd() != null) " · TAESD" else "")
         }
         hasModel() -> (activeSetOrSelected()?.name?.let { it + " · " } ?: "") + c.getString(R.string.s_088)
         else -> c.getString(R.string.s_115)
     }
+
+    /** 当前模型集里挂了 TAESD 权重就返回它（仅用于界面提示；加载时由槽位表带过去） */
+    fun activeTaesd(): File? = activeSetOrSelected()?.files?.get("taesd")
 
     fun refreshStatus() {
         refreshModelCard()

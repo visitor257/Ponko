@@ -1884,6 +1884,71 @@ class MainActivity : Activity() {
         }
         settingsBody.addView(themeSwitch, matchWrap().apply { topMargin = dp(12) })
 
+        // ---- 推理线程数（全局：绘图 / 对话 gguf / 打标 共用；下次加载模型生效）----
+        // 放在「设置」分区而不是绘图页：它管的是所有 CPU 推理，不是绘图专属。
+        settingsBody.addView(subTitle(getString(R.string.s_439)), matchWrap().apply { topMargin = dp(14) })
+        val maxThreads = InferConfig.maxThreads()
+        // 直接输入而不是下拉选择（用户 2026-10-13 指定）。越界当场纠正：
+        //   0（或负数）→ 1；超过本机可用核数 → 上限。
+        var fixing = false
+        val threadsEdit = EditText(this).apply {
+            setText(InferConfig.threads(this@MainActivity).toString())
+            textSize = 13f
+            setTextColor(C_TEXT)
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            setBackgroundColor(C_FIELD_BG)
+            setPadding(dp(10), dp(6), dp(10), dp(6))
+            isSingleLine = true
+        }
+        fun applyThreads(raw: String) {
+            // 空串按默认值处理（用户清空后直接离开输入框）
+            val v = raw.trim().toIntOrNull() ?: InferConfig.DEFAULT
+            val fixed = when {
+                v <= 0 -> 1
+                v > maxThreads -> maxThreads
+                else -> v
+            }
+            if (threadsEdit.text.toString() != fixed.toString()) {
+                fixing = true
+                threadsEdit.setText(fixed.toString())
+                threadsEdit.setSelection(threadsEdit.text.length)
+                fixing = false
+            }
+            InferConfig.setThreads(this, fixed)
+        }
+        threadsEdit.addTextChangedListener(object : android.text.TextWatcher {
+            override fun afterTextChanged(s: android.text.Editable?) {
+                if (fixing) return
+                // 中途清空是正常输入过程（准备重打），留到失焦时兜底，别当场塞个值回去
+                if (s == null || s.toString().trim().isEmpty()) return
+                applyThreads(s.toString())
+            }
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+        })
+        threadsEdit.setOnFocusChangeListener { _, hasFocus ->
+            if (!hasFocus) applyThreads(threadsEdit.text.toString())
+        }
+        // 一行显示成「[输入] / 上限」：输入框后跟一个静态的「/ 8」，
+        // 用户一眼能看出合法范围，不用去猜最大值是多少（用户 2026-10-13 指定）。
+        val threadsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        threadsRow.addView(
+            threadsEdit,
+            LinearLayout.LayoutParams(dp(64), LinearLayout.LayoutParams.WRAP_CONTENT)
+        )
+        threadsRow.addView(TextView(this).apply {
+            text = getString(R.string.s_447, maxThreads)
+            textSize = 13f
+            setTextColor(C_SUBTEXT)
+        }, wrapWrap().apply { leftMargin = dp(6) })
+        settingsBody.addView(threadsRow, matchWrap().apply { topMargin = dp(8) })
+        // 唯一一条保留的说明：.litertlm 走 Google LiteRT-LM，该库没有线程数参数，
+        // 不受这项控制。不写清的话，用户会以为是 bug（这条 2026-10-13 由用户要求加回）。
+        settingsBody.addView(hintText(getString(R.string.s_446)), matchWrap().apply { topMargin = dp(4) })
+
         // ---- 关于（可折叠，默认展开；展开状态同样记在偏好里）----
         val aboutBody = collapsibleSection(
             card, getString(R.string.s_048), expanded = true, prefKey = KEY_UI_ABOUT_OPEN)
@@ -3880,7 +3945,8 @@ class MainActivity : Activity() {
             try {
                 if (isGguf) {
                     // llama.cpp：单 slot + cache_prompt。会话内 KV 前缀会被复用，长对话只需计算新增 token。
-                    val cpus = Runtime.getRuntime().availableProcessors().coerceIn(2, 8)
+                    // 线程数走全局设置（「关于 → 设置」），与绘图、打标共用同一个值。
+                    val cpus = InferConfig.threads(this@MainActivity)
                     val params = ModelParameters()
                         .setModel(path)
                         // 上下文长度与最大输出都从模型页读（默认 4096 / 2048）

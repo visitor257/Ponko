@@ -463,4 +463,11 @@
     <string name="s_426">绘图模型：%1$s</string>
     <string name="s_427">尚未加载绘图模型</string>
     <string name="s_428">绘图 API 正在出图，请稍候</string>
+    <string name="s_439">CPU 线程数</string>
+    <string name="s_442">TAESD 权重</string>
+    <string name="s_443">这个 .safetensors 里没有编码器权重（encoder.layers.*）。只有解码器的话，Ponko 的图生图用不了——请换成编码器与解码器都齐全的完整 TAESD 权重。</string>
+    <string name="s_444">这个 .safetensors 里找不到 TAESD 的解码器权重（decoder.layers.*），它可能不是 TAESD 文件。</string>
+    <string name="s_445">TAESD 请用 .safetensors 或 .gguf 权重。（.ckpt / .pt 是 torch 格式，ComfyUI 的 taesd_decoder.pth 也只有解码器。）</string>
+    <string name="s_446">对话的 .litertlm 模型不受此项控制（该格式不支持指定线程数）。</string>
+    <string name="s_447">/ %1$d</string>
 </resources>

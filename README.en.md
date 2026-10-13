@@ -15,7 +15,7 @@ All inference runs on-device: apart from the optional in-app LoRA download, no f
 | Module | In one line |
 |---|---|
 | **Chat** | `.litertlm` / `.gguf` dual backend; image, file and document input; separated reasoning, streaming Markdown |
-| **Drawing** | stable-diffusion.cpp; text-to-image / image-to-image / LCM-LoRA speed-up; optional Vulkan |
+| **Drawing** | stable-diffusion.cpp; text-to-image / image-to-image / LCM-LoRA speed-up; optional TAESD and Vulkan |
 | **Tagging** | Fully offline ONNX (WD14 family); tags can be sent to T2I / I2I |
 | **API server** | Serves loaded models over OpenAI-compatible endpoints; chat 8080 / drawing 8081, fully independent |
 | **Local-first** | No telemetry, no account; no network needed except the manual LoRA download |
@@ -84,6 +84,8 @@ The engine is [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.
   - **SDXL is single-file only**: upstream sd.cpp only recognizes SDXL when the second text encoder sits in the same file as the main model, so a split unet + CLIP-L/CLIP-G SDXL fails to load - use a single-file SDXL (quantized single files around 2.5 GB exist)
   - Multi-file is really meant for families that upstream ships split apart: Flux, SD3.5, Qwen-Image and friends; the smallest set for those is 8 GB+, which a phone can hardly run (the mechanism is there for big-memory devices / desktop use).
 - **GPU acceleration (optional; build-time-verified only, not tested on a real device)**: switch the run mode to **GPU** on the Models/API page and drawing uses the device's Vulkan backend (both text-to-image and image-to-image); if the device has no Vulkan or init fails it **falls back to CPU automatically**, and the backend actually in use is shown in the drawing status line
+- **TAESD speed-up (optional)**: attach TAESD weights to it under **"Model slots"** on the drawing-model page (fill it in to enable, clear it to disable). It swaps VAE encoding/decoding for a tiny autoencoder, making the final step of CPU generation much faster at the cost of slightly different detail
+- **Inference thread count (global)**: the About page -> "Settings" has a **CPU thread count** field (shown as "input / max"; **the max is the device's real available core count**; **values above it are clamped down and 0 becomes 1**) that governs **all CPU inference** - drawing (stable-diffusion.cpp), chat GGUF (llama.cpp) and tagging (ONNX Runtime) share the same value; it applies the **next time a model is loaded**. (Chat `.litertlm` runs on Google LiteRT-LM, which exposes no thread-count parameter and is therefore not affected.)
 - **Draw from chat**: when both a chat model and a draw model are loaded, just say "draw me ..." and the draw model is invoked.
 - **Drawing API (optional)**: exposes the loaded drawing model as an OpenAI-compatible `/v1/images/generations` endpoint for clients on the same network; off by default, toggled on the Models/API page -> Draw model -> API tab (see the API server section)
 - The "Parameters" / "Result" views can be swiped left/right; save images to the gallery from the Result view.
@@ -189,6 +191,7 @@ powershell -File tools/build-release.ps1
 - `.litertlm`: the `litert-community` / `google` organizations on HuggingFace (Gemma family, etc.)
 - `.gguf` (chat): any GGUF quantized model on HuggingFace; on a phone CPU, **1B-3B at Q4** is recommended
 - `.gguf` (drawing): SD1.5-family models in stable-diffusion.cpp format (e.g. Anything V5)
+- **TAESD** (optional): `diffusion_pytorch_model.safetensors` from `madebyollin/taesd` (~10 MB). The file **must contain both the encoder and the decoder** - decoder-only files (e.g. ComfyUI's taesd_decoder.pth) are rejected outright, because img2img needs the encoder
 - **LoRA**: `lcm-lora-sdv1-5.safetensors` (~130 MB), downloadable in-app; a local `.safetensors` can also be imported directly
 - **Tagger**: the `.onnx` of a Danbooru-style tagger plus its matching tag-list CSV (the two must go together; e.g. WD14's `wd-v1-4-swinv2-tagger-v2` and `selected_tags.csv`)
 
@@ -207,6 +210,8 @@ powershell -File tools/build-release.ps1
 - On **Android 9**, saving to the gallery / taking a photo requires the storage permission (prompted on first use); denying it makes those actions fail (Android 10+ is unaffected)
 - Image input is capped at 4 images and 2 files per message; a `.gguf` vision model must be paired with its matching `mmproj`, selected before the model is loaded
 - File input accepts plain text and the common document formats (`.docx` / `.pptx` / `.xlsx` / `.odt` / `.ods` / `.odp` / `.epub` / `.rtf` / `.html` / `.pdf`); `.doc` / `.xls` / `.ppt` have to be re-saved first; scanned (image-only) PDFs yield no text; binary files are rejected; per-file size cap (4 MB for plain text, 48 MB for documents); the text is trimmed to the context budget (about a quarter of the context by default)
+- TAESD is an optional speed-up and **not lossless**: it replaces VAE encoding/decoding, so output differs from the standard VAE; `.safetensors` / `.gguf` only
+- The CPU thread count is a **global setting**; changes apply the **next time a model is loaded** (drawing / chat GGUF / tagging all hand the thread count to native at load time). Chat `.litertlm` is not affected (LiteRT-LM has no such parameter)
 - API server: **chat and drawing are fully independent** (own port / key / switch, defaults 8080 and 8081) sharing one foreground service and one notification; **starting a service does not require a model to be loaded** (the affected endpoint returns 503 until one is); the API only serves what is loaded; one request at a time; port / key changes restart that service automatically; with **no API key set there is no check at all**, so exposing it publicly is at your own risk
 - The drawing endpoint is **text-to-image only** (no image-to-image), supports only `response_format=b64_json`, and once started a request cannot be cancelled midway (it finishes the current image, even if the client disconnects); while the app itself is generating the endpoint returns 429, and while the API is generating the app tells you to wait (one drawing engine, no concurrency)
 - When the context does not fit, older turns and file text are trimmed automatically; if it still does not fit, the app tells you what to do: start a new chat, send a shorter file, or drop some old turns
