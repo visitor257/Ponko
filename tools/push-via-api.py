@@ -23,6 +23,7 @@
     GH_BRANCH       默认 main
 """
 import base64
+import gzip
 import json
 import os
 import re
@@ -48,7 +49,14 @@ NEEDS_SHELL = GIT.lower().endswith((".cmd", ".bat"))
 
 
 def api(method, path, data=None, attempts=5):
-    """请求 GitHub API。网络抖动（IncompleteRead / 连接重置等）自动重试。"""
+    """请求 GitHub API。网络抖动（IncompleteRead / 连接重置等）自动重试。
+
+    读响应有两点讲究（2026-10-13 踩坑后加）：
+      1. **分块读**（不用 r.read() 一次拉完）——本机链路上大响应会被截断，
+         表现为 IncompleteRead，且每次差的字节数都不一样、重试必然同样失败。
+      2. **接受 gzip**——GitHub 支持压缩，440KB 的树响应压完只有几十 KB，
+         顺带绕开上面的截断阈值。
+    """
     url = "https://api.github.com" + path
     body = json.dumps(data).encode() if data is not None else None
     last = None
@@ -56,14 +64,24 @@ def api(method, path, data=None, attempts=5):
         req = urllib.request.Request(url, data=body, method=method)
         req.add_header("Authorization", "token " + TK)
         req.add_header("Accept", "application/vnd.github+json")
+        req.add_header("Accept-Encoding", "gzip")
         req.add_header("User-Agent", "ponko-push")
         req.add_header("Connection", "close")
         if body:
             req.add_header("Content-Type", "application/json")
         try:
-            with urllib.request.urlopen(req, timeout=90) as r:
-                raw = r.read()
-            return json.loads(raw.decode())
+            with urllib.request.urlopen(req, timeout=180) as r:
+                gz = (r.headers.get("Content-Encoding") or "").lower() == "gzip"
+                chunks = []
+                while True:
+                    b = r.read(64 * 1024)
+                    if not b:
+                        break
+                    chunks.append(b)
+            raw = b"".join(chunks)
+            if gz:
+                raw = gzip.decompress(raw)
+            return json.loads(raw.decode("utf-8"))
         except urllib.error.HTTPError as e:
             print("!! HTTP", e.code, e.read().decode()[:800])
             raise
