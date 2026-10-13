@@ -73,7 +73,9 @@ object TaggerEngine {
 
             val e = OrtEnvironment.getEnvironment()
             val opts = OrtSession.SessionOptions()
-            runCatching { opts.setIntraOpNumThreads(threads.coerceIn(1, 8)) }
+            // 线程数由调用方按「设备真实可用核数」算好（InferConfig），这里只兜住下界，
+            // 不再自行封顶 —— 否则用户设了 12 线程会被这里悄悄压回 8（2026-10-13 修正）。
+            runCatching { opts.setIntraOpNumThreads(threads.coerceAtLeast(1)) }
             var gpuOk = false
             if (useGpu) {
                 gpuOk = runCatching { opts.addNnapi(); true }.getOrDefault(false)

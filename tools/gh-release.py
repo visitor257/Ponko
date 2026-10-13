@@ -11,22 +11,20 @@ import urllib.request
 REPO = "visitor257/Ponko"
 TOKFILE = r"C:\Users\Administrator\Desktop\git_repo_tok.txt"
 APK = r"C:\Users\Administrator\WorkBuddy\智能Agent\LiteRT-Chat\app\build\outputs\apk\release\Ponko-release.apk"
-TAG = "v1.7.1"
-NAME = "Ponko v1.7.1"
+TAG = "v1.7.2"
+NAME = "Ponko v1.7.2"
 
-BODY = """Ponko v1.7.1 - Offline-capable AI app for Android: chat (image, file and document input) + drawing + tagging, each of which can be served over its own OpenAI-compatible API.
+BODY = """Ponko v1.7.2 - Offline-capable AI app for Android: chat (image, file and document input) + drawing + tagging, each of which can be served over its own OpenAI-compatible API.
 
 All inference runs on-device: apart from the optional in-app LoRA download, no feature needs the network. No telemetry; your data stays on your phone.
 See the [README](https://github.com/visitor257/Ponko#readme).
 
-## v1.7.1 Highlights
-- **Drawing API**: the loaded drawing model can now be served over an OpenAI-compatible image endpoint - `POST /v1/images/generations` (returns `b64_json`), plus `GET /v1/models` and `GET /health`. Send `{"prompt": "..."}` and the phone renders it; `n` (1-4), `size`, `seed`, `steps`, `cfg_scale` and `negative_prompt` are all optional, and anything you omit falls back to the drawing page's current settings
-- **The chat API and the drawing API are two independent services**: separate ports (8080 / 8081), separate API keys, separate on/off switches and separate request counters, so you can expose one without the other. They share a single foreground service and one notification, whose text lists every address that is actually listening. Changing a port or key restarts that service for you. Off by default: one image pins the CPU for tens of seconds, so the drawing endpoint is not reachable from the network unless you turn it on
-- **Fixes**
-  - The About page showed a stale version number ("Version 1.7.0" while running 1.7.1). It is now read from the installed package, so it can never go out of sync again
-  - The **Settings / About** sections forgot whether you had collapsed them; the state is now remembered across restarts
-  - Starting an API service no longer requires a chat model to be loaded first (it never actually did - only the endpoints need models, and they answer 503 with an explanation until one is loaded)
-- Version 1.7.0 -> 1.7.1 (versionCode 14)
+## v1.7.2 Highlights
+- **TAESD support for drawing**: attach TAESD weights to a model set and the drawing engine swaps VAE encoding/decoding for a tiny autoencoder, making the **final decode step of CPU generation much faster**. It is optional and per-model-set: fill in the TAESD slot to enable, clear it to disable. Weights must contain **both the encoder and the decoder** - decoder-only files are rejected on import with an explanation, because image-to-image needs the encoder. Accepted formats: `.safetensors` / `.gguf`
+- **CPU thread count is now a global setting**: it lives in About -> Settings (not on the drawing page) because it governs **all CPU inference** - drawing (stable-diffusion.cpp), chat GGUF (llama.cpp) and tagging (ONNX Runtime) share one value. It is a **text field showing "input / max"**, where the max is your device's real available core count; values above it are clamped down and 0 becomes 1. Changes apply the next time a model is loaded
+  - Chat `.litertlm` (Google LiteRT-LM) is **not** affected - that library exposes no thread-count parameter
+- **Drawing status line** now marks when TAESD is active
+- Version 1.7.1 -> 1.7.2 (versionCode 15)
 
 ## Chat
 - Two backends: LiteRT-LM (`.litertlm`) + llama.cpp (`.gguf`)
@@ -62,6 +60,8 @@ Two independent services - start either, or both, from the Models/API page:
 
 ## Drawing
 - Built-in custom stable-diffusion.cpp; loads GGUF drawing models - single-file all-in-one (SD1.5 / SD2 / SDXL) or a multi-file (split) set filled in slot by slot; CPU by default, optional GPU (Vulkan) acceleration with automatic CPU fallback
+- **TAESD (optional)**: a small autoencoder that replaces VAE encoding/decoding, speeding up the final decode step on CPU at the cost of slightly different detail; weights go in a model slot (`madebyollin/taesd` works), encoder and decoder both required
+- **CPU threads**: set globally in About -> Settings; applies to drawing, chat GGUF and tagging alike
 - GPU status: only drawing (Vulkan), tagging (NNAPI) and `.litertlm` chat carry GPU code; all build-time-verified only, gguf chat is CPU-only
 - Text-to-image + image-to-image (denoise strength 0.05-0.99, output size auto-aligned to the reference)
 - **Samplers**: the list matches sd.cpp 1:1 (incl. DPM++ 2M SDE / SDE B&T / LMS / Res Multistep / ER SDE / Euler GE)
@@ -73,26 +73,24 @@ Two independent services - start either, or both, from the Models/API page:
 
 ## Install
 - arm64-v8a only (64-bit ARM devices), minSdk 28 (Android 9+)
-- v1.7.1 (versionCode 14) installs over v1.7.0 / v1.6.2 / v1.6.1 / v1.6.0 / v1.5.0 / v1.4.1 / v1.4.0 / v1.3.x / v1.2; uninstall older debug builds or v1.0 first (different signing key)
-- Model files are not bundled: import chat models (`.litertlm` / `.gguf`), a drawing model (GGUF: single file, or a multi-file set) and, optionally, a tagger (`.onnx` + `.csv`) from the in-app Models/API page
+- v1.7.2 (versionCode 15) installs over v1.7.1 / v1.7.0 / v1.6.2 / v1.6.1 / v1.6.0 / v1.5.0 / v1.4.1 / v1.4.0 / v1.3.x / v1.2; uninstall older debug builds or v1.0 first (different signing key)
+- Model files are not bundled: import chat models (`.litertlm` / `.gguf`), a drawing model (GGUF: single file, or a multi-file set), an optional TAESD checkpoint, and, optionally, a tagger (`.onnx` + `.csv`) from the in-app Models/API page
 
 ## License
 Code is MIT; art assets (icons, artwork) are all rights reserved. Third-party components (stable-diffusion.cpp, ggml, Vulkan-Hpp/Vulkan-Headers, LiteRT-LM, llama.cpp, Markwon, PDFBox-Android, ONNX Runtime, etc.) are distributed under their respective licenses - see the repository NOTICE. ONNX Runtime bundles extra third-party components; their notices are included under `licenses/`. The native runtimes also statically link XNNPACK, protobuf, re2, cpuinfo, zlib and others; see NOTICE and the `licenses/` directory for the full list.
 
 ---
 
-Ponko v1.7.1 —— 本地 AI App（Android）：聊天（可发图、可发文件与文档）+ 绘图 + 打标，三者都能各自开放成 OpenAI 兼容接口
+Ponko v1.7.2 —— 本地 AI App（Android）：聊天（可发图、可发文件与文档）+ 绘图 + 打标，三者都能各自开放成 OpenAI 兼容接口
 
 所有推理都在本机完成：除了「手动下载 LoRA」，其余功能都不需要联网；无遥测，数据只留在设备本地。
 
-### v1.7.1 亮点
-- **绘图 API**：已加载的绘图模型现在也能开放成 OpenAI 兼容的图像生成接口——`POST /v1/images/generations`（返回 `b64_json`），另有 `GET /v1/models` 与 `GET /health`。传一句 `{"prompt": "..."}` 手机就出图；`n`（1~4）、`size`、`seed`、`steps`、`cfg_scale`、`negative_prompt` 都可选，没传的沿用绘图页当前设置
-- **对话 API 与绘图 API 是两套独立服务**：各自的端口（8080 / 8081）、各自的 API key、各自的开关与请求计数，可以只开放其中一个。两者**共用一个前台服务与一条通知**，通知里会列出真正在监听的地址；端口或 key 改动会自动重启对应的服务。绘图接口**默认关闭**——出一张图要吃满 CPU 几十秒，不开就不对局域网开放
-- **修复**
-  - 「关于」页显示的版本号是写死的，升级到 1.7.1 后仍显示 1.7.0。现改为从安装包读取，以后不可能再对不上
-  - 「设置 / 关于」两个分区的**折叠状态没有被记住**，合上后重启又会展开；现在会记住
-  - 启动 API 服务不再要求「先加载一个对话模型」（本来就不需要——只有各接口需要模型，未加载时接口会返回 503 并说明原因）
-- 版本 1.7.0 -> 1.7.1（versionCode 14）
+### v1.7.2 亮点
+- **绘图支持 TAESD**：给模型集挂一份 TAESD 权重后，绘图引擎会用一个很小的自编码器替代 VAE 做编解码，**CPU 出图的最后一步快很多**。它是可选、按模型集生效的：填了就用、清除即停。权重必须**同时含编码器与解码器**——只有解码器的文件会在导入时被拒绝并说明原因（图生图要用编码器）。支持 `.safetensors` / `.gguf`
+- **CPU 线程数改为全局设置**：位置在「关于」→「设置」（不再是绘图页），因为它管的是**所有 CPU 推理**——绘图（stable-diffusion.cpp）、对话 GGUF（llama.cpp）、打标（ONNX Runtime）三条路径共用同一个值。界面是**输入框，显示成「输入 / 上限」**，上限 = 设备真实可用核数；超过上限会被自动改到上限，填 0 会变成 1。改动在**下次加载模型时生效**
+  - 对话用的 `.litertlm`（Google LiteRT-LM）**不受此项控制**——该库没有线程数参数
+- **绘图状态行**会标出 TAESD 是否生效
+- 版本 1.7.1 -> 1.7.2（versionCode 15）
 
 ### 对话功能
 - 双后端：LiteRT-LM（`.litertlm`）+ llama.cpp（`.gguf`）
@@ -128,6 +126,8 @@ Ponko v1.7.1 —— 本地 AI App（Android）：聊天（可发图、可发文�
 
 ### 绘图功能
 - 内置自编 stable-diffusion.cpp；读 GGUF 格式的绘图模型——单文件整合版（SD1.5 / SD2 / SDXL）或按槽位补齐的多文件（拆包）组合；默认 CPU，可选 GPU（Vulkan）加速，失败自动回退 CPU
+- **TAESD（可选）**：用很小的自编码器替代 VAE 编解码，CPU 出图最后一步更快，代价是画面细节略有不同；权重在「模型槽位」里挂（`madebyollin/taesd` 可用），**必须编码器与解码器都在**
+- **CPU 线程数**：在「关于」→「设置」里全局设置，绘图 / 对话 GGUF / 打标共用
 - GPU 现状：只有绘图（Vulkan）、打标（NNAPI）、对话 `.litertlm` 三条带 GPU 代码，且都仅构建侧验证；对话 GGUF 只能 CPU
 - 文生图 + 图生图（重绘强度 0.05~0.99，尺寸自动对齐参考图）
 - **采样器**：列表与 sd.cpp 一一对应（含 DPM++ 2M SDE / SDE B&T / LMS / Res Multistep / ER SDE / Euler GE）
@@ -139,8 +139,8 @@ Ponko v1.7.1 —— 本地 AI App（Android）：聊天（可发图、可发文�
 
 ### 安装
 - 仅支持 arm64-v8a（64 位 ARM 真机），minSdk 28（Android 9 及以上）
-- v1.7.1（versionCode 14）可直接覆盖安装 v1.7.0 / v1.6.2 / v1.6.1 / v1.6.0 / v1.5.0 / v1.4.1 / v1.4.0 / v1.3.x / v1.2；更早的 debug 版或 v1.0 请先卸载（签名不同）
-- 模型文件需自备：对话模型（`.litertlm` / `.gguf`）、绘图模型（GGUF：单文件或多文件组合），打标模型（`.onnx` + `.csv`）可选，都在 App 内「模型/API」页导入
+- v1.7.2（versionCode 15）可直接覆盖安装 v1.7.1 / v1.7.0 / v1.6.2 / v1.6.1 / v1.6.0 / v1.5.0 / v1.4.1 / v1.4.0 / v1.3.x / v1.2；更早的 debug 版或 v1.0 请先卸载（签名不同）
+- 模型文件需自备：对话模型（`.litertlm` / `.gguf`）、绘图模型（GGUF：单文件或多文件组合）、可选的 TAESD 权重，打标模型（`.onnx` + `.csv`）可选，都在 App 内「模型/API」页导入
 
 ### 许可
 代码 MIT；美术资源（图标、立绘）版权归作者所有。本项目包含的第三方组件（stable-diffusion.cpp、ggml、Vulkan-Hpp/Vulkan-Headers、LiteRT-LM、llama.cpp、Markwon、PDFBox-Android、ONNX Runtime 等）按各自许可证分发，详见仓库 NOTICE。ONNX Runtime 另自带若干第三方组件，其声明收录在 `licenses/` 目录。各运行时原生库还静态链入 XNNPACK、protobuf、re2、cpuinfo、zlib 等，完整清单见 NOTICE 与 `licenses/` 目录。

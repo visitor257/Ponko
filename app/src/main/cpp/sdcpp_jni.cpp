@@ -129,6 +129,7 @@ enum SlotIndex {
     SLOT_LLM_VISION,
     SLOT_VAE,
     SLOT_AUDIO_VAE,
+    SLOT_TAESD,           // 可选：TAESD 小自编码器（替代 VAE 做编解码，CPU 出图更快）
     SLOT_COUNT
 };
 
@@ -137,7 +138,7 @@ enum SlotIndex {
 // backend：ggml 后端/设备名（如 "CPU" / "Vulkan0" / "vulkan"），空串或 null = 交给 sd.cpp 自动挑。
 // 显式传值会关掉 sd.cpp 的 auto_fit，行为更可控（选 CPU 就真是 CPU）。
 //
-// slots：多文件模型用。长度 12 的字符串数组，按 SlotIndex 顺序给槽位文件路径；
+// slots：模型槽位路径数组，按 SlotIndex 顺序给槽位文件路径（当前 13 项）；
 // 元素可以为 null / 空串（表示该槽位不填）。传 null = 走旧的两参数路径（单文件 + 可选 VAE）。
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_litertchat_app_draw_SdCppEngine_nativeCreate(
@@ -189,6 +190,9 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeCreate(
     p.llm_vision_path       = slotPtr[SLOT_LLM_VISION];
     p.vae_path              = vaePathC;
     p.audio_vae_path        = slotPtr[SLOT_AUDIO_VAE];
+    // TAESD：非空即启用（sd.cpp 里加载成功就把编解码换成 TAE，不再走上面的 vae_path）。
+    // 需要含编码器 + 解码器的完整权重——图生图要用编码器，纯解码器权重在 Kotlin 侧就被拦下了。
+    p.taesd_path            = slotPtr[SLOT_TAESD];
     p.n_threads    = (nThreads > 0) ? nThreads : sd_get_num_physical_cores();
     // wtype < 0 表示「保持模型原样」——此时【不能】覆盖，保留 sd_ctx_params_init 给的
     // SD_TYPE_COUNT。实测把 -1 强转成 sd_type_t 会让 sd.cpp 内部查表越界，native 直接崩溃。

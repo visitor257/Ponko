@@ -2,6 +2,7 @@
 package com.litertchat.app.draw
 
 import android.graphics.Bitmap
+import com.litertchat.app.InferConfig
 
 /**
  * Ponko 自编 stable-diffusion.cpp（GGUF）引擎。
@@ -150,7 +151,7 @@ object SdCppEngine {
     fun create(
         modelPath: String,
         vaePath: String?,
-        nThreads: Int = Runtime.getRuntime().availableProcessors().coerceIn(2, 4),
+        nThreads: Int = InferConfig.DEFAULT,
         wtype: Int = WTYPE_KEEP,
         flashAttn: Boolean = true,
         backend: String? = null,
@@ -160,11 +161,13 @@ object SdCppEngine {
     /**
      * 槽位顺序（与 JNI 里的 SlotIndex 一一对应；sd.cpp 的 sd_ctx_params_t 路径字段）。
      * 单文件模型只用 "model"；多文件模型按家族填 diffusion / clip_l / t5xxl / llm / vae 等。
+     * "taesd" 是可选的小自编码器权重（替代 VAE 编解码，CPU 出图更快）——追加在末尾，
+     * 与 JNI 的 SlotIndex 保持同序。
      */
     val SLOT_KEYS = arrayOf(
         "model", "diffusion", "high_noise", "uncond",
         "clip_l", "clip_g", "clip_vision", "t5xxl",
-        "llm", "llm_vision", "vae", "audio_vae",
+        "llm", "llm_vision", "vae", "audio_vae", "taesd",
     )
 
     /** 把槽位表（key -> 文件绝对路径）转成 JNI 要的定长数组 */

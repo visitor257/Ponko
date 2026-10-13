@@ -463,4 +463,11 @@
 <string name="s_426">Drawing model: %1$s</string>
 <string name="s_427">No drawing model loaded yet</string>
 <string name="s_428">The drawing API is generating an image, please wait</string>
+<string name="s_439">CPU threads</string>
+<string name="s_442">TAESD weights</string>
+<string name="s_443">This .safetensors has no encoder weights (encoder.layers.*). Decoder-only files break img2img in Ponko — use full TAESD weights that contain both the encoder and the decoder.</string>
+<string name="s_444">No TAESD decoder weights (decoder.layers.*) found in this .safetensors; it may not be a TAESD file.</string>
+<string name="s_445">TAESD needs .safetensors or .gguf weights. (.ckpt / .pt are torch files, and the ComfyUI taesd_decoder.pth holds only the decoder.)</string>
+<string name="s_446">Chat .litertlm models are not affected (that format takes no thread count).</string>
+<string name="s_447">/ %1$d</string>
 </resources>
