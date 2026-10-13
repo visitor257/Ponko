@@ -139,9 +139,6 @@ Serves the **already loaded** drawing model over an OpenAI-compatible text-to-im
 
 Taking a photo, picking an image and saving to the gallery require **no storage access permission at all**; apart from the entries below the app declares no other permissions.
 
-<details>
-<summary>Show the permission table</summary>
-
 | What | Permission | Why |
 | --- | --- | --- |
 | Take photo | **No `CAMERA`** | Uses `ACTION_IMAGE_CAPTURE`, delegating to the system camera app: the photo is taken there and only the result comes back. Declaring `CAMERA` without holding the grant would actually make this throw `SecurityException`, so it is intentionally left undeclared |
@@ -155,8 +152,6 @@ Taking a photo, picking an image and saving to the gallery require **no storage 
 - The `content://` grant returned by the camera or gallery is **temporary**, so imported files are copied into the private directory right away (this is why picking a model copies it)
 - The `IMAGE_CAPTURE` entry under `<queries>` is an Android 11+ package-visibility declaration, not a permission
 - No location, contacts or microphone permission is requested; **`POST_NOTIFICATIONS` and the foreground-service permissions are only used while the API server is on**
-
-</details>
 
 ## Languages
 
@@ -183,16 +178,11 @@ powershell -ExecutionPolicy Bypass -File tools/sign-apk.ps1 -Apk app\build\outpu
 powershell -File tools/build-release.ps1
 ```
 
-<details>
-<summary>Show build details</summary>
-
 - `minSdk 28` / `targetSdk 36`, **arm64-v8a only** (native library constraint; a real device is required, emulators won't run it)
 - The first full compile of sd.cpp + ggml takes about 8-9 minutes; with C++ unchanged, incremental builds take ~10 seconds
 - Main dependencies: `com.google.ai.edge.litertlm:litertlm-android:0.17.0`, `net.ladenthin:llama-android:5.1.0`, `com.microsoft.onnxruntime:onnxruntime-android:1.22.0`, `com.tom-roush:pdfbox-android:2.0.27.0`, `io.noties.markwon:*:4.6.2`
 - Built by CMake: `libstable-diffusion.so` (sd.cpp itself), `libponko_sd.so` (JNI bridge)
 - The Vulkan backend (optional GPU drawing) needs **no Vulkan SDK**: `glslc` and the SPIRV headers come from the NDK, plus a **host compiler** to build the shader generator (MSVC on Windows - `tools/build-release.ps1` loads the `vcvars64` environment for you)
-
-</details>
 
 ## Where to get models
 
@@ -203,9 +193,6 @@ powershell -File tools/build-release.ps1
 - **Tagger**: the `.onnx` of a Danbooru-style tagger plus its matching tag-list CSV (the two must go together; e.g. WD14's `wd-v1-4-swinv2-tagger-v2` and `selected_tags.csv`)
 
 ## Known limitations
-
-<details>
-<summary>Show all 16 known limitations</summary>
 
 - Chat context defaults to 4096 tokens (adjustable on the Models/API page; on the LiteRT-LM side it cannot exceed the limit built into the model); beyond that it relies on llama.cpp's context-shift sliding window
 - The GGUF chat path currently uses CPU only (the binding used does not include GPU backends)
@@ -224,8 +211,6 @@ powershell -File tools/build-release.ps1
 - The drawing endpoint is **text-to-image only** (no image-to-image), supports only `response_format=b64_json`, and once started a request cannot be cancelled midway (it finishes the current image, even if the client disconnects); while the app itself is generating the endpoint returns 429, and while the API is generating the app tells you to wait (one drawing engine, no concurrency)
 - When the context does not fit, older turns and file text are trimmed automatically; if it still does not fit, the app tells you what to do: start a new chat, send a shorter file, or drop some old turns
 
-</details>
-
 ## License
 
 - **Code**: [MIT](LICENSE)
@@ -233,9 +218,6 @@ powershell -File tools/build-release.ps1
 - **Third-party components**: distributed under their own licenses - see [NOTICE](NOTICE) for the full list
 
 ## Third-party components
-
-<details>
-<summary>Show the third-party component list</summary>
 
 | Component | License | Distributed as |
 | --- | --- | --- |
@@ -264,8 +246,6 @@ powershell -File tools/build-release.ps1
 > ONNX Runtime bundles additional third-party components; see [licenses/onnxruntime-ThirdPartyNotices.txt](licenses/onnxruntime-ThirdPartyNotices.txt).
 > commonmark / Jackson / Gson / SLF4J are **transitive dependencies** pulled in automatically by Markwon, the llama.cpp binding, and LiteRT-LM.
 > Components statically linked into the third-party native libraries (XNNPACK, protobuf, re2, cpuinfo, zlib, ...) and the full license texts are in [licenses/](licenses/) and [NOTICE](NOTICE).
-
-</details>
 
 ## Credits
 
