@@ -470,4 +470,10 @@
     <string name="s_445">TAESD 请用 .safetensors 或 .gguf 权重。（.ckpt / .pt 是 torch 格式，ComfyUI 的 taesd_decoder.pth 也只有解码器。）</string>
     <string name="s_446">对话的 .litertlm 模型不受此项控制（该格式不支持指定线程数）。</string>
     <string name="s_447">/ %1$d</string>
+    <string name="s_448">声明</string>
+    <string name="s_449">本应用的全部输出内容（文字、图片、标签等）均由设备上的 AI 模型自动生成，可能不准确、不完整或带有偏差，不代表开发者立场，也不构成任何形式的建议。开发者无法预知、审核或控制生成结果，对其准确性、合法性、适用性不作任何保证，亦不承担因使用这些内容而产生的任何责任。请自行判断并对结果负责，不得将生成内容用于违反法律法规或侵害他人权益的用途。</string>
+    <string name="s_450">本项目为开源软件：源代码采用 MIT License，可自由使用与修改；美术资源（应用图标、角色立绘、原始画稿）版权归作者所有，保留所有权利，不适用 MIT 许可；所集成的第三方组件分别遵循其各自的许可证，版权归各自作者所有。</string>
+    <string name="s_451">更完整的说明——功能与用法、已知限制、第三方组件清单与各许可证全文——请见项目仓库中的 README 与 NOTICE。</string>
+    <string name="s_452">在 GitHub 上查看 README</string>
+    <string name="s_453">在 GitHub 上查看 NOTICE</string>
 </resources>
