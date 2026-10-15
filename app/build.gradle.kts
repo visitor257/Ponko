@@ -10,7 +10,11 @@ android {
     ndkVersion = "27.3.13750724"
 
     defaultConfig {
-        applicationId = "com.litertchat.app"
+        // hw 分支：包名加 .hw 后缀，让上架版与主线版能**同机共存、数据互不影响**
+        // （Android 以 applicationId 区分 App；filesDir / 偏好 / 会话库都随它走）。
+        // 界面上显示的名字仍是 "Ponko"（AndroidManifest 的 android:label），两版一致。
+        // ⚠ 华为 AGC 首次发布后 applicationId 不可更改，这里定下即永久。
+        applicationId = "com.litertchat.app.hw"
         minSdk = 28
         targetSdk = 36
         versionCode = 15
