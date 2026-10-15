@@ -24,6 +24,7 @@ See the [README](https://github.com/visitor257/Ponko#readme).
 - **CPU thread count is now a global setting**: it lives in About -> Settings (not on the drawing page) because it governs **all CPU inference** - drawing (stable-diffusion.cpp), chat GGUF (llama.cpp) and tagging (ONNX Runtime) share one value. It is a **text field showing "input / max"**, where the max is your device's real available core count; values above it are clamped down and 0 becomes 1. Changes apply the next time a model is loaded
   - Chat `.litertlm` (Google LiteRT-LM) is **not** affected - that library exposes no thread-count parameter
 - **Drawing status line** now marks when TAESD is active
+- **Disclaimer on the About page**: the bottom of About now carries a disclaimer - everything the app produces (text, images, tags) is generated automatically by AI models on your device, may be inaccurate, incomplete or biased, does not represent the developer's views, and carries no warranty: the developer cannot review or control the output and accepts no liability for any consequence of using it. The same block restates the open-source terms (source code MIT; artwork \u00a9 the author, all rights reserved; bundled components under their own licences) and links straight to the README and the NOTICE
 - Version 1.7.1 -> 1.7.2 (versionCode 15)
 
 ## Chat
@@ -90,6 +91,7 @@ Ponko v1.7.2 —— 本地 AI App（Android）：聊天（可发图、可发文�
 - **CPU 线程数改为全局设置**：位置在「关于」→「设置」（不再是绘图页），因为它管的是**所有 CPU 推理**——绘图（stable-diffusion.cpp）、对话 GGUF（llama.cpp）、打标（ONNX Runtime）三条路径共用同一个值。界面是**输入框，显示成「输入 / 上限」**，上限 = 设备真实可用核数；超过上限会被自动改到上限，填 0 会变成 1。改动在**下次加载模型时生效**
   - 对话用的 `.litertlm`（Google LiteRT-LM）**不受此项控制**——该库没有线程数参数
 - **绘图状态行**会标出 TAESD 是否生效
+- **「关于」页新增「声明」**：「关于」最底部现在有一段声明——应用的全部输出（文字、图片、标签）均由设备上的 AI 模型自动生成，可能不准确、不完整或有偏差，不代表开发者立场，且不作任何保证：开发者无法审核或控制生成结果，亦不承担因使用而产生的任何责任。同一段还重申了开源条款（源代码 MIT；美术资源版权归作者、保留所有权利；第三方组件各循其自身许可证），并提供直达 README 与 NOTICE 的链接
 - 版本 1.7.1 -> 1.7.2（versionCode 15）
 
 ### 对话功能

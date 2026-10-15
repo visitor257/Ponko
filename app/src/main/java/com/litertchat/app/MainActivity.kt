@@ -1975,6 +1975,21 @@ class MainActivity : Activity() {
         aboutBody.addView(pageTitle(getString(R.string.s_194)), matchWrap().apply { topMargin = dp(14) })
         aboutBody.addView(linkText(getString(R.string.s_107), "https://github.com/visitor257/Ponko"))
 
+        // ---- 声明（「关于」最底：AI 产出免责 + 开源版权 + 指向 README / NOTICE）----
+        // 单独成段而不是并进上面的「许可」：许可是"我用了谁的"，声明是"产出归谁负责"，
+        // 两件事性质不同（前者是义务披露，后者是责任边界）。
+        aboutBody.addView(divider(), matchWrap().apply { topMargin = dp(14) })
+        aboutBody.addView(pageTitle(getString(R.string.s_448)), matchWrap().apply { topMargin = dp(12) })
+        aboutBody.addView(hintText(getString(R.string.s_449)))
+        aboutBody.addView(hintText(getString(R.string.s_450)))
+        aboutBody.addView(hintText(getString(R.string.s_451)))
+        aboutBody.addView(
+            linkText(getString(R.string.s_452), "https://github.com/visitor257/Ponko/blob/main/README.md")
+        )
+        aboutBody.addView(
+            linkText(getString(R.string.s_453), "https://github.com/visitor257/Ponko/blob/main/NOTICE")
+        )
+
         sv.addView(card, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
         return sv

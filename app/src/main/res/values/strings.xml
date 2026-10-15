@@ -470,4 +470,10 @@
 <string name="s_445">TAESD needs .safetensors or .gguf weights. (.ckpt / .pt are torch files, and the ComfyUI taesd_decoder.pth holds only the decoder.)</string>
 <string name="s_446">Chat .litertlm models are not affected (that format takes no thread count).</string>
 <string name="s_447">/ %1$d</string>
+<string name="s_448">Disclaimer</string>
+<string name="s_449">Everything this app produces - text, images, tags and so on - is generated automatically by AI models running on your device. It may be inaccurate, incomplete or biased; it does not represent the developer\'s views and is not advice of any kind. The developer cannot foresee, review or control the output, makes no warranty as to its accuracy, legality or fitness for any purpose, and accepts no liability for any consequence of using it. Judge the results yourself, use them at your own risk, and do not use them for anything unlawful or that infringes the rights of others.</string>
+<string name="s_450">Ponko is open-source software. The source code is released under the MIT License; artwork (app icon, character art, original drawings) remains © the author, all rights reserved, and is not covered by the MIT License; the third-party components it bundles are governed by their own licenses, each © its respective authors.</string>
+<string name="s_451">For the fuller picture - features and usage, known limitations, the complete list of third-party components and their full license texts - see the README and the NOTICE in the project repository.</string>
+<string name="s_452">View the README on GitHub</string>
+<string name="s_453">View the NOTICE on GitHub</string>
 </resources>
