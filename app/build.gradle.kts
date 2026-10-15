@@ -14,7 +14,8 @@ android {
         minSdk = 28
         targetSdk = 36
         versionCode = 15
-        versionName = "1.7.2"
+        // hw 分支：华为应用市场专用版本，版本名带 -hw 后缀以示区分（见 .workbuddy/memory）
+        versionName = "1.7.2-hw"
         ndk {
             // LiteRT-LM 与 llama.cpp 的 native 都只跑 arm64 真机，去掉 x86_64 可减小 APK
             abiFilters += "arm64-v8a"

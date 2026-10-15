@@ -2,6 +2,7 @@
 package com.litertchat.app.draw
 
 import com.litertchat.app.DrawCore
+import com.litertchat.app.HwAiMark
 import com.litertchat.app.InferConfig
 import com.litertchat.app.PonkoTheme
 import com.litertchat.app.R
@@ -325,8 +326,14 @@ class DrawPage(
     private lateinit var historyRow: LinearLayout
     private lateinit var histEmpty: TextView
 
-    /** 最近一次生成的图（结果页「保存到相册」用） */
+    /**
+     * 最近一次生成的结果，两张：
+     *  · [lastImage] = 带 AI 标识带的版本 —— 界面展示与「保存到相册」用它（华为上架要求）
+     *  · [lastRaw]   = 未加带的原图 —— 送去「图生图 / 打标」用它，
+     *                  否则标识带会被当成画面内容再喂回模型
+     */
     private var lastImage: Bitmap? = null
+    private var lastRaw: Bitmap? = null
 
     // ---- 结果面板子页：结果 / 过程（生成过程实时预览） ----
     private lateinit var tabResResult: TextView
@@ -1160,9 +1167,9 @@ class DrawPage(
             .show()
     }
 
-    /** 结果图 → 图生图参考图（并切换过去） */
+    /** 结果图 → 图生图参考图（并切换过去）。用**原图**：标识带不该进入再生成。 */
     private fun sendResultToI2i() {
-        val b = lastImage
+        val b = lastRaw
         if (b == null) {
             toast(c.getString(R.string.s_183))
             return
@@ -1174,9 +1181,9 @@ class DrawPage(
         toast(c.getString(R.string.s_239))
     }
 
-    /** 结果图 → Tagger 输入图（并切换过去） */
+    /** 结果图 → Tagger 输入图（并切换过去）。同样用**原图**，避免标识带被反推成 tag。 */
     private fun sendResultToTagger() {
-        val b = lastImage
+        val b = lastRaw
         if (b == null) {
             toast(c.getString(R.string.s_183))
             return
@@ -2085,16 +2092,8 @@ class DrawPage(
                     onPreview = { st, w, h, rgb -> onPreviewFrame(st, w, h, rgb) },
                 )
                 ticker.cancel()
-                val bmp = toBitmap(img)
                 val sec = (System.currentTimeMillis() - startedAt) / 1000
-                resultImg.post {
-                    DrawHistory.add(img)          // 先进历史（内存）
-                    lastImage = bmp
-                    resultImg.setImageBitmap(bmp)
-                    resultInfo.text = c.getString(R.string.v_051, (img.width), (img.height), (img.seed), (sec))
-                    refreshHistory()
-                    switchPane(toResult = true)   // 出图后自动跳到结果页
-                }
+                resultImg.post { showResult(img, sec) }
                 val doneTxt = c.getString(R.string.v_052, (img.width), (img.height), (img.seed), (sec))
                 progressText.post { progressText.text = doneTxt }
                 if (::procStepText.isInitialized) procStepText.post { procStepText.text = doneTxt }
@@ -2187,7 +2186,7 @@ class DrawPage(
                 )
             } ?: throw IllegalStateException(c.getString(R.string.s_147))
             onProgress(steps, steps)
-            return ImageData(bmp, useSeed)
+            return markResult(bmp, useSeed)
         } finally {
             DrawCore.uiBusy = false
         }
@@ -2286,16 +2285,8 @@ class DrawPage(
                     onPreview = { st, w, h, rgb -> onPreviewFrame(st, w, h, rgb) },
                 )
                 ticker.cancel()
-                val bmp = toBitmap(img)
                 val sec = (System.currentTimeMillis() - startedAt) / 1000
-                resultImg.post {
-                    DrawHistory.add(img)
-                    lastImage = bmp
-                    resultImg.setImageBitmap(bmp)
-                    resultInfo.text = c.getString(R.string.v_051, (img.width), (img.height), (img.seed), (sec))
-                    refreshHistory()
-                    switchPane(toResult = true)
-                }
+                resultImg.post { showResult(img, sec) }
                 val i2iDoneTxt = c.getString(R.string.v_052, (img.width), (img.height), (img.seed), (sec))
                 i2iProgressText.post { i2iProgressText.text = i2iDoneTxt }
                 if (::procStepText.isInitialized) procStepText.post { procStepText.text = i2iDoneTxt }
@@ -2375,10 +2366,35 @@ class DrawPage(
             )
         } ?: throw IllegalStateException(c.getString(R.string.s_147))
         onProgress(steps, steps)
-        return ImageData(bmp, useSeed)
+        return markResult(bmp, useSeed)
     }
 
     fun toBitmap(img: ImageData): Bitmap = img.bitmap
+
+    /**
+     * 把 native 出图结果包成 ImageData：**原图** + 底部带 AI 标识带的那张。
+     *
+     * 这里是出图的唯一收口（文生图 / 图生图 / 对话页出图都走它），
+     * 所以标识带在这一步一次性加上，后面各条链路只管取 [ImageData.view]。
+     */
+    private fun markResult(bmp: Bitmap, seed: Long): ImageData =
+        ImageData(bmp, seed, HwAiMark.stamp(bmp, c.getString(R.string.s_454)))
+
+    /**
+     * 出图后的统一收尾（文生图 / 图生图共用）：入历史并切到结果页。
+     *
+     * 展示用 [ImageData.view]（带标识带），而「发送至图生图 / 打标」用 [ImageData.bitmap]
+     * （原图）—— 标识带是给人和审核看的，不该被当成画面内容再喂回模型。
+     */
+    private fun showResult(img: ImageData, sec: Long) {
+        DrawHistory.add(img)                                 // 先进历史（内存）
+        lastRaw = img.bitmap
+        lastImage = img.view
+        resultImg.setImageBitmap(img.view)
+        resultInfo.text = c.getString(R.string.v_051, (img.width), (img.height), (img.seed), (sec))
+        refreshHistory()
+        switchPane(toResult = true)                          // 出图后自动跳到结果页
+    }
 
     /** 供对话页调用：把生成过程的预览帧转给「过程」页 */
     fun previewFrame(step: Int, w: Int, h: Int, rgb: ByteArray) = onPreviewFrame(step, w, h, rgb)
@@ -2821,8 +2837,9 @@ class DrawPage(
 
     /** 点缩略图：把大图切到这一张 */
     private fun showHistoryImage(img: ImageData) {
-        lastImage = img.bitmap
-        resultImg.setImageBitmap(img.bitmap)
+        lastRaw = img.bitmap
+        lastImage = img.view
+        resultImg.setImageBitmap(img.view)
         resultInfo.text = "${img.width}×${img.height} · seed ${img.seed}"
     }
 
@@ -2834,7 +2851,7 @@ class DrawPage(
         historyRow.removeAllViews()
         for (img in items) {
             val iv = ImageView(c).apply {
-                setImageBitmap(img.bitmap)
+                setImageBitmap(img.view)
                 scaleType = ImageView.ScaleType.CENTER_CROP
                 setBackgroundColor(pal.mediaBg)
                 setOnClickListener { showHistoryImage(img) }
@@ -2853,10 +2870,19 @@ class DrawPage(
 }
 
 
-/** 生成结果：Bitmap + 尺寸 + 实际使用的种子 */
-class ImageData(val bitmap: Bitmap, val seed: Long) {
+/**
+ * 生成结果：Bitmap + 尺寸 + 实际使用的种子。
+ *
+ * [marked] 是底部接了 AI 标识带的那张（华为上架版要求）。展示与保存都用它，
+ * 而 [width]/[height] 报的仍是**原图**尺寸 —— 用户设了 512×512 就该看到 512×512，
+ * 标识带是附加说明，不该改变「这张图多大」。
+ */
+class ImageData(val bitmap: Bitmap, val seed: Long, val marked: Bitmap? = null) {
     val width: Int get() = bitmap.width
     val height: Int get() = bitmap.height
+
+    /** 界面展示 / 保存到相册用的那一张 */
+    val view: Bitmap get() = marked ?: bitmap
 }
 
 /**

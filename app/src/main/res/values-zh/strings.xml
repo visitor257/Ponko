@@ -476,4 +476,6 @@
     <string name="s_451">更完整的说明——功能与用法、已知限制、第三方组件清单与各许可证全文——请见项目仓库中的 README 与 NOTICE。</string>
     <string name="s_452">在 GitHub 上查看 README</string>
     <string name="s_453">在 GitHub 上查看 NOTICE</string>
+    <string name="s_454">产出内容由AI生成</string>
+    <string name="s_455">本图片由人工智能（AI）生成</string>
 </resources>

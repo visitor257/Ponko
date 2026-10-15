@@ -1000,7 +1000,8 @@ class MainActivity : Activity() {
         scrollView = ScrollView(this).apply {
             isFillViewport = true
             clipToPadding = false
-            setPadding(dp(12), dp(4), dp(12), dp(8))
+            // 顶部多留出角标的高度，免得第一句话被「AI 生成内容」角标压住
+            setPadding(dp(12), dp(28), dp(12), dp(8))
         }
         chatContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         scrollView.addView(chatContainer, FrameLayout.LayoutParams(
@@ -1030,6 +1031,23 @@ class MainActivity : Activity() {
         chatWrap.addView(jumpButton, FrameLayout.LayoutParams(dp(44), dp(44)).apply {
             gravity = Gravity.BOTTOM or Gravity.END
             setMargins(0, 0, dp(16), dp(16))
+        })
+
+        // 华为上架要求：对话界面右上角常驻「本界面内容由 AI 生成」提示。
+        // 挂在 chatWrap 上而不是共享顶栏，这样只在对话页出现，也不占顶栏的空间。
+        val aiTag = TextView(this).apply {
+            text = getString(R.string.s_454)
+            textSize = 10f
+            setTextColor(C_SUBTEXT)
+            background = rounded(C_CARD, 8, 1, C_DIVIDER)
+            setPadding(dp(8), dp(4), dp(8), dp(4))
+        }
+        chatWrap.addView(aiTag, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.END
+            setMargins(0, dp(4), dp(12), 0)
         })
 
         // 滚动规则：只看「距离底部的距离」，不看滚动方向（方向判在可选中文本上是不可靠的）。
@@ -4569,7 +4587,8 @@ class MainActivity : Activity() {
                     onPreview = { st, w, h, rgb -> dpg.previewFrame(st, w, h, rgb) },
                 )
                 ticker.cancel()
-                val bmp = dpg.toBitmap(img)
+                // 用带 AI 标识带的版本：对话页出的图同样是 AI 产出，落盘与展示都要带标识
+                val bmp = img.view
                 val name = "ponko_${System.currentTimeMillis()}.png"
                 val saved = withContext(Dispatchers.IO) { writeChatImage(bmp, name) }
                 turn.image = if (saved) name else null
@@ -4604,13 +4623,36 @@ class MainActivity : Activity() {
         }
     }
 
-    /** 把图片写进应用私有目录，返回是否成功 */
+    /** 把图片写进应用私有目录，返回是否成功（写入带隐式标识的 PNG） */
     private fun writeChatImage(bmp: Bitmap, name: String): Boolean = try {
         val dir = File(filesDir, "chatimg").apply { mkdirs() }
-        File(dir, name).outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        File(dir, name).outputStream().use { it.write(aiPngBytes(bmp)) }
         true
     } catch (_: Throwable) {
         false
+    }
+
+    /**
+     * 把 AI 产出的图编码成带「隐式标识」的 PNG 字节。
+     *
+     * 隐式标识 = 肉眼不可见、不占画面任何一个像素、裁图也裁不掉的机器可读标记：
+     *   · EXIF 注释字段（ImageDescription 用 UTF-8、UserComment 用 UNICODE+UTF-16）
+     *   · PNG iTXt 文本块
+     * 落在文件的标准元数据里，检测工具与平台审核读文件属性即可识别。
+     * 编码失败时退回普通 PNG，绝不让保存流程失败。
+     */
+    private fun aiPngBytes(bmp: Bitmap): ByteArray = try {
+        val bos = java.io.ByteArrayOutputStream()
+        bmp.compress(Bitmap.CompressFormat.PNG, 100, bos)
+        HwAiMark.withExif(
+            bos.toByteArray(),
+            getString(R.string.s_455),
+            "Ponko (AI-generated content)"
+        )
+    } catch (_: Throwable) {
+        val bos = java.io.ByteArrayOutputStream()
+        bmp.compress(Bitmap.CompressFormat.PNG, 100, bos)
+        bos.toByteArray()
     }
 
     private fun readChatImage(name: String): Bitmap? = try {
@@ -4817,7 +4859,8 @@ class MainActivity : Activity() {
                     )
                     if (uri != null) {
                         contentResolver.openOutputStream(uri)?.use {
-                            bmp.compress(Bitmap.CompressFormat.PNG, 100, it)
+                            // 落盘时写入 AI 生成的隐式标识（EXIF 注释字段 + PNG 文本块）
+                            it.write(aiPngBytes(bmp))
                         }
                         true
                     } else false
