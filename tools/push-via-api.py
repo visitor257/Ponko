@@ -35,9 +35,13 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
+# ROOT 可用 GH_ROOT 覆盖：这样能把脚本复制到仓库外运行，
+# 用来推送「脚本本身还是旧版」的历史提交（否则 checkout 回旧提交后就用不上新脚本了）。
+ROOT = os.environ.get("GH_ROOT") or os.path.dirname(HERE)
 REPO = os.environ.get("GH_REPO", "visitor257/Ponko")
 BRANCH = os.environ.get("GH_BRANCH", "main")
+# 目标分支在远端不存在时，从哪个分支派生（新分支的起点）。默认 main。
+BASE_BRANCH = os.environ.get("GH_BASE_BRANCH", "main")
 TOKEN_FILE = os.environ.get("GH_TOKEN_FILE",
                             os.path.join(os.path.expanduser("~"), "Desktop", "git_repo_tok.txt"))
 if not os.environ.get("GH_TOKEN"):
@@ -48,7 +52,7 @@ GIT = shutil.which("git") or "git"
 NEEDS_SHELL = GIT.lower().endswith((".cmd", ".bat"))
 
 
-def api(method, path, data=None, attempts=5):
+def api(method, path, data=None, attempts=5, allow404=False):
     """请求 GitHub API。网络抖动（IncompleteRead / 连接重置等）自动重试。
 
     读响应有两点讲究（2026-10-13 踩坑后加）：
@@ -56,6 +60,8 @@ def api(method, path, data=None, attempts=5):
          表现为 IncompleteRead，且每次差的字节数都不一样、重试必然同样失败。
       2. **接受 gzip**——GitHub 支持压缩，440KB 的树响应压完只有几十 KB，
          顺带绕开上面的截断阈值。
+
+    allow404=True 时 404 返回 None 而不抛异常（用于"分支/引用是否存在"这类探测）。
     """
     url = "https://api.github.com" + path
     body = json.dumps(data).encode() if data is not None else None
@@ -83,6 +89,8 @@ def api(method, path, data=None, attempts=5):
                 raw = gzip.decompress(raw)
             return json.loads(raw.decode("utf-8"))
         except urllib.error.HTTPError as e:
+            if e.code == 404 and allow404:
+                return None
             print("!! HTTP", e.code, e.read().decode()[:800])
             raise
         except Exception as e:
@@ -129,13 +137,23 @@ def main():
     message = raw.split("\n\n", 1)[1]
     print("本地 HEAD :", head)
 
-    ref = api("GET", "/repos/%s/git/ref/heads/%s" % (REPO, BRANCH))
-    remote_head = ref["object"]["sha"]
+    ref = api("GET", "/repos/%s/git/ref/heads/%s" % (REPO, BRANCH), allow404=True)
+    creating = ref is None
+    if creating:
+        # 远端还没有这个分支：从 BASE_BRANCH 派生。
+        # 以 BASE_BRANCH 的 HEAD 作为比对基准与父提交，下面的"整树比对"逻辑
+        # 就能自然地只上传差异文件（本地分支相对 base 改了什么就传什么）。
+        base_ref = api("GET", "/repos/%s/git/ref/heads/%s" % (REPO, BASE_BRANCH))
+        remote_head = base_ref["object"]["sha"]
+        print("远端暂无分支 %s，将从 %s(%s) 新建"
+              % (BRANCH, BASE_BRANCH, remote_head[:7]))
+    else:
+        remote_head = ref["object"]["sha"]
     print("远端 HEAD :", remote_head)
-    if remote_head == head:
+    if not creating and remote_head == head:
         print("已同步，无需推送。")
         return 0
-    if remote_head != parent:
+    if not creating and remote_head != parent:
         print("注意：远端 HEAD 与本地父提交不同（%s vs %s），将基于远端最新状态提交。"
               % (remote_head[:7], (parent or "-")[:7]))
     base_tree = api("GET", "/repos/%s/git/commits/%s" % (REPO, remote_head))["tree"]["sha"]
@@ -185,9 +203,15 @@ def main():
         "message": message, "tree": tree["sha"], "parents": [remote_head],
         "author": ident(author), "committer": ident(committer),
     })
-    api("PATCH", "/repos/%s/git/refs/heads/%s" % (REPO, BRANCH),
-        {"sha": commit["sha"], "force": False})
-    print("远端分支已更新 ->", commit["sha"])
+    if creating:
+        # 新分支：创建引用（PATCH 会 404）
+        api("POST", "/repos/%s/git/refs" % REPO,
+            {"ref": "refs/heads/%s" % BRANCH, "sha": commit["sha"]})
+        print("远端新分支 %s 已创建 ->" % BRANCH, commit["sha"])
+    else:
+        api("PATCH", "/repos/%s/git/refs/heads/%s" % (REPO, BRANCH),
+            {"sha": commit["sha"], "force": False})
+        print("远端分支已更新 ->", commit["sha"])
     print("（本地提交 %s 内容相同但 sha 不同，属正常：本地 git 与远端不再按 sha 对齐）" % head[:7])
     return 0
 
