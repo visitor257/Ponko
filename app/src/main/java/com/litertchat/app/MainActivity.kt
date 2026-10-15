@@ -115,6 +115,9 @@ class MainActivity : Activity() {
         // ---- 关于页两个折叠分区的展开状态（存盘：重启后保持用户上次的选择）----
         private const val KEY_UI_SETTINGS_OPEN = "uiSettingsOpen"
         private const val KEY_UI_ABOUT_OPEN = "uiAboutOpen"
+
+        /** hw 分支：首次启动的声明弹窗是否已确认（只在点「确认」时写入） */
+        private const val KEY_DISCLAIMER_ACK = "hwDisclaimerAck"
         /** 一轮对话里最多让打标模型「看图」几次（agent 循环上限） */
         private const val MAX_TAG_ROUNDS = 2
         /** 单条消息最多能带的文件数（本地模型上下文有限，文件比图片更吃 token） */
@@ -991,6 +994,52 @@ class MainActivity : Activity() {
         if (restoreTab in 0..3) {
             chatPrefs().edit().remove("restoreTab").apply()
             switchTab(restoreTab)
+        }
+
+        // hw 分支（华为上架版）：首次启动弹一次声明，必须点确认
+        showDisclaimerOnce()
+    }
+
+    /**
+     * 首次启动的声明弹窗（hw 分支专用，只弹一次）。
+     *
+     * 内容与「关于」页最底那段「声明」**同源**（都取 s_449 / s_450 / s_451），
+     * 保证两处措辞永远一致 —— 措辞不一致在审核时会被当成"与站内声明不符"。
+     * 末尾单独加粗「使用本应用即代表知晓并同意此声明」（s_456），
+     * 加粗范围由 [HwFirstRun.build] 算，起止下标已离线验证过。
+     *
+     * 设计取舍：
+     * · **不可取消**（setCancelable(false)）—— 只有「确认」一个按钮，必须点掉；
+     *   若允许返回键关掉，用户会在没看过的情况下继续用，"知晓并同意"就落空了。
+     * · 标记**只在点确认时写入**：万一下面构建/显示失败，下次启动还会再弹，不会静默漏掉。
+     * · 整段包 runCatching：这是个提示，绝不能因为它把 App 拦在启动阶段。
+     */
+    private fun showDisclaimerOnce() {
+        val p = chatPrefs()
+        if (p.getBoolean(KEY_DISCLAIMER_ACK, false)) return
+        runCatching {
+            val (full, agreeStart) = HwFirstRun.build(
+                listOf(
+                    getString(R.string.s_449),
+                    getString(R.string.s_450),
+                    getString(R.string.s_451),
+                ),
+                getString(R.string.s_456),
+            )
+            val msg = android.text.SpannableString(full)
+            msg.setSpan(
+                android.text.style.StyleSpan(Typeface.BOLD),
+                agreeStart, full.length,
+                android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+            AlertDialog.Builder(this)
+                .setTitle(getString(R.string.s_448))
+                .setMessage(msg)
+                .setCancelable(false)
+                .setPositiveButton(getString(R.string.s_258)) { _, _ ->
+                    p.edit().putBoolean(KEY_DISCLAIMER_ACK, true).apply()
+                }
+                .show()
         }
     }
 
