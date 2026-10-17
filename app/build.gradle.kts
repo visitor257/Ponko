@@ -39,9 +39,10 @@ android {
         targetSdk = 36
         versionCode = 15
         // hw 分支：华为应用市场专用版本，版本名带 -hw 后缀以示区分（见 .workbuddy/memory）
-        // 版本号保持 1.7.2-hw（用户 2026-10-17 指定）：本次是同一版本被驳回后的整改重提，
-        // 不另开版本号。⚠ 若 AGC 以「versionCode 已被占用」拒收，只需把这里 +1 重建即可。
-        versionName = "1.7.2-hw"
+        // 版本名带 -hw 后缀表示上架版；-r2 表示第 2 轮提审（首次被驳回后的整改重提）。
+        // 版本号仍保持 1.7.2（用户 2026-10-17 指定）。⚠ 若 AGC 以
+        // 「versionCode 已被占用」拒收，只需把 versionCode +1 重建即可。
+        versionName = "1.7.2-hw-r2"
         ndk {
             // LiteRT-LM 与 llama.cpp 的 native 都只跑 arm64 真机，去掉 x86_64 可减小 APK
             abiFilters += "arm64-v8a"
