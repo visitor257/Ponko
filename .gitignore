@@ -45,3 +45,14 @@ keystore.properties
 # Python 缓存
 __pycache__/
 *.pyc
+
+# ===== 主体身份 / 上架私有物料（含真实姓名与邮箱，绝不入库）=====
+# 构建时读取，注入 resValue 与 assets/privacy.html；缺它也能构建（退回占位符）
+hw_secret.properties
+# 构建产物：由 privacy.html 模板 + hw_secret 生成，不入库（只忽略这一个文件，
+# 不用整个目录——否则以后往 assets 里加别的资源会被意外忽略）
+app/src/main/assets/privacy.html
+# 含真实身份信息的本地文档与真实版隐私政策
+_private/
+_hw_复审材料清单.txt
+_hw_审核工单草稿.txt

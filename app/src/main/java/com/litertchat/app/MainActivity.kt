@@ -1001,24 +1001,27 @@ class MainActivity : Activity() {
     }
 
     /**
-     * 首次启动的声明弹窗（hw 分支专用，只弹一次）。
+     * 首次启动的声明 + 隐私政策弹窗（hw 分支专用，只弹一次）。
      *
-     * 内容与「关于」页最底那段「声明」**同源**（都取 s_449 / s_450 / s_451），
-     * 保证两处措辞永远一致 —— 措辞不一致在审核时会被当成"与站内声明不符"。
-     * 末尾单独加粗「使用本应用即代表知晓并同意此声明」（s_456），
-     * 加粗范围由 [HwFirstRun.build] 算，起止下标已离线验证过。
+     * 华为审核第 5 条（规则 7.5）要求：首次启动必须以弹窗形式明确提示用户阅读隐私政策。
+     * 所以这个弹窗做两件事：
+     *   ① 展示「声明」（AI 产出免责 + 开源版权），与「关于」页**同源**（s_449/450/451）；
+     *   ② 末尾给出**可点击的《隐私政策》**（s_457，链接文字取 s_458），点开看全文。
      *
      * 设计取舍：
-     * · **不可取消**（setCancelable(false)）—— 只有「确认」一个按钮，必须点掉；
-     *   若允许返回键关掉，用户会在没看过的情况下继续用，"知晓并同意"就落空了。
-     * · 标记**只在点确认时写入**：万一下面构建/显示失败，下次启动还会再弹，不会静默漏掉。
-     * · 整段包 runCatching：这是个提示，绝不能因为它把 App 拦在启动阶段。
+     * · **不可取消**（setCancelable(false)），并且**「不同意」直接退出应用** ——
+     *   审核要看的就是"明确提示 + 用户主动同意"，允许返回键绕过等于没提示。
+     * · 同意标记**只在点「同意并继续」时写入**：万一显示失败，下次启动还会再弹，不会静默漏掉。
+     * · 整段包 runCatching：提示弹窗绝不能把 App 拦在启动阶段。
+     * · 用自定义 ScrollView + TextView 而不是 setMessage：AlertDialog 的 message
+     *   默认不带 LinkMovementMethod，可点击片段点不动；自己塞 TextView 才能保证可点。
+     * · 加粗范围由 [HwFirstRun.build] 算（已离线验证），隐私政策片段下标用 indexOf 现找。
      */
     private fun showDisclaimerOnce() {
         val p = chatPrefs()
         if (p.getBoolean(KEY_DISCLAIMER_ACK, false)) return
         runCatching {
-            val (full, agreeStart) = HwFirstRun.build(
+            val (body, agreeStart) = HwFirstRun.build(
                 listOf(
                     getString(R.string.s_449),
                     getString(R.string.s_450),
@@ -1026,18 +1029,59 @@ class MainActivity : Activity() {
                 ),
                 getString(R.string.s_456),
             )
-            val msg = android.text.SpannableString(full)
-            msg.setSpan(
+            val linkLabel = getString(R.string.s_458)
+            val full = body + "\n\n" + getString(R.string.s_457)
+
+            val ss = android.text.SpannableString(full)
+            // 「使用本应用即代表知晓并同意此声明」加粗
+            ss.setSpan(
                 android.text.style.StyleSpan(Typeface.BOLD),
-                agreeStart, full.length,
+                agreeStart, body.length,
                 android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
             )
+            // 《隐私政策》可点击 → 打开全文
+            val at = full.indexOf(linkLabel)
+            if (at >= 0) {
+                ss.setSpan(
+                    object : android.text.style.ClickableSpan() {
+                        override fun onClick(w: View) {
+                            HwPrivacy.show(
+                                this@MainActivity,
+                                getString(R.string.s_459),
+                                getString(R.string.s_258)
+                            )
+                        }
+
+                        override fun updateDrawState(ds: android.text.TextPaint) {
+                            ds.color = C_PRIMARY
+                            ds.isUnderlineText = true
+                        }
+                    },
+                    at, at + linkLabel.length,
+                    android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+            }
+
+            val tv = TextView(this).apply {
+                text = ss
+                textSize = 14f
+                setTextColor(C_TEXT)
+                setLineSpacing(dp(3).toFloat(), 1f)
+                setPadding(dp(20), dp(10), dp(20), dp(4))
+                movementMethod = android.text.method.LinkMovementMethod.getInstance()
+            }
+            val sv = ScrollView(this).apply { addView(tv) }
+
             AlertDialog.Builder(this)
                 .setTitle(getString(R.string.s_448))
-                .setMessage(msg)
+                .setView(sv)
                 .setCancelable(false)
-                .setPositiveButton(getString(R.string.s_258)) { _, _ ->
+                .setPositiveButton(getString(R.string.s_460)) { _, _ ->
                     p.edit().putBoolean(KEY_DISCLAIMER_ACK, true).apply()
+                }
+                .setNegativeButton(getString(R.string.s_461)) { _, _ ->
+                    // 不同意隐私政策 → 退出应用（规则 7.5 要求的"明确同意"）
+                    finishAffinity()
                 }
                 .show()
         }
@@ -1454,10 +1498,8 @@ class MainActivity : Activity() {
         }
         drawCard.addView(loraBox, matchWrap().apply { topMargin = dp(6) })
 
-        drawCard.addView(
-            actionButton(getString(R.string.s_039)) { pickLoraSource() },
-            matchWrap().apply { topMargin = dp(8) }
-        )
+        // hw 分支：已移除「下载 LCM-LoRA」入口 —— 本应用不提供、不下载任何 AI 模型（华为审核第 2 条）。
+        // LoRA 改由下面的「导入」自行选择本地文件，能力保留、只是不给一键下载。
         drawCard.addView(
             actionButton(getString(R.string.s_219)) { pickLoraFile() },
             matchWrap().apply { topMargin = dp(8) }
@@ -2037,10 +2079,27 @@ class MainActivity : Activity() {
         aboutBody.addView(hintText(getString(R.string.s_140)))
 
         aboutBody.addView(pageTitle(getString(R.string.s_043)), matchWrap().apply { topMargin = dp(14) })
-        aboutBody.addView(hintText("visitor257"))
+        // hw 分支：开发者名必须与 AGC 里登记的一字不差（华为审核第 6 条）。
+        // 取值放在 hw_identity.xml，提审前改那一处即可，不散落在代码里。
+        aboutBody.addView(hintText(getString(R.string.hw_developer_name)))
 
         aboutBody.addView(pageTitle(getString(R.string.s_194)), matchWrap().apply { topMargin = dp(14) })
         aboutBody.addView(linkText(getString(R.string.s_107), "https://github.com/visitor257/Ponko"))
+
+        // 隐私政策入口：随时可查，内容取自 assets 里与网页版同一份 HTML
+        // （华为第 4 条要求「应用内的隐私政策」与「AGC 提交的链接」内容一致）
+        aboutBody.addView(pageTitle(getString(R.string.s_459)), matchWrap().apply { topMargin = dp(14) })
+        aboutBody.addView(TextView(this).apply {
+            text = getString(R.string.s_465)
+            textSize = 13.5f
+            setTextColor(C_PRIMARY)
+            setPadding(0, dp(6), 0, 0)
+            isClickable = true
+            isFocusable = true
+            setOnClickListener {
+                HwPrivacy.show(this@MainActivity, getString(R.string.s_459), getString(R.string.s_258))
+            }
+        }, matchWrap())
 
         // ---- 声明（「关于」最底：AI 产出免责 + 开源版权 + 指向 README / NOTICE）----
         // 单独成段而不是并进上面的「许可」：许可是"我用了谁的"，声明是"产出归谁负责"，
@@ -3886,50 +3945,6 @@ class MainActivity : Activity() {
             )
         }
     }
-
-    /** 选下载源：官方 / hf-mirror 镜像 */
-    private fun pickLoraSource() {
-        AlertDialog.Builder(this)
-            .setTitle(getString(R.string.s_041))
-            .setItems(arrayOf(getString(R.string.s_028), getString(R.string.s_029))) { _, which ->
-                startLoraDownload(useMirror = which == 0)
-            }
-            .setNegativeButton(getString(R.string.s_066), null)
-            .show()
-    }
-
-    private fun startLoraDownload(useMirror: Boolean) {
-        val dpg = drawPage ?: return
-        val src = if (useMirror) "hf-mirror.com" else "huggingface.co"
-        loraStatusTv?.text = getString(R.string.v_007, (src))
-        setStatus(getString(R.string.s_018), C_WARN)
-        var lastPct = -2
-        scope.launch {
-            val err = dpg.downloadLora(useMirror) { done, total ->
-                val pct = if (total > 0) ((done * 100) / total).toInt() else -1
-                if (pct != lastPct) {
-                    lastPct = pct
-                    runOnUiThread {
-                        loraStatusTv?.text = if (pct >= 0)
-                            getString(R.string.v_008, (src), (pct), (fmtSize(done)), (fmtSize(total)))
-                        else
-                            getString(R.string.v_009, (src), (fmtSize(done)))
-                    }
-                }
-            }
-            runOnUiThread {
-                if (err == null) {
-                    toast(getString(R.string.s_020))
-                    setStatus(getString(R.string.s_023), C_OK)
-                } else {
-                    toast(err)
-                    setStatus(getString(R.string.s_019), C_ERR)
-                }
-                refreshLoraUi()
-            }
-        }
-    }
-
     /** 删除单个 LoRA：target 为空时删当前选中的那个（不再一次清空全部）。 */
     private fun confirmDeleteLora(target: File? = null) {
         val dpg = drawPage ?: return
@@ -4440,8 +4455,15 @@ class MainActivity : Activity() {
         jumpButton.visibility = View.GONE
         if (current.turns.isEmpty()) {
             if (showHint) {
-                addSystemHint(getString(R.string.s_032) +
-                    getString(R.string.s_033))
+                // hw 分支：没有模型时给「可操作的引导卡片」，而不是一行小字提示。
+                // 华为审核第 1 条把「装完打不了字」判为功能不可用 —— 光在发送时弹
+                // "请先加载模型"不够，必须一进页面就说清「本应用需要你先导入模型」并给出入口。
+                if (engine == null && llamaModel == null) {
+                    addEmptyStateGuide()
+                } else {
+                    addSystemHint(getString(R.string.s_032) +
+                        getString(R.string.s_033))
+                }
             }
         } else {
             for (t in current.turns) renderTurn(t)
@@ -5374,6 +5396,50 @@ class MainActivity : Activity() {
             topMargin = dp(8)
             bottomMargin = dp(2)
         })
+        scrollToBottom()
+    }
+
+    /**
+     * 没有模型时的首页引导卡片（hw 分支，对应华为审核第 1 条）。
+     *
+     * 为什么做成卡片而不是一行提示：
+     *   审核员装上 App 点进「对话」，看到的是"功能不可用"。要让他第一眼就明白
+     *   「这是需要你自带模型的设计，不是坏了」，并有一条能直接走下去的路。
+     *   所以这里给：标题 + 一句解释（为什么不内置）+ 明确的跳转按钮。
+     */
+    private fun addEmptyStateGuide() {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = rounded(C_CARD, 14)
+            setPadding(dp(16), dp(14), dp(16), dp(16))
+        }
+        box.addView(TextView(this).apply {
+            text = getString(R.string.s_462)
+            textSize = 15.5f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(C_TEXT)
+        }, matchWrap())
+        box.addView(TextView(this).apply {
+            text = getString(R.string.s_463)
+            textSize = 13f
+            setTextColor(C_SUBTEXT)
+            setLineSpacing(dp(2).toFloat(), 1f)
+            setPadding(0, dp(8), 0, 0)
+        }, matchWrap())
+        box.addView(TextView(this).apply {
+            text = getString(R.string.s_464)
+            textSize = 14f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            background = rounded(C_PRIMARY, 10)
+            setPadding(0, dp(10), 0, dp(10))
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { switchTab(1) }   // 1 = 「模型」页
+        }, matchWrap().apply { topMargin = dp(12) })
+
+        chatContainer.addView(box, matchWrap().apply { topMargin = dp(6) })
         scrollToBottom()
     }
 

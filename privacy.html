@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="all">
+<title>Ponko 隐私政策 / Privacy Policy</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px 18px 64px;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+    font-size: 16px; line-height: 1.85; color: #1c1c1e; background: #ffffff;
+    max-width: 760px; margin-left: auto; margin-right: auto;
+    -webkit-text-size-adjust: 100%;
+  }
+  h1 { font-size: 24px; margin: 0 0 6px; letter-spacing: .3px; }
+  h2 { font-size: 17px; margin: 34px 0 8px; padding-top: 6px; border-top: 1px solid #e6e6ea; }
+  h2:first-of-type { border-top: 0; }
+  .meta { font-size: 13.5px; color: #6b6b70; margin: 0 0 22px; }
+  .lead {
+    background: #f2f6ff; border-left: 4px solid #2f6bff;
+    padding: 14px 16px; margin: 22px 0; border-radius: 6px;
+    font-weight: 600; font-size: 16.5px;
+  }
+  p { margin: 10px 0; }
+  ul { margin: 8px 0 8px; padding-left: 22px; }
+  li { margin: 5px 0; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 15px; }
+  th, td { border: 1px solid #e0e0e4; padding: 9px 11px; text-align: left; vertical-align: top; }
+  th { background: #f6f6f8; font-weight: 600; }
+  code { background: #f4f4f6; padding: 1px 5px; border-radius: 4px; font-size: 13.5px; }
+  .foot { margin-top: 42px; padding-top: 14px; border-top: 1px solid #e6e6ea;
+          font-size: 13.5px; color: #6b6b70; }
+  /* 语言分界：中英各一份，同页向下排列，不需要任何点击或跳转 */
+  .langsep {
+    margin: 46px 0 30px; padding: 10px 0 0;
+    border-top: 2px solid #2f6bff;
+    font-size: 13px; letter-spacing: 2px; text-transform: uppercase;
+    color: #6b6b70; font-weight: 600;
+  }
+  .note { font-size: 14px; color: #6b6b70; margin: -4px 0 18px; }
+  /* ---- 语言导航（锚点跳转，纯 CSS，不使用 JavaScript）----
+     页面同时包含中英两份完整全文，**任何语言都不隐藏** —— 无需点击即可读到全部。
+     这里的按钮只负责「跳到对应语言的位置」。 */
+  html { scroll-behavior: smooth; }
+  /* 吸顶：页面很长（中英各 9 节），跳过去之后还能随时跳回来 */
+  .langbar { position: sticky; top: 0; z-index: 10;
+             display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+             padding: 12px 0 13px; margin: 0 0 4px;
+             background: #ffffff; border-bottom: 1px solid #e6e6ea; }
+  .langbar .hint { font-size: 12.5px; color: #8a8a90; margin-right: 2px; }
+  .langbar .langbtn {
+    font-size: 13.5px; line-height: 1; padding: 7px 14px;
+    border: 1px solid #d5d5da; border-radius: 999px;
+    color: #4a4a52; background: #fafafb; text-decoration: none;
+    display: inline-block; -webkit-user-select: none; user-select: none;
+  }
+  .langbar .langbtn:hover { border-color: #2f6bff; color: #2f6bff; }
+  .langbar .langbtn:focus-visible { outline: 2px solid #2f6bff; outline-offset: 2px; }
+  /* 跳到目标后，标题不要紧贴视口顶部（留一点呼吸空间） */
+  #zh, #en { scroll-margin-top: 64px; }   /* 让开吸顶栏的高度 */
+
+  @media (prefers-color-scheme: dark) {
+    body { color: #e8e8ea; background: #17171a; }
+    h2 { border-top-color: #33333a; }
+    .meta { color: #9a9aa0; }
+    .lead { background: #182240; border-left-color: #5b8bff; }
+    th, td { border-color: #3a3a42; }
+    th { background: #222228; }
+    code { background: #26262c; }
+    .foot { border-top-color: #33333a; color: #9a9aa0; }
+    .langsep { border-top-color: #5b8bff; color: #9a9aa0; }
+    .note { color: #9a9aa0; }
+    .langbar { background: #17171a; border-bottom-color: #33333a; }
+    .langbar .hint { color: #8a8a90; }
+    .langbar .langbtn { background: #26262c; border-color: #3a3a42; color: #c8c8ce; }
+    .langbar .langbtn:hover { border-color: #5b8bff; color: #5b8bff; }
+  }
+</style>
+</head>
+<body>
+
+<!-- 语言导航（锚点跳转，纯 CSS 平滑滚动，不使用 JavaScript）。
+     本页同时载有中文与英文两份完整全文，**内容一律不隐藏** ——
+     机器人 / 审核程序不做任何点击即可读到全部内容。
+     下方按钮仅用于「跳到对应语言的位置」，纯导航性质。 -->
+<div class="langbar">
+  <span class="hint">语言 / Language</span>
+  <a class="langbtn" href="#zh">简体中文</a>
+  <a class="langbtn" href="#en">English</a>
+</div>
+
+<!-- ================= 中文版 ================= -->
+<div id="zh" lang="zh-CN">
+
+<h1>Ponko 隐私政策</h1>
+<p class="meta">
+  应用名称：Ponko　|　开发者：__待填_开发者实名__<br>
+  生效日期：2026 年 10 月 15 日　|　最近更新：2026 年 10 月 15 日
+</p>
+
+<div class="lead">
+  本应用不收集任何个人信息，所有数据仅存储在本地设备。
+</div>
+
+<h2>一、我们收集哪些信息</h2>
+<p>Ponko 是一款在设备本地离线运行的 AI 工具应用。<strong>我们不收集任何个人信息</strong>，具体而言：</p>
+<ul>
+  <li>无需注册、无需登录，不索取姓名、手机号、邮箱、身份证件等任何身份信息；</li>
+  <li>不读取、不上传设备标识符（如 IMEI、Android ID、MAC 地址、广告标识符）；</li>
+  <li>不读取通讯录、短信、通话记录、精确定位、相册列表等敏感信息；</li>
+  <li>不包含任何统计、埋点、崩溃上报或广告组件，不记录您的使用行为；</li>
+  <li>不将任何数据发送给开发者，也不发送给任何第三方服务器。</li>
+</ul>
+
+<h2>二、您的数据存储在哪里</h2>
+<p>所有数据仅存储在您的本地设备上，包括：</p>
+<ul>
+  <li>您自行导入的 AI 模型文件；</li>
+  <li>您与模型的对话记录；</li>
+  <li>您生成或编辑的图片；</li>
+  <li>应用的各项设置与偏好。</li>
+</ul>
+<p>
+  上述数据保存在应用的私有目录中，其他应用无法读取。<strong>开发者无法访问、收集或恢复这些数据。</strong>
+  卸载本应用会一并删除上述全部本地数据。
+</p>
+
+<h2>三、关于网络连接</h2>
+<p>
+  本应用的全部 AI 推理均在本机完成，正常使用不需要网络。仅在以下两种<strong>由您主动触发</strong>的可选情形下，
+  应用才会访问网络：
+</p>
+<table>
+  <tr><th style="width:34%">情形</th><th>说明</th></tr>
+  <tr>
+    <td>下载 LoRA 加速模型</td>
+    <td>由您手动点击触发，仅从模型托管站点 <code>huggingface.co</code> 或其镜像 <code>hf-mirror.com</code> 下载模型文件。
+        除下载模型本身外，不传输任何其他数据；不使用时不会发起任何请求。</td>
+  </tr>
+  <tr>
+    <td>局域网接口（默认关闭）</td>
+    <td>可选的进阶功能，需您手动开启。开启后，应用在本机某一端口提供 OpenAI 兼容接口，
+        供<strong>同一局域网内</strong>由您指定的客户端调用（手机负责推理，客户端仅作界面）。
+        该功能不会主动向外部发送数据，关闭后即停止监听。</td>
+  </tr>
+</table>
+
+<h2>四、应用申请的权限及用途</h2>
+<p>为实现上述功能，本应用申请以下权限，均仅用于下列用途，不作他用：</p>
+<table>
+  <tr><th style="width:38%">权限</th><th>用途</th></tr>
+  <tr><td>网络访问<br><code>INTERNET</code>、<code>ACCESS_NETWORK_STATE</code></td>
+      <td>仅用于上述可选的 LoRA 模型下载；不用于上传任何数据。</td></tr>
+  <tr><td>存储（仅 Android 9 及以下）<br><code>WRITE_EXTERNAL_STORAGE</code></td>
+      <td>仅用于把生成的图片保存到相册。Android 10 及以上通过系统媒体库写入，无需该权限。</td></tr>
+  <tr><td>前台服务与通知<br><code>FOREGROUND_SERVICE</code>、<code>POST_NOTIFICATIONS</code> 等</td>
+      <td>仅用于「局域网接口」开启时，保持服务在后台运行并显示常驻通知（通知内容为服务状态与监听地址）。
+          无该功能需求时不会产生任何通知。</td></tr>
+  <tr><td>保持唤醒、Wi-Fi 状态<br><code>WAKE_LOCK</code>、<code>ACCESS_WIFI_STATE</code> 等</td>
+      <td>仅用于「局域网接口」开启时避免设备休眠导致服务中断；不用于读取网络内容或位置。</td></tr>
+</table>
+<p>本应用<strong>不申请</strong>摄像头、麦克风、通讯录、短信、通话记录、定位、日历、传感器等权限。</p>
+
+<h2>五、第三方组件</h2>
+<p>
+  本应用为开源软件，内置若干第三方开源组件用于本机推理与界面渲染（如 LiteRT-LM、llama.cpp、
+  stable-diffusion.cpp、ggml、ONNX Runtime、Markwon、PDFBox-Android 等），这些组件均在本机运行。
+</p>
+<p>
+  本应用<strong>未集成任何广告、统计分析、用户画像或社交分享类 SDK</strong>，不存在为商业目的而收集或共享个人信息的行为。
+  各组件的完整清单与许可证详见开源仓库中的 <code>NOTICE</code> 文件。
+</p>
+
+<h2>六、未成年人保护</h2>
+<p>
+  本应用不面向儿童作为主要用户群体，也不会有意收集未成年人的个人信息。由于本应用不收集任何个人信息，
+  不存在针对未成年人的个人信息处理行为。建议未成年人在监护人指导下使用本应用的 AI 生成功能。
+</p>
+
+<h2>七、您的权利</h2>
+<p>依据个人信息保护相关法律法规，您对自己的个人信息享有知情、决定、查阅、复制、更正、删除等权利。就本应用而言：</p>
+<ul>
+  <li><strong>查阅与复制</strong>：您的全部数据都存放在本机，可直接在应用内查看，或通过设备文件管理查看应用私有目录；</li>
+  <li><strong>更正与删除</strong>：对话记录、历史图片、已导入的模型均可在应用内逐项删除；在系统设置中清除应用数据，
+      或直接卸载本应用，即可彻底删除全部本地数据；</li>
+  <li><strong>撤回同意</strong>：关闭「局域网接口」开关即可撤回相关授权；不使用「下载 LoRA」功能即不会产生任何网络请求；</li>
+  <li><strong>关于个人信息删除请求</strong>：由于本应用不收集、不存储、不传输您的任何个人信息，开发者处不存在您的个人信息，
+      因此无需另行提交删除申请。如需行使上述权利，请直接在设备上操作。</li>
+</ul>
+<p>如您对上述内容有疑问，或认为本应用存在侵犯您个人信息权益的情形，可通过下方联系方式与我们联系，我们将在 15 个工作日内答复。</p>
+
+<h2>八、本政策的变更</h2>
+<p>
+  若本应用的功能发生可能影响个人信息处理的变更（例如新增需要联网的功能），我们会同步更新本政策，
+  更新后的版本将发布在同一网址，并更新页面顶部的「最近更新」日期。重大变更会在应用内以显著方式提示。
+</p>
+
+<h2>九、联系我们</h2>
+<p>
+  如对本政策或个人信息保护有任何疑问、意见或投诉，可通过以下方式联系我们：<br>
+  开发者：__待填_开发者实名__<br>
+  联系邮箱：<span id="mail">__待填_联系邮箱__</span><br>
+  开源仓库：<a href="https://github.com/visitor257/Ponko">https://github.com/visitor257/Ponko</a>
+</p>
+
+<p class="foot">
+  Ponko · 本页面为静态页面，无需登录即可访问。<br>
+  应用名称 Ponko，开发者 __待填_开发者实名__。<br>
+  最后更新：2026 年 10 月 15 日
+</p>
+
+
+</div>
+<!-- /中文版 -->
+
+
+<!-- ================= English ================= -->
+
+<div class="langsep">English</div>
+
+<div id="en" lang="en">
+<h1>Ponko Privacy Policy</h1>
+<p class="meta">
+  App name: Ponko&nbsp;&nbsp;|&nbsp;&nbsp;Developer: __待填_开发者实名__<br>
+  Effective date: October 15, 2026&nbsp;&nbsp;|&nbsp;&nbsp;Last updated: October 15, 2026
+</p>
+<p class="note">
+  This page provides both the Chinese and the English versions of the Ponko privacy policy.
+  Both versions describe the same practices; in case of any discrepancy, the Chinese version prevails.
+</p>
+
+<div class="lead">
+  This app does not collect any personal information. All data is stored solely on your local device.
+</div>
+
+<h2>1. Information We Collect</h2>
+<p>Ponko is an AI utility app that runs entirely offline on your device. <strong>We do not collect any personal information.</strong> Specifically:</p>
+<ul>
+  <li>No registration and no sign-in are required. We never ask for your name, phone number, email address, ID documents, or any other identifying information.</li>
+  <li>We do not read or upload device identifiers (such as IMEI, Android ID, MAC address, or advertising ID).</li>
+  <li>We do not read your contacts, SMS messages, call logs, precise location, or photo library listings.</li>
+  <li>The app contains no analytics, tracking, crash-reporting, or advertising components, and does not record how you use it.</li>
+  <li>No data is ever sent to the developer or to any third-party server.</li>
+</ul>
+
+<h2>2. Where Your Data Is Stored</h2>
+<p>All data is stored only on your local device, including:</p>
+<ul>
+  <li>AI model files that you import yourself;</li>
+  <li>Your conversations with the model;</li>
+  <li>Images you generate or edit;</li>
+  <li>App settings and preferences.</li>
+</ul>
+<p>
+  This data is kept in the app's private storage directory, which other apps cannot read.
+  <strong>The developer cannot access, collect, or recover this data.</strong>
+  Uninstalling the app deletes all of this local data.
+</p>
+
+<h2>3. Network Connections</h2>
+<p>
+  All AI inference runs on your device, and normal use requires no network connection.
+  The app accesses the network only in the following two optional cases, and only when <strong>you explicitly trigger them</strong>:
+</p>
+<table>
+  <tr><th style="width:34%">Case</th><th>Details</th></tr>
+  <tr>
+    <td>Downloading a LoRA acceleration model</td>
+    <td>Triggered only by your manual tap. The app downloads a model file solely from the model hosting site
+        <code>huggingface.co</code> or its mirror <code>hf-mirror.com</code>. Nothing other than the model file itself
+        is transmitted, and no request is made unless you use this feature.</td>
+  </tr>
+  <tr>
+    <td>LAN API (off by default)</td>
+    <td>An optional advanced feature that you must enable manually. When enabled, the app exposes an
+        OpenAI-compatible endpoint on a port on this device for clients <strong>on the same local network</strong>
+        that you designate (the phone performs the inference; the client is only a front end).
+        It never pushes data outward, and stops listening as soon as you turn it off.</td>
+  </tr>
+</table>
+
+<h2>4. Permissions and Their Purposes</h2>
+<p>To provide the features described above, the app requests the following permissions. Each is used only for the purpose stated here, and for nothing else:</p>
+<table>
+  <tr><th style="width:38%">Permission</th><th>Purpose</th></tr>
+  <tr><td>Network access<br><code>INTERNET</code>, <code>ACCESS_NETWORK_STATE</code></td>
+      <td>Used only for the optional LoRA model download described above; never for uploading data.</td></tr>
+  <tr><td>Storage (Android 9 and below only)<br><code>WRITE_EXTERNAL_STORAGE</code></td>
+      <td>Used only to save generated images to your photo gallery. On Android 10 and above the system media store is used, which requires no such permission.</td></tr>
+  <tr><td>Foreground service and notifications<br><code>FOREGROUND_SERVICE</code>, <code>POST_NOTIFICATIONS</code>, etc.</td>
+      <td>Used only while the LAN API is enabled, to keep the service running in the background and show a persistent notification
+          (the notification shows the service status and listening address). No notification appears unless you use that feature.</td></tr>
+  <tr><td>Wake lock and Wi-Fi state<br><code>WAKE_LOCK</code>, <code>ACCESS_WIFI_STATE</code>, etc.</td>
+      <td>Used only while the LAN API is enabled, to prevent the device from sleeping and interrupting the service. Never used to read network content or your location.</td></tr>
+</table>
+<p>The app does <strong>not</strong> request access to the camera, microphone, contacts, SMS, call logs, location, calendar, or sensors.</p>
+
+<h2>5. Third-Party Components</h2>
+<p>
+  This app is open-source software and includes several third-party open-source components used for on-device inference
+  and interface rendering (such as LiteRT-LM, llama.cpp, stable-diffusion.cpp, ggml, ONNX Runtime, Markwon, and PDFBox-Android).
+  All of these components run locally on your device.
+</p>
+<p>
+  The app <strong>integrates no advertising, analytics, user-profiling, or social-sharing SDKs</strong>, and does not collect or
+  share personal information for commercial purposes. The full list of components and their licenses is in the
+  <code>NOTICE</code> file in the open-source repository.
+</p>
+
+<h2>6. Protection of Minors</h2>
+<p>
+  This app does not target children as its primary audience and does not knowingly collect personal information from minors.
+  Because the app collects no personal information at all, there is no processing of minors' personal information.
+  Minors should use the app's AI generation features under the guidance of a guardian.
+</p>
+
+<h2>7. Your Rights</h2>
+<p>Under applicable personal-information protection laws, you have the right to be informed, to decide, to access, to copy, to correct, and to delete your personal information. As applied to this app:</p>
+<ul>
+  <li><strong>Access and copy:</strong> All of your data is on your own device. You can view it directly in the app, or browse the app's private directory through your device's file manager.</li>
+  <li><strong>Correct and delete:</strong> Conversation records, past images, and imported models can each be deleted inside the app.
+      Clearing the app's data in system settings, or simply uninstalling the app, removes all local data completely.</li>
+  <li><strong>Withdraw consent:</strong> Turn off the "LAN API" switch to withdraw that authorization. Not using the "Download LoRA" feature means no network request is ever made.</li>
+  <li><strong>Deletion requests:</strong> Because the app does not collect, store, or transmit any of your personal information,
+      the developer holds none of your personal information, and no separate deletion request is needed. To exercise these rights,
+      simply act on your own device.</li>
+</ul>
+<p>If you have questions about the above, or believe this app has infringed your personal-information rights, please contact us using the details below. We will reply within 15 business days.</p>
+
+<h2>8. Changes to This Policy</h2>
+<p>
+  If the app's features change in a way that may affect the handling of personal information (for example, adding a feature that requires
+  network access), we will update this policy accordingly. The updated version will be published at the same URL, and the
+  "Last updated" date at the top of the page will be revised. Significant changes will also be highlighted prominently inside the app.
+</p>
+
+<h2>9. Contact Us</h2>
+<p>
+  If you have any questions, comments, or complaints about this policy or about personal-information protection, please contact us:<br>
+  Developer: __待填_开发者实名__<br>
+  Contact email: <span id="mail2">__待填_联系邮箱__</span><br>
+  Source repository: <a href="https://github.com/visitor257/Ponko">https://github.com/visitor257/Ponko</a>
+</p>
+
+<p class="foot">
+  Ponko · This page is static and can be viewed without signing in.<br>
+  App name: Ponko. Developer: __待填_开发者实名__.<br>
+  Last updated: October 15, 2026
+</p>
+</div>
+<!-- /English -->
+
+</body>
+</html>

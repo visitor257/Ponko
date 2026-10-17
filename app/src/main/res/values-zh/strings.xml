@@ -479,4 +479,13 @@
     <string name="s_454">产出内容由AI生成</string>
     <string name="s_455">本图片由人工智能（AI）生成</string>
     <string name="s_456">使用本应用即代表知晓并同意此声明</string>
+    <string name="s_457">使用本应用即表示您已阅读并同意《隐私政策》</string>
+    <string name="s_458">《隐私政策》</string>
+    <string name="s_459">隐私政策</string>
+    <string name="s_460">同意并继续</string>
+    <string name="s_461">不同意</string>
+    <string name="s_462">本应用需要先导入模型</string>
+    <string name="s_463">本应用不内置、不提供任何 AI 模型。对话、绘图、打标三项功能均需先导入您自己的模型文件才能使用。模型文件体积较大，且各自授权不同，因此不便随安装包一起提供。</string>
+    <string name="s_464">前往「模型」页导入</string>
+    <string name="s_465">查看隐私政策全文</string>
 </resources>
