@@ -37,7 +37,10 @@ android {
         applicationId = "com.litertchat.app.hw"
         minSdk = 28
         targetSdk = 36
-        versionCode = 15
+        // versionCode 是 Android 判断「谁更新」的唯一依据，只能递增。
+        // 15 = 首轮提审（被驳回那个包）；16 = 本轮整改版。
+        // 升它不影响用户看到的 1.7.2-hw-r2，只是让已装 vc15 的设备能正常收到更新。
+        versionCode = 16
         // hw 分支：华为应用市场专用版本，版本名带 -hw 后缀以示区分（见 .workbuddy/memory）
         // 版本名带 -hw 后缀表示上架版；-r2 表示第 2 轮提审（首次被驳回后的整改重提）。
         // 版本号仍保持 1.7.2（用户 2026-10-17 指定）。⚠ 若 AGC 以
