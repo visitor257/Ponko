@@ -9,8 +9,13 @@ import sys
 import urllib.request
 
 REPO = "visitor257/Ponko"
-TOKFILE = r"C:\Users\Administrator\Desktop\git_repo_tok.txt"
-APK = r"C:\Users\Administrator\WorkBuddy\智能Agent\LiteRT-Chat\app\build\outputs\apk\release\Ponko-release.apk"
+# 路径不写死本机目录：token 走环境变量或家目录（expanduser 不暴露用户名），
+# APK 按脚本位置推算仓库根 —— 这样换机器/换用户名都不用改代码。
+HERE = os.path.dirname(os.path.abspath(__file__))
+TOKFILE = (os.environ.get("PONKO_GH_TOKEN_FILE")
+           or os.path.join(os.path.expanduser("~"), "Desktop", "git_repo_tok.txt"))
+APK = os.environ.get("PONKO_APK") or os.path.join(
+    os.path.dirname(HERE), "app", "build", "outputs", "apk", "release", "Ponko-release.apk")
 TAG = "v1.7.2"
 NAME = "Ponko v1.7.2"
 

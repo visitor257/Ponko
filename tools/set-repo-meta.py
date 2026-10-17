@@ -2,11 +2,15 @@
 # Ponko · (c) 2026 visitor257 · MIT License · github.com/visitor257/Ponko
 """一次性：设置 Ponko 仓库的英文描述 + Topics。"""
 import json
+import os
 import re
 import urllib.request
 
-TOK = re.search(r"ghp_\w+", open(r"C:\Users\Administrator\Desktop\git_repo_tok.txt",
-                                 encoding="utf-8", errors="replace").read()).group(0)
+# token 不写死本机目录：走环境变量或家目录（expanduser 不暴露用户名）
+TOKFILE = (os.environ.get("PONKO_GH_TOKEN_FILE")
+           or os.path.join(os.path.expanduser("~"), "Desktop", "git_repo_tok.txt"))
+TOK = re.search(r"gh[pousr]_\w+",
+                open(TOKFILE, encoding="utf-8", errors="replace").read()).group(0)
 REPO = "https://api.github.com/repos/visitor257/Ponko"
 
 DESC = ("Offline-capable AI app for Android: on-device chat (.litertlm / .gguf) with image and "
