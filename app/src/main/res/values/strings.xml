@@ -488,4 +488,5 @@
 <string name="s_463">This app does not bundle or provide any AI model. Chat, drawing and tagging all require you to import your own model files first. Models are large and licensed differently, so they are not shipped with the installer.</string>
 <string name="s_464">Go to Models to import</string>
 <string name="s_465">View full privacy policy</string>
+<string name="s_466">Unable to load the privacy policy. Please open https://github.com/visitor257/Ponko to view it.</string>
 </resources>

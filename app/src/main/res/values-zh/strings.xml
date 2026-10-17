@@ -488,4 +488,5 @@
     <string name="s_463">本应用不内置、不提供任何 AI 模型。对话、绘图、打标三项功能均需先导入您自己的模型文件才能使用。模型文件体积较大，且各自授权不同，因此不便随安装包一起提供。</string>
     <string name="s_464">前往「模型」页导入</string>
     <string name="s_465">查看隐私政策全文</string>
+    <string name="s_466">隐私政策加载失败，请访问 https://github.com/visitor257/Ponko 查看。</string>
 </resources>
