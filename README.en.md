@@ -1,8 +1,12 @@
 # Ponko
 
-![License](https://img.shields.io/badge/license-MIT-blue.svg) ![Release](https://img.shields.io/github/v/release/visitor257/Ponko?label=release&color=success) ![Platform](https://img.shields.io/badge/platform-Android-3DDC84?logo=android&logoColor=white) ![minSdk](https://img.shields.io/badge/minSdk-28-orange.svg) ![ABI](https://img.shields.io/badge/ABI-arm64--v8a-lightgrey.svg) ![Offline](https://img.shields.io/badge/offline-no%20telemetry-success.svg)
+![License](https://img.shields.io/badge/license-code_MIT_%2F_art_reserved-blue.svg) ![Release](https://img.shields.io/github/v/release/visitor257/Ponko?label=release&color=success) ![Platform](https://img.shields.io/badge/platform-Android-3DDC84?logo=android&logoColor=white) ![minSdk](https://img.shields.io/badge/minSdk-28-orange.svg) ![ABI](https://img.shields.io/badge/ABI-arm64--v8a-lightgrey.svg) ![Offline](https://img.shields.io/badge/offline-no%20telemetry-success.svg)
 
 > The name comes from the Japanese 「ポンコツ」(ponkotsu) - "scrap heap". Not the sharpest brain, but you can swap in the best model whenever you like.
+
+**This repository is not under a single license**: the source code is [MIT](LICENSE); the artwork
+(app icon, character portrait, original drawing) is **not** covered by MIT — it stays © the author,
+all rights reserved, under the terms in [NOTICE](NOTICE).
 
 English · [中文](README.md)
 
