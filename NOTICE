@@ -6,6 +6,26 @@ Copyright (c) 2026 visitor257
 ==========================================================================
 
 --------------------------------------------------------------------------
+This repository is not under a single license
+--------------------------------------------------------------------------
+
+The LICENSE file at the repository root carries the MIT text, and the
+GitHub sidebar therefore reports this repository as "MIT". That detection
+covers the repository as a whole and does not distinguish code from
+artwork. The terms are in fact split:
+
+  - Source code, build scripts and documentation - MIT (see LICENSE).
+  - Artwork - application icon, character portrait, original drawing -
+    Copyright (c) 2026 visitor257, ALL RIGHTS RESERVED, NOT MIT.
+    The file list and the terms are in "Artwork" below.
+  - Third-party components - each under its own license, listed below.
+
+The artwork terms are the ones that apply. Where this NOTICE and the
+repository-root LICENSE appear to disagree about artwork, this NOTICE
+states the author's intent and the LICENSE does not grant rights in
+artwork.
+
+--------------------------------------------------------------------------
 Source code
 --------------------------------------------------------------------------
 
@@ -231,6 +251,22 @@ distributed with this project.
 ==========================================================================
   中文
 ==========================================================================
+
+--------------------------------------------------------------------------
+本仓库不是单一许可证
+--------------------------------------------------------------------------
+
+仓库根目录的 LICENSE 装的是 MIT 文本，因此 GitHub 侧边栏把这个仓库报告为
+"MIT"。那个识别是针对**整个仓库**做的，不区分代码与美术资源。实际的条款是
+分开的：
+
+  - 源代码、构建脚本、文档 —— MIT（见 LICENSE）。
+  - 美术资源 —— 应用图标、角色立绘、原始画稿 —— 著作权归作者所有，
+    **保留所有权利，不适用 MIT**。文件清单与具体条款见下方「美术资源」。
+  - 第三方组件 —— 各循其自身许可证，见下方清单。
+
+**以美术资源那一段为准**。本 NOTICE 与根 LICENSE 在美术资源上看起来不一致时，
+本 NOTICE 表达的是作者意图；LICENSE 未就美术资源授予任何权利。
 
 --------------------------------------------------------------------------
 源代码
