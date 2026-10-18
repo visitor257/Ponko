@@ -43,6 +43,12 @@ The following artwork is not covered by the MIT License:
   - Original drawing: tools/icon/source.png
 
 Copyright in the artwork listed above is owned by the author.
+
+The character portrait (app/src/main/res/drawable-nodpi/about_portrait.png)
+carries an invisible digital watermark embedded in its pixels. It does not
+alter how the image looks, but it lets the author demonstrate that a given
+copy came from this project. Removing it is itself a violation of the terms
+below.
 All rights reserved.
 
 You may:
@@ -285,6 +291,9 @@ distributed with this project.
   - 原始画稿：tools/icon/source.png
 
 上述美术资源的著作权归作者所有，保留所有权利（All rights reserved）。
+
+角色立绘（app/src/main/res/drawable-nodpi/about_portrait.png）的**像素里嵌有不可见数字水印**。
+它不改变图片的显示效果，但可以让作者证明某份拷贝来自本项目。去除水印本身即违反下述条款。
 
 允许：
 
