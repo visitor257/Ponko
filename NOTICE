@@ -25,20 +25,39 @@ The following artwork is not covered by the MIT License:
 Copyright in the artwork listed above is owned by the author.
 All rights reserved.
 
-You may use the artwork for non-commercial purposes such as introducing,
-reviewing, or referencing this project, provided that you do not modify it
-and that you credit the source.
+You may:
 
-You may not use the artwork for any commercial purpose without the author's
-prior written permission. To obtain a commercial license, please contact the
-author through the project repository.
+  - run this project as shipped, and build it from source for your own use;
+  - keep the artwork inside a fork or clone of this repository, provided what
+    you publish is the fork's source rather than a build of it;
+  - use the artwork for non-commercial purposes such as introducing,
+    reviewing, or referencing this project, provided that you do not modify
+    it and that you credit the source.
+
+You may not:
+
+  - distribute any build, package, installer or store submission that
+    contains the artwork. This covers an APK, AAB, zip or any other
+    installable form of this project or of a fork, whether or not the source
+    is published alongside it and whether or not it is offered for free. You
+    may build and run it for yourself; you may not hand the build to anyone
+    else, or upload it to an app store, package registry, download site or
+    any other distribution channel;
+  - modify, recolor, redraw, or use the artwork as a base for derivative work
+    (avatars, banners, merchandise, other characters);
+  - extract the artwork from this project and redistribute it on its own, in
+    any format, including repackaged asset collections;
+  - use the artwork for any commercial purpose without the author's prior
+    written permission. To obtain a commercial license, please contact the
+    author through the project repository.
 
 --------------------------------------------------------------------------
 Name
 --------------------------------------------------------------------------
 
-"Ponko" is the name of this project. All rights in the name are reserved by
-the author. No trademark registration has been filed for the name.
+"Ponko" is the name of this project. All rights in the name and in the
+artwork are reserved by the author. Neither may be used in a way that
+suggests the author endorsed or authorised your product.
 
 --------------------------------------------------------------------------
 Third-party components
@@ -231,17 +250,31 @@ distributed with this project.
 
 上述美术资源的著作权归作者所有，保留所有权利（All rights reserved）。
 
-允许在不作修改、注明出处的前提下，将上述美术资源用于介绍、评测、
-引用本项目的非商业场合。
+允许：
 
-未经作者书面许可，不得将上述美术资源用于任何商业用途。需要商用
-授权请通过项目仓库的联系方式与作者联系。
+  - 按原样运行本项目，并从源码自行构建供自己使用；
+  - 在 fork 或克隆的本仓库里保留这些资源，前提是发布的是 fork 的**源码**，
+    而不是把构建产物发出去；
+  - 在不作修改、注明出处的前提下，将上述美术资源用于介绍、评测、
+    引用本项目的非商业场合。
+
+不允许：
+
+  - 分发任何包含上述美术资源的构建产物或商店提交物。包括本项目或 fork
+    打出来的 APK、AAB、压缩包等一切可安装形态 —— 无论是否同时公开源码，
+    也无论是否免费提供。可以自己构建自己用，但不可以把构建结果交给别人，
+    也不可以上传到应用商店、软件包仓库、下载站或任何其他分发渠道；
+  - 修改、改色、重绘，或作为衍生作品的素材（头像、封面、周边、其他角色）；
+  - 把上述资源从本项目里摘出来，以任何格式单独再分发（包括打包成素材集）；
+  - 未经作者书面许可，将上述美术资源用于任何商业用途。需要商用授权
+    请通过项目仓库的联系方式与作者联系。
 
 --------------------------------------------------------------------------
 名称
 --------------------------------------------------------------------------
 
-「Ponko」为本项目名称，相关权利归作者所有；作者目前未就该名称申请商标注册。
+「Ponko」为本项目名称，名称与形象标识的相关权利均归作者所有。
+两者均不得用于任何使人误以为经过作者认可或授权的产品或服务。
 
 --------------------------------------------------------------------------
 第三方组件

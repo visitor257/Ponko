@@ -164,7 +164,10 @@ def main():
     # 改为对比「本地 HEAD 的完整文件树」与「远端最新文件树」：
     # 只上传真正不同的文件，并删除远端多出来的文件。
     remote_tree = api("GET", "/repos/%s/git/trees/%s?recursive=1" % (REPO, remote_head))["tree"]
-    remote_files = {e["path"]: e["sha"] for e in remote_tree if e["type"] == "blob"}
+    # 同时记 mode：只比 sha 会漏掉「内容没变、只是可执行位变了」的改动
+    # （gradlew 就是这种：Windows 上本地磁盘明明是 rwxr-xr-x，git 仍按 100644 记，
+    #  推上去别人 clone 下来 ./gradlew 跑不了）。
+    remote_files = {e["path"]: (e["sha"], e["mode"]) for e in remote_tree if e["type"] == "blob"}
 
     local_files = {}
     for line in git("ls-tree", "-r", "HEAD").splitlines():
@@ -176,7 +179,7 @@ def main():
 
     entries = []
     for path, (mode, sha) in sorted(local_files.items()):
-        if remote_files.get(path) == sha:
+        if remote_files.get(path) == (sha, mode):
             continue
         p = os.path.join(ROOT, path.replace("/", os.sep))
         if not os.path.exists(p):
@@ -186,7 +189,10 @@ def main():
         blob = api("POST", "/repos/%s/git/blobs" % REPO,
                    {"content": base64.b64encode(data).decode(), "encoding": "base64"})
         entries.append({"path": path, "mode": mode, "type": "blob", "sha": blob["sha"]})
-        print("  更新 %s (%dB)" % (path, len(data)))
+        if remote_files.get(path, ("", ""))[0] == sha:
+            print("  改权限 %s (%s -> %s)" % (path, remote_files[path][1], mode))
+        else:
+            print("  更新 %s (%dB)" % (path, len(data)))
 
     for path in sorted(remote_files):
         if path not in local_files:
