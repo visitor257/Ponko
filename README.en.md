@@ -220,6 +220,12 @@ powershell -File tools/build-release.ps1
 
 - **Code**: [MIT](LICENSE)
 - **Artwork** (app icon, character portrait, original drawing): © the author, all rights reserved, **not covered by the MIT license** - see [NOTICE](NOTICE)
+
+  In short: you may run it, build it from source for your own use, and keep it in a fork
+  (publishing the source, not builds); non-commercial writing that introduces or reviews the
+  project may show the artwork unmodified with credit. You may **not** distribute a build that
+  contains it — no APK, AAB or archive, not to a store, not even for free — and you may not
+  modify it, build derivative work from it, or extract and redistribute it on its own.
 - **Third-party components**: distributed under their own licenses - see [NOTICE](NOTICE) for the full list
 
 ## Third-party components
