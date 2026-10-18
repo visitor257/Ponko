@@ -1,0 +1,34 @@
+Artwork in this directory — All Rights Reserved
+本目录内的美术资源 —— 保留所有权利
+
+Copyright (c) 2026 visitor257. All rights reserved.
+
+source.png is the original drawing behind the Ponko app icon. It is artwork,
+not software: it is NOT covered by the MIT license that applies to the source
+code of this project (see ../../LICENSE). Neither are the rendered icons
+generated from it, wherever they are checked in
+(app/src/main/res/mipmap-*/ic_launcher*.png).
+
+See ../../NOTICE for the full terms. In short:
+
+  - you may run the app, build it from source for your own use, and keep the
+    artwork inside a fork or clone — publishing the fork's source, not builds;
+  - you may not distribute any build, package, installer or store submission
+    containing the artwork, whether or not the source is published alongside
+    it and whether or not it is free;
+  - you may not use it commercially, modify it, redraw it, build derivative
+    work from it, or extract and redistribute it on its own.
+
+--------------------------------------------------------------------------
+
+本目录下的 source.png 是 Ponko 应用图标背后的原始画稿。它是美术作品，不是软件，
+**不适用**本项目源码的 MIT 许可（见 ../../LICENSE）。由它渲染出来的各尺寸图标
+（无论检入在哪个路径，如 app/src/main/res/mipmap-*/ic_launcher*.png）同样不在 MIT 内。
+
+完整条款见 ../../NOTICE，简述：
+
+  - 可以：运行应用、从源码自行构建供自己使用、在 fork 或克隆里保留（发布的是源码，
+    不是构建产物）；
+  - 不可以：分发任何包含这些素材的构建产物或商店提交物 —— 无论是否同时公开源码、
+    是否免费；
+  - 不可以：商用、修改、重绘、作为衍生作品的素材、单独摘出来再分发。
