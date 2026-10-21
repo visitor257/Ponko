@@ -143,6 +143,35 @@ abstract class PonkoPluginService : Service() {
      */
     protected open fun onActionInvoked(key: String) {}
 
+    /**
+     * 宿主按钮叫什么。键见 [ActionLabel]，值就是显示的文字。
+     *
+     * ```kotlin
+     * override fun buildActionLabels() = mapOf(
+     *     ActionLabel.ENGINE_LOAD   to "加载模型 3.5G",
+     *     ActionLabel.ENGINE_UNLOAD to "释放模型",
+     * )
+     * ```
+     *
+     * **不覆写就用宿主默认**（加载引擎 / 卸载引擎 / 试听 / 重新合成 / 播放 / 停止 / 保存）。
+     *
+     * ## 什么时候值得改
+     *
+     * 宿主默认文案是按"有个引擎要加载"写的。如果你的插件其实是：
+     * · 走本地模型 → 「加载模型」比「加载引擎」具体，带上体积更好
+     * · 走网络 API → 没有模型，「连接服务 / 断开服务」才对
+     * · 模型能停在内存里复用 → 「卸载」不如「释放内存」说得清楚
+     *
+     * ## 不要用它做的事
+     *
+     * · 改不了按钮的位置、个数、颜色、可点状态、点了干什么
+     * · 别想把「停止」改名叫「保存」—— 用户会按字面理解，然后丢东西
+     * · 超过 [ActionLabel.MAX_LEN] 个字符会被**整个丢掉**，不是截断
+     *
+     * 做耗时活不要在这里做：这个方法在 Binder 线程上、打开界面时调，要 O(1)。
+     */
+    protected open fun buildActionLabels(): Map<String, String> = emptyMap()
+
     // ==================== 内部状态 ====================
 
     private val worker by lazy { Executors.newSingleThreadExecutor { r -> Thread(r, "ponko-plugin-worker") } }
@@ -460,6 +489,39 @@ abstract class PonkoPluginService : Service() {
                     Log.e(TAG, "onActionInvoked 失败：$key", t)
                 }
             }
+        }
+
+        /**
+         * 同步、O(1)。跑在宿主的 Binder 线程上，别做 IO。
+         *
+         * 返回 `["engine.load=加载模型", ...]`。在这里就过滤一遍坏项，
+         * 免得把插件自己的错误推到宿主去判 —— 宿主那边也会再过滤一次，
+         * 但两边都拦一次的成本几乎为零，而且能各自留下日志。
+         */
+        override fun getActionLabels(): List<String> {
+            val labels = try {
+                buildActionLabels()
+            } catch (t: Throwable) {
+                Log.e(TAG, "buildActionLabels 失败", t)
+                return emptyList()
+            }
+            if (labels.isEmpty()) return emptyList()
+            val out = ArrayList<String>(labels.size)
+            for ((k, v) in labels) {
+                if (k !in ActionLabel.ALL) {
+                    Log.w(TAG, "忽略未知的按钮 key：$k")
+                    continue
+                }
+                if (v.isBlank()) continue
+                if (v.length > ActionLabel.MAX_LEN) {
+                    // 整个丢弃而不是截断：截出来是「加载模型 3.5…」，
+                    // 比原来那句默认文案更难懂
+                    Log.w(TAG, "按钮文案过长（${v.length} > ${ActionLabel.MAX_LEN}），已忽略：$k=$v")
+                    continue
+                }
+                out.add("$k=$v")
+            }
+            return out
         }
     }
 

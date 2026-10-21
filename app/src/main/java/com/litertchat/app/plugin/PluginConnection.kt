@@ -111,6 +111,30 @@ class PluginConnection(
     val supportsSchema: Boolean
         get() = pluginApi >= PluginConst.API_WITH_SCHEMA
 
+    /**
+     * 这个插件能不能自己命名宿主的按钮（SDK v[PluginConst.API_WITH_ACTION_LABELS] 起）。
+     *
+     * 同样的理由：按版本判断，不靠 try-catch。
+     */
+    val supportsActionLabels: Boolean
+        get() = pluginApi >= PluginConst.API_WITH_ACTION_LABELS
+
+    /**
+     * 插件给的按钮文案（key → 文字）。连接时拉一次，之后不再变。
+     *
+     * 为什么只在连接时拉：这些是**静态文案**，和引擎状态无关
+     * （"加载"和"卸载"是两个不同的 key，不是同一个 key 的两个值）。
+     * 每次打开界面都跨进程拉一遍纯属浪费。
+     */
+    @Volatile private var actionLabels: Map<String, String> = emptyMap()
+
+    /**
+     * 取按钮文字：插件覆盖过就用它的，没覆盖用宿主默认。
+     *
+     * @param key 见 [com.litertchat.plugin.ActionLabel]
+     */
+    fun label(key: String): String = ActionLabels.resolve(key, actionLabels)
+
     /** 宿主生成的请求 ID，用于丢弃过期回调 */
     @Volatile private var activeRequestId: String? = null
 
@@ -223,6 +247,23 @@ class PluginConnection(
                 setState(State.FAILED, "注册回调失败：${t.javaClass.simpleName}")
                 safeUnbind()
                 return
+            }
+
+            // 按钮文案（v3 起才有）。失败**不影响连接** —— 文案是锦上添花，
+            // 拿不到就全用宿主默认，没必要因此让整个插件不可用。
+            actionLabels = if (api >= PluginConst.API_WITH_ACTION_LABELS) {
+                try {
+                    // 用方法名而不是属性语法，和 getSettingsSchema() 那处保持一致
+                    com.litertchat.plugin.ActionLabel.parse(p.getActionLabels())
+                } catch (t: Throwable) {
+                    Log.w(TAG, "[${packageName}] 读取按钮文案失败，用默认", t)
+                    emptyMap()
+                }
+            } else {
+                emptyMap()
+            }
+            if (actionLabels.isNotEmpty()) {
+                Log.i(TAG, "[${packageName}] 插件覆盖了 ${actionLabels.size} 个按钮文案：$actionLabels")
             }
 
             setState(State.CONNECTED, manifest?.displayName)
@@ -379,6 +420,9 @@ class PluginConnection(
         plugin = null
         manifest = null
         pluginApi = 0
+        // 必须清：插件被换成了另一版（比如重装成不带覆盖的旧版）时，
+        // 残留的文案会让界面显示成上一个插件说的话
+        actionLabels = emptyMap()
         setState(State.DISCONNECTED)
     }
 

@@ -23,6 +23,11 @@ object PluginConst {
      * 宿主据此就能判断**要不要去调** `getSettingsSchema()`，
      * 而不是靠 try-catch 兜异常 —— 靠异常判断是不可靠的（见下面的注释）。
      *
+     * ## 为什么加到 3（2026-10-22）
+     *
+     * v3 加了 `getActionLabels()`：插件可以指定宿主那几个按钮叫什么
+     * （「加载引擎」→「加载模型」这种）。同样是纯扩展，老插件照常可用。
+     *
      * ## 两类不兼容，处理方式不同
      *
      * · **扩展**（加方法、加字段、加常量）→ 版本 +1，老插件继续能用，
@@ -35,7 +40,7 @@ object PluginConst {
      * Binder 的事务码按声明顺序分配。在中间插入会让后面所有方法的事务码整体后移，
      * 老插件收到的码对不上 → **调用串味**（本该调 A 却执行了 B），比直接报错更糟。
      */
-    const val API_VERSION = 2
+    const val API_VERSION = 3
 
     /**
      * 从这一版起，插件支持「界面」那组方法（`getSettingsSchema` 等）。
@@ -49,9 +54,17 @@ object PluginConst {
      */
     const val API_WITH_SCHEMA = 2
 
+    /**
+     * 从这一版起，插件可以覆盖宿主按钮的文案（[IPonkoPlugin.getActionLabels]）。
+     *
+     * 宿主按版本跳过调用，而不是 try-catch：调一个不存在的方法时
+     * 老插件的 Binder 会收到不认识的事务码，行为不保证（见上）。
+     */
+    const val API_WITH_ACTION_LABELS = 3
+
     /** 宿主兼容区间：允许老插件继续跑，所以下限保持 1 */
     const val API_MIN_SUPPORTED = 1
-    const val API_MAX_SUPPORTED = 2
+    const val API_MAX_SUPPORTED = 3
 
     // ---- 插件 Action（宿主靠它发现插件）----
     const val ACTION_PLUGIN = "com.litertchat.ponko.PLUGIN"
@@ -177,6 +190,92 @@ object EngineState {
     const val READY = 2
     /** 正在合成 */
     const val RUNNING = 3
+}
+
+/**
+ * 宿主按钮的文案 key，配合 [IPonkoPlugin.getActionLabels] 使用。
+ *
+ * ## 为什么插件能改这些字
+ *
+ * 同一件事在不同插件里叫法不同：宿主管它叫「加载引擎」，
+ * 但一个 3.5 GB 的 TTS 插件更想说「加载模型（3.5 GB）」，
+ * 一个走网络 API 的插件根本没有模型，说「连接服务」才准确。
+ * 按钮是宿主的，但**名字的含义只有插件知道**。
+ *
+ * ## 能改什么、不能改什么
+ *
+ * 只能改**文字**。位置、个数、颜色、可点状态、点了做什么，全归宿主。
+ * 所以插件拿不到「新按钮」，只能给自己那一格换个说法 ——
+ * 否则插件就能靠文案把用户骗到一个破坏性动作上。
+ *
+ * ## 谁会用到
+ *
+ * 只有提供音频能力的插件（[Capability.TTS] / [Capability.TEST]）才看得到这组按钮。
+ * 其它插件声明了也没用。
+ */
+object ActionLabel {
+
+    /** 引擎未就绪时的按钮 */
+    const val ENGINE_LOAD = "engine.load"
+
+    /** 引擎已就绪时的按钮（同一个按钮的另一个状态） */
+    const val ENGINE_UNLOAD = "engine.unload"
+
+    /** 还没有产物时的按钮：跑一次推理 */
+    const val PREVIEW = "preview"
+
+    /** 已经有产物之后，同一个按钮的文字：再跑一次推理 */
+    const val PREVIEW_AGAIN = "preview.again"
+
+    /** 重放上一次的结果，不重新推理 */
+    const val PLAY = "play"
+
+    /** 打断当前这次生成 */
+    const val STOP = "stop"
+
+    /** 把音频存进系统音乐库 */
+    const val SAVE = "save"
+
+    /**
+     * 一条文案的长度上限（字符数，不是字节）。
+     *
+     * 五个按钮排一行，超过这个长度就会换行或挤掉别的按钮。
+     * **超长直接丢弃**，退回宿主默认文案 —— 截断会得到「加载模…」这种
+     * 更看不懂的东西，不如让用户看到原来那个。
+     */
+    const val MAX_LEN = 12
+
+    /** 全部合法的 key。解析时用来过滤插件乱写的项 */
+    val ALL = setOf(ENGINE_LOAD, ENGINE_UNLOAD, PREVIEW, PREVIEW_AGAIN, PLAY, STOP, SAVE)
+
+    /**
+     * 把 `getActionLabels()` 返回的 `["key=文字", ...]` 解析成 map。
+     *
+     * 容错优先：坏项**逐项跳过**，不抛异常、不影响其它项。
+     * 插件写错一个 key 不该让整页按钮全变回默认。
+     *
+     * **这里没有"默认文案"** —— 默认文案是宿主界面的一部分，
+     * 放在 SDK 里等于让每个插件 APK 都揣一份别的 App 的中文字符串，
+     * 而且做 i18n 时要改两处。宿主自己维护那张表。
+     *
+     * @return key → 文案；只含合法的项
+     */
+    fun parse(raw: List<String>?): Map<String, String> {
+        if (raw.isNullOrEmpty()) return emptyMap()
+        val out = HashMap<String, String>(raw.size)
+        for (line in raw) {
+            if (line.isBlank()) continue
+            // 只切第一个 `=`：文案里出现 `=` 是合法的
+            val i = line.indexOf('=')
+            if (i <= 0 || i == line.length - 1) continue
+            val key = line.substring(0, i).trim()
+            val text = line.substring(i + 1).trim()
+            if (key !in ALL) continue
+            if (text.isEmpty() || text.length > MAX_LEN) continue
+            out[key] = text
+        }
+        return out
+    }
 }
 
 /**

@@ -402,13 +402,22 @@ class PluginPage(
         val autoLoaded = item.manifest?.capabilities
             ?.contains(Capability.AUTOLOAD_ENGINE) == true
         val engineUp = session.engineReady(pkg)
+        // 按钮文字一律走 session.actionLabel(code)：插件可以覆盖（v3 起），
+        // 没覆盖就是宿主默认。**不要在下面直接写中文字面量** ——
+        // 写死之后，同一个按钮在不同插件下就没法叫不同名字了。
+        val lEngine = session.actionLabel(
+            pkg,
+            if (engineUp) com.litertchat.plugin.ActionLabel.ENGINE_UNLOAD
+            else com.litertchat.plugin.ActionLabel.ENGINE_LOAD,
+        )
+        val actionLabels = com.litertchat.plugin.ActionLabel
         val actions = buildList {
             if (canPreview) {
                 if (!autoLoaded) {
                     add(
                         PluginUiPage.HostAction(
                             id = "engine",
-                            label = if (engineUp) "卸载引擎" else "加载引擎",
+                            label = lEngine,
                             enabled = !speaking,
                             run = { toggleEngine(pkg) },
                         )
@@ -420,8 +429,11 @@ class PluginPage(
                         // 这次进来如果已经有产物，直接就叫「重新合成」——
                         // 否则要等下一次合成完才改名，用户第一次看到的还是「试听」，
                         // 仍然会以为它只是重放
-                        label = if (lastAudioPkg == pkg && lastAudioFile?.exists() == true)
-                            "重新合成" else "试听",
+                        label = if (lastAudioPkg == pkg && lastAudioFile?.exists() == true) {
+                            session.actionLabel(pkg, actionLabels.PREVIEW_AGAIN)
+                        } else {
+                            session.actionLabel(pkg, actionLabels.PREVIEW)
+                        },
                         help = if (item.isTest)
                             "这是测试插件：试听会播放一段琶音，用来验证音频链路是否通畅"
                         else
@@ -438,7 +450,7 @@ class PluginPage(
                 add(
                     PluginUiPage.HostAction(
                         id = "play",
-                        label = "播放",
+                        label = session.actionLabel(pkg, actionLabels.PLAY),
                         enabled = lastAudioPkg == pkg && lastAudioFile?.exists() == true,
                         run = { lastAudioFile?.let { playFile(it) } },
                     )
@@ -446,7 +458,7 @@ class PluginPage(
                 add(
                     PluginUiPage.HostAction(
                         id = "stop",
-                        label = "停止",
+                        label = session.actionLabel(pkg, actionLabels.STOP),
                         enabled = speaking,
                         run = { stopPreview() },
                     )
@@ -454,7 +466,7 @@ class PluginPage(
                 add(
                     PluginUiPage.HostAction(
                         id = "save",
-                        label = "保存",
+                        label = session.actionLabel(pkg, actionLabels.SAVE),
                         enabled = lastAudioPkg == pkg && lastAudioFile?.exists() == true,
                         run = { saveAudio() },
                     )
@@ -906,14 +918,21 @@ class PluginPage(
     private fun toggleEngine(pkg: String) {
         val up = session.engineReady(pkg)
         if (up) {
-            setUiHint("正在卸载引擎，释放内存…")
+            // 提示里说的事就是"那个按钮正在做的事"，所以用按钮自己的名字，
+            // 不另写一套说法 —— 插件把按钮叫「释放模型」时，
+            // 这里还说"正在卸载引擎"会让人以为是两件事
+            setUiHint(
+                "正在${session.actionLabel(pkg, com.litertchat.plugin.ActionLabel.ENGINE_UNLOAD)}，释放内存…"
+            )
             // 卸载期间先禁掉按钮：避免用户连点出「卸载 → 又加载」
             currentUiPage?.setActionEnabled("engine", false)
             session.toggleEngine(pkg, load = false)
             awaitEngineUnloaded(pkg)
         } else {
             val threads = params(pkg).threads
-            setUiHint("正在加载引擎…")
+            setUiHint(
+                "正在${session.actionLabel(pkg, com.litertchat.plugin.ActionLabel.ENGINE_LOAD)}…"
+            )
             session.toggleEngine(pkg, load = true, threads = threads)
         }
         // 加载成功走 onEngineReady 回调（那里会刷新文案与诊断区）
@@ -972,7 +991,12 @@ class PluginPage(
     private fun refreshEngineLabel(pkg: String) {
         if (openUiPkg != pkg) return
         currentUiPage?.setActionLabel(
-            "engine", if (session.engineReady(pkg)) "卸载引擎" else "加载引擎"
+            "engine",
+            session.actionLabel(
+                pkg,
+                if (session.engineReady(pkg)) com.litertchat.plugin.ActionLabel.ENGINE_UNLOAD
+                else com.litertchat.plugin.ActionLabel.ENGINE_LOAD,
+            )
         )
     }
 
@@ -998,7 +1022,7 @@ class PluginPage(
     private fun startPreview(pkg: String) {
         val p = params(pkg)
         if (p.text.isBlank()) {
-            setUiHint("试听文本不能为空")
+            setUiHint("合成文本不能为空（在上面的参数里填）")
             return
         }
         val tts = openUiIsTts
@@ -1026,7 +1050,10 @@ class PluginPage(
         currentUiPage?.setActionEnabled("preview", false)
         currentUiPage?.setActionEnabled("stop", true)
 
-        setUiHint("正在生成…（手机上 5 秒语音约需 1~2 分钟，可随时点「停止」）")
+        setUiHint(
+            "正在生成…（手机上 5 秒语音约需 1~2 分钟，可随时点" +
+                "「${session.actionLabel(pkg, com.litertchat.plugin.ActionLabel.STOP)}」）"
+        )
         val id = session.speakTo(
             pkg,
             p.text,
@@ -1486,7 +1513,10 @@ class PluginPage(
             currentUiPage?.setActionEnabled("play", true)
             // 有结果了，「试听」的含义就不再是"试听"而是"再来一次推理" ——
             // 名字不改的话，用户会以为点它只是重放，白等一分钟后才发现不是。
-            currentUiPage?.setActionLabel("preview", "重新合成")
+            currentUiPage?.setActionLabel(
+                "preview",
+                session.actionLabel(pkg, com.litertchat.plugin.ActionLabel.PREVIEW_AGAIN)
+            )
             playFile(f)
         } catch (t: Throwable) {
             setUiHint("播放失败：${t.javaClass.simpleName}")
@@ -1501,11 +1531,16 @@ class PluginPage(
      * 而复制出来的两份迟早会不一致（比如一处加了对播放失败的提示、另一处忘了）。
      */
     private fun playFile(f: java.io.File) {
+        // 提示里会引用「保存」按钮的名字，所以得知道是哪个插件 ——
+        // 插件可以把这个按钮叫成别的（见 ActionLabel.SAVE）
+        val saveLabel = openUiPkg?.let {
+            session.actionLabel(it, com.litertchat.plugin.ActionLabel.SAVE)
+        } ?: "保存"
         try {
             player?.release()
             player = android.media.MediaPlayer().apply {
                 setDataSource(f.absolutePath)
-                setOnCompletionListener { setUiHint("播放完毕（点「保存」可存进音乐库）") }
+                setOnCompletionListener { setUiHint("播放完毕（点「$saveLabel」可存进音乐库）") }
                 setOnErrorListener { _, what, extra ->
                     setUiHint("播放失败（$what/$extra）")
                     true
