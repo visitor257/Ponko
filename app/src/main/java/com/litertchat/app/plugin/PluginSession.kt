@@ -538,6 +538,11 @@ class PluginSession(private val context: Context) {
     fun engineReady(pkg: String): Boolean =
         connections.firstOrNull { it.packageName == pkg }?.engineReady() == true
 
+    /** 引擎状态（UNLOADED / LOADING / READY / RUNNING）。用于轮询到目标状态 */
+    fun engineState(pkg: String): Int =
+        connections.firstOrNull { it.packageName == pkg }
+            ?.status()?.state ?: com.litertchat.plugin.EngineState.UNLOADED
+
     /**
      * 用户手动加载 / 卸载引擎。
      *

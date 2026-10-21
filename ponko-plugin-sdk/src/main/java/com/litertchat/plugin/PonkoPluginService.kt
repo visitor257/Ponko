@@ -169,6 +169,15 @@ abstract class PonkoPluginService : Service() {
     private val busy = AtomicBoolean(false)
     private val loading = AtomicBoolean(false)
 
+    /**
+     * 正在 `closeEngine` 的窗口（从投递到 worker 到真正 free 完）。
+     *
+     * 独立于 [busy]：`busy` 表示"有任务占着"，而卸载在空闲时也会占住它。
+     * 这个窗口对 [synthesize] 的正确语义是 `NOT_READY`（引擎要没了），
+     * 不是 `BUSY`（上一段还在生成）。见 [closeEngine]。
+     */
+    @Volatile private var closing = false
+
     /** 取消标志。换新任务时重置 */
     @Volatile private var cancelFlag = false
 
@@ -293,6 +302,21 @@ abstract class PonkoPluginService : Service() {
         }
 
         override fun closeEngine() {
+            // 用一个**独立**的 closing 标志，而不是借用 busy。
+            //
+            // ## 为什么不能用 busy（踩过）
+            //
+            // 原来写的是 `if (!busy.compareAndSet(false, true)) { cancelFlag = true }` ——
+            // 空闲时 CAS **会成功**，busy 就变成 true 了，而它要等 worker 里的
+            // finally 才复位。于是这段窗口（free 几 GB 可能几百毫秒，正在推理时更久）
+            // 里调 synthesize 会命中"已有任务在跑"的分支，回：
+            //   BUSY「上一段语音还在生成，请稍候」
+            // 而实际上什么都没在生成 —— 用户只是刚点了卸载。
+            //
+            // 这段窗口的正确语义是"引擎正在关闭，现在不能合成"，也就是 NOT_READY。
+            // 宿主对 NOT_READY 有现成的处理：自动重载引擎 + 补发这次请求，
+            // 语义正好对上；对 BUSY 则只会把"上一段还在生成"显示给用户。
+            closing = true
             if (!busy.compareAndSet(false, true)) {
                 // 有任务在跑 → 先取消，让 worker 自己收尾
                 cancelFlag = true
@@ -309,6 +333,7 @@ abstract class PonkoPluginService : Service() {
                     loadedAt = 0L
                     cancelFlag = false
                     busy.set(false)
+                    closing = false
                     stopForegroundAndWakeLock()
                 }
             }
@@ -328,6 +353,12 @@ abstract class PonkoPluginService : Service() {
             }
             val st = state
             if (st != EngineState.READY && st != EngineState.RUNNING) {
+                postError(PluginException.notReady(), req.requestId)
+                return
+            }
+            // 正在 closeEngine 的窗口里：引擎马上要没了，回 NOT_READY 而不是 BUSY。
+            // 见 closeEngine 里的说明 —— 这里说什么都不在生成，说"上一段还在生成"是撒谎。
+            if (closing) {
                 postError(PluginException.notReady(), req.requestId)
                 return
             }

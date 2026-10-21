@@ -509,6 +509,31 @@ class PluginConnection(
     }
 
     /**
+     * 引擎状态快照。
+     *
+     * 同步 AIDL 调用（插件侧保证 O(1) 只读 volatile）。和 [engineReady] 的区别：
+     * 这个能区分 `LOADING` / `RUNNING` / `UNLOADED`，用来**轮询到目标状态**。
+     *
+     * 为什么需要轮询：`closeEngine` 是 oneway，真正 free 发生在插件的 worker 线程里，
+     * 耗时从几百毫秒（free 几 GB 模型）到几秒（正在推理，要先等它退出）。
+     * 宿主没有任何"卸载完成"的回调可等，只能看状态什么时候真的变。
+     *
+     * @return 拿不到时返回 [com.litertchat.plugin.EngineState.UNLOADED] ——
+     *         连接断了等同于"没有引擎"，这样轮询会正常终止而不是空转到超时
+     */
+    fun status(): com.litertchat.plugin.EngineStatus {
+        val fallback = com.litertchat.plugin.EngineStatus(
+            state = com.litertchat.plugin.EngineState.UNLOADED
+        )
+        if (state != State.CONNECTED) return fallback
+        return try {
+            plugin?.getStatus() ?: fallback
+        } catch (t: Throwable) {
+            fallback
+        }
+    }
+
+    /**
      * 心跳探测：判断连接是否还活着（UI 刷新列表时用）。
      *
      * 真去调一次 AIDL 方法 —— 进程死了会抛 `DeadObjectException`，
