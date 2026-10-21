@@ -892,12 +892,98 @@ class PluginUiPage(
         setPadding(0, dp(16), 0, dp(2))
     }
 
+    /**
+     * 说明段落。支持**极少量**行内格式：
+     *
+     * - `**粗体**`
+     * - `` `等宽` ``
+     *
+     * ## 为什么只做这两个
+     *
+     * 手册里写了 intro 可以用粗体和代码，但这里原来只是 `text = t` ——
+     * 照着写的插件会在界面上看到一堆星号和反引号。
+     * 承诺了就要兑现，否则文档比没有更糟。
+     *
+     * 但**不是**做完整 markdown 解析：标题、列表、链接、表格一律按原文显示。
+     * 理由有两个：
+     *
+     * 1. 每种多解析一个语法，就多一处"插件以为是这样、界面是那样"的错位
+     * 2. 文本里可能合法地出现星号（比如文件类型 MIME 里那个通配符），
+     *    语法越多越容易误伤。所以这里**只认双星**，单个星号永远原样输出
+     *
+     * 手册里也写明了这个子集，两边对齐。
+     *
+     * ⚠ 改这段注释时注意：Kotlin 的块注释**支持嵌套**，所以注释正文里不能出现
+     * 「斜杠 + 星号」这个组合 —— 它会再开一层注释，把后面的代码全吞掉，
+     * 报错却是"Unclosed comment"指向文件末尾，极难定位。（这次就踩了）
+     */
     private fun hintText(t: String) = TextView(act).apply {
-        text = t
+        text = inlineFormat(t)
         textSize = 12f
         setTextColor(pal.subText)
         setLineSpacing(dp(3).toFloat(), 1f)
         setPadding(0, dp(6), 0, dp(4))
+    }
+
+    /**
+     * 把 `**粗体**` 和 `` `代码` `` 转成 Spannable。解析不出来就原样返回。
+     *
+     * ## 为什么是"重建字符串"而不是"在原串上打补丁"
+     *
+     * 第一版想的是"找到标记 → 加 span → 删掉标记字符"。这条路有两个坑：
+     *
+     * 1. 删字符会让**后面所有下标失效**（`**` 是两字符、`` ` `` 是一字符，
+     *    删完长度都不一样，前面的 span 位置全得重算）
+     * 2. `setSpan` 之后再 `delete`，Span 会自动跟着移位，很容易差一两个字符 ——
+     *    表现是粗体范围偏了，比如把后面的标点也吞进粗体里
+     *
+     * 所以改成单遍扫描：边扫边往新串里 append，**顺手记下每段的起止**，
+     * 扫完再统一 setSpan。下标从头到尾都只有"新串里的位置"这一种含义。
+     *
+     * ## 宁可少格式化，不能改内容
+     *
+     * 只有**成对**的标记才处理。落单的 `**` 或 `` ` `` 原样保留 ——
+     * 用户看到多余的星号总比看到内容被吞掉好。
+     */
+    private fun inlineFormat(src: String): CharSequence {
+        if (!src.contains("**") && !src.contains('`')) return src
+        return try {
+            // 交替匹配：组 1 = 粗体内容，组 2 = 代码内容
+            val re = Regex("\\*\\*(\\S(?:[\\s\\S]*?\\S)?)\\*\\*|`([^`\\n]+)`")
+            val out = android.text.SpannableStringBuilder()
+            val spans = ArrayList<Triple<Int, Int, Boolean>>()   // start, end, isBold
+            var last = 0
+            for (m in re.findAll(src)) {
+                out.append(src, last, m.range.first)
+                val bold = m.groups[1]
+                val code = m.groups[2]
+                val g = bold ?: code ?: continue
+                val start = out.length
+                out.append(g.value)
+                spans.add(Triple(start, out.length, bold != null))
+                last = m.range.last + 1
+            }
+            out.append(src, last, src.length)
+            for ((s, e, isBold) in spans) {
+                if (s >= e) continue
+                if (isBold) {
+                    out.setSpan(
+                        android.text.style.StyleSpan(android.graphics.Typeface.BOLD),
+                        s, e, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                    )
+                } else {
+                    out.setSpan(
+                        android.text.style.TypefaceSpan("monospace"),
+                        s, e, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                    )
+                }
+            }
+            out
+        } catch (t: Throwable) {
+            // 格式化失败不该让整页崩 —— 原样显示就够
+            android.util.Log.w("PonkoPluginUi", "行内格式解析失败", t)
+            src
+        }
     }
 
     private fun smallHint(t: String) = TextView(act).apply {

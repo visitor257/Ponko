@@ -417,13 +417,30 @@ class PluginPage(
                 add(
                     PluginUiPage.HostAction(
                         id = "preview",
-                        label = "试听",
+                        // 这次进来如果已经有产物，直接就叫「重新合成」——
+                        // 否则要等下一次合成完才改名，用户第一次看到的还是「试听」，
+                        // 仍然会以为它只是重放
+                        label = if (lastAudioPkg == pkg && lastAudioFile?.exists() == true)
+                            "重新合成" else "试听",
                         help = if (item.isTest)
                             "这是测试插件：试听会播放一段琶音，用来验证音频链路是否通畅"
                         else
                             "用上面填的参数合成一段音频。手机上 5 秒语音约需 1~2 分钟",
                         enabled = !speaking,
                         run = { testSpeak(pkg, isTts) },
+                    )
+                )
+                // 「播放」只重放上一次的结果，不重新推理。
+                //
+                // 为什么必须有：以前只有「试听」，而它每次都重新合成 ——
+                // 想再听一遍就只能再等 1~2 分钟。宿主其实已经留着上一次的文件了
+                // （见 lastAudioFile），只是之前只拿去给「保存」判可点。
+                add(
+                    PluginUiPage.HostAction(
+                        id = "play",
+                        label = "播放",
+                        enabled = lastAudioPkg == pkg && lastAudioFile?.exists() == true,
+                        run = { lastAudioFile?.let { playFile(it) } },
                     )
                 )
                 add(
@@ -890,23 +907,65 @@ class PluginPage(
         val up = session.engineReady(pkg)
         if (up) {
             setUiHint("正在卸载引擎，释放内存…")
+            // 卸载期间先禁掉按钮：避免用户连点出「卸载 → 又加载」
+            currentUiPage?.setActionEnabled("engine", false)
             session.toggleEngine(pkg, load = false)
-            // closeEngine 是 oneway，插件 worker 里才真正 free。
-            // 200ms 后再问状态，避免立刻读到"仍就绪"
-            act.window.decorView.postDelayed({
-                val still = session.engineReady(pkg)
-                currentUiPage?.setActionEnabled("engine", !speaking)
-                if (openUiPkg == pkg) {
-                    setUiHint(if (still) "引擎仍在卸载中…" else "引擎已卸载，内存已释放")
-                }
-                refreshEngineLabel(pkg)
-            }, 250)
+            awaitEngineUnloaded(pkg)
         } else {
             val threads = params(pkg).threads
             setUiHint("正在加载引擎…")
             session.toggleEngine(pkg, load = true, threads = threads)
         }
         // 加载成功走 onEngineReady 回调（那里会刷新文案与诊断区）
+    }
+
+    /**
+     * 等引擎真的变成 `UNLOADED`，然后复位按钮和文案。
+     *
+     * ## 为什么不能只查一次（这条被真机反馈打回过）
+     *
+     * 原来的写法是 `postDelayed(250) { 查一次 }`。这个"一次"会落在三种情况之一上，
+     * 每一种都可能还没卸完：
+     *
+     * | 情况 | 实际耗时 |
+     * |---|---|
+     * | 空闲，但模型几 GB，free 本身慢 | 几百毫秒 |
+     * | 正在推理，要等插件在耗时循环里查 cancelFlag 再逐块退出 | 几秒 |
+     * | 插件进程被系统冻结过 | 不确定 |
+     *
+     * 抽查落空 → 显示「引擎仍在卸载中…」→ **而此后没有任何时机再刷新按钮**
+     * （只有这里和 `onEngineReady` 会调 `refreshEngineLabel`）。
+     * 用户再点一次时 `engineReady` 已经是 false（其实早就卸完了），
+     * 于是走 else 分支 → **反而把模型重新加载回来**。
+     *
+     * ## 所以改成轮询到状态真的变
+     *
+     * AIDL 里本来就有 `getStatus()`（同步、O(1)），只是宿主从来没调过。
+     * 现在每隔 [ENGINE_POLL_MS] 问一次，直到 `UNLOADED` 或超时。
+     * 轮询期间按钮保持禁用，用户点不动，也就不会误触发。
+     */
+    private fun awaitEngineUnloaded(pkg: String) {
+        val deadline = android.os.SystemClock.elapsedRealtime() + ENGINE_POLL_TIMEOUT_MS
+        val probe = object : Runnable {
+            override fun run() {
+                // 页面已经切走/销毁 → 不再刷 UI，省掉无意义的 Binder 调用
+                if (openUiPkg != pkg) return
+                val st = session.engineState(pkg)
+                val done = st == com.litertchat.plugin.EngineState.UNLOADED
+                if (!done && android.os.SystemClock.elapsedRealtime() < deadline) {
+                    act.window.decorView.postDelayed(this, ENGINE_POLL_MS)
+                    return
+                }
+                currentUiPage?.setActionEnabled("engine", !speaking)
+                refreshEngineLabel(pkg)
+                setUiHint(
+                    if (done) "引擎已卸载，内存已释放"
+                    // 超时不是失败，只是慢：说清楚还能做什么，别让用户卡在疑惑里
+                    else "引擎释放超时（${ENGINE_POLL_TIMEOUT_MS / 1000} 秒），可以再点一次或停用插件"
+                )
+            }
+        }
+        act.window.decorView.postDelayed(probe, ENGINE_POLL_MS)
     }
 
     /** 把「加载引擎 / 卸载引擎」的文案刷成当前真实状态 */
@@ -1424,6 +1483,25 @@ class PluginPage(
             lastAudioFile = f
             lastAudioPkg = pkg
             currentUiPage?.setActionEnabled("save", true)
+            currentUiPage?.setActionEnabled("play", true)
+            // 有结果了，「试听」的含义就不再是"试听"而是"再来一次推理" ——
+            // 名字不改的话，用户会以为点它只是重放，白等一分钟后才发现不是。
+            currentUiPage?.setActionLabel("preview", "重新合成")
+            playFile(f)
+        } catch (t: Throwable) {
+            setUiHint("播放失败：${t.javaClass.simpleName}")
+        }
+    }
+
+    /**
+     * 播放一个已存在的音频文件。
+     *
+     * 抽出来是为了让**「播放」和「重新合成后的自动播放」用同一段代码** ——
+     * 之前这段逻辑内嵌在 playResult 里，想加"重放"就只能复制一遍，
+     * 而复制出来的两份迟早会不一致（比如一处加了对播放失败的提示、另一处忘了）。
+     */
+    private fun playFile(f: java.io.File) {
+        try {
             player?.release()
             player = android.media.MediaPlayer().apply {
                 setDataSource(f.absolutePath)
@@ -1742,5 +1820,11 @@ class PluginPage(
          * 聊天里多出一张图"，很难查。
          */
         const val REQ_PREVIEW_REF = 0x9E01
+
+        /** 等引擎卸载完成的轮询间隔。200ms ≈ 5 次/秒，对一次几百毫秒的操作够细 */
+        private const val ENGINE_POLL_MS = 200L
+
+        /** 卸载超时。给"正在推理 + free 几 GB"留足余量（要等插件查 cancelFlag） */
+        private const val ENGINE_POLL_TIMEOUT_MS = 5_000L
     }
 }
