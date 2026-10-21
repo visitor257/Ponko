@@ -114,4 +114,26 @@ interface IPonkoPlugin {
      * @param key [UiItem.key]
      */
     oneway void invokeAction(in String key);
+
+    // ==================== 宿主按钮的文案（v3）====================
+
+    /**
+     * 插件希望宿主的按钮叫什么。每项形如 `"engine.load=加载模型"`。
+     *
+     * **同步方法**：插件界面打开时就要用，走回调会让按钮先用默认字再跳一次。
+     * 实现里必须 O(1)（读一个常量表即可）。
+     *
+     * 返回空 list 是正常的 —— 表示用宿主默认文案。
+     * 认不出的 key、空值、过长的值都会被宿主忽略（逐项跳过，不影响其它项）。
+     *
+     * 可用的 key 见 [ActionLabel]：`engine.load` / `engine.unload` /
+     * `preview` / `preview.again` / `play` / `stop` / `save`。
+     *
+     * ⚠ 只改**文字**，改不了按钮的位置、个数、颜色和行为 ——
+     * 按钮是宿主的界面，插件只借它的名字。
+     *
+     * 旧插件（SDK v2 及更早）没有这个方法，宿主按
+     * `getApiVersion() < PluginConst.API_WITH_ACTION_LABELS` 跳过调用。
+     */
+    List<String> getActionLabels();
 }

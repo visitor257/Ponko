@@ -544,6 +544,18 @@ class PluginSession(private val context: Context) {
             ?.status()?.state ?: com.litertchat.plugin.EngineState.UNLOADED
 
     /**
+     * 按钮该显示什么字：插件覆盖过就用它的，否则宿主默认。
+     *
+     * 插件连不上时也走默认 —— 界面在没连上的状态下照样要能画出来
+     * （显示"未连接"+ 一排灰按钮比空白页好）。
+     *
+     * @param key 见 [com.litertchat.plugin.ActionLabel]
+     */
+    fun actionLabel(pkg: String, key: String): String =
+        connections.firstOrNull { it.packageName == pkg }?.label(key)
+            ?: ActionLabels.resolve(key, emptyMap())
+
+    /**
      * 用户手动加载 / 卸载引擎。
      *
      * 只有插件没声明 [Capability.AUTOLOAD_ENGINE] 时才会被用到 ——
