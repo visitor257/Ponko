@@ -695,6 +695,25 @@ class MainActivity : Activity() {
     private lateinit var modelsTabDraw: TextView
     private lateinit var modelsTabTag: TextView
     private lateinit var tabSettings: View
+    /** Ponko-EX（插件）页，2.0.0 新增，底部菜单第 4 项 */
+    private lateinit var tabPlugin: View
+    private var pluginPage: com.litertchat.app.plugin.PluginPage? = null
+
+    /**
+     * 顶栏标题。**会随 tab 变**：Ponko-EX 页显示 `Ponko-EX`，其余显示 `Ponko`。
+     *
+     * 为什么值得单独做：插件页是"另一个工程产出的东西在宿主里跑"，
+     * 标题跟着切成 Ponko-EX，用户才分得清"我现在看到的是 Ponko-EX 的地盘"。
+     */
+    private lateinit var appBarTitle: TextView
+
+    /**
+     * 顶栏标题下面那行「状态点 + 状态文字」。
+     *
+     * 它显示的是**宿主自己的引擎/模型状态**，所以在 Ponko-EX 页要藏掉 ——
+     * 放在插件页会让人以为那是插件状态。
+     */
+    private lateinit var appBarStatusRow: View
 
     // ---- API 设置区块：对话 / 绘图各一套，由 buildApiBlock() 生成，结构完全一致 ----
     private var chatApiBlock: ApiBlockView? = null
@@ -884,9 +903,42 @@ class MainActivity : Activity() {
         drawPage?.persistAll()   // 绘图参数兜底落盘
     }
 
+    /**
+     * 返回键：优先关掉「插件界面」，再退出 App。
+     *
+     * 插件界面是叠在插件列表上的一层，不处理的话按返回会直接退出 Ponko ——
+     * 用户只是想把那一页收起来，结果整个 App 没了。
+     */
+    @Deprecated("Activity.onBackPressed")
+    override fun onBackPressed() {
+        val pp = pluginPage
+        if (currentTab == 3 && pp != null && pp.isShowingPluginUi()) {
+            pp.backToList()
+            return
+        }
+        @Suppress("DEPRECATION")
+        super.onBackPressed()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // 停在 Ponko-EX 页时回到前台，重扫一次。
+        //
+        // 唯一要紧的场景：用户在插件卡片上点了「打开插件」（为了清掉系统的 stopped
+        // 标记），看完返回 Ponko —— 这时必须重连，否则状态还停在"连接失败"，
+        // 用户会以为按钮没起作用。
+        if (currentTab == 3) {
+            try { pluginPage?.refreshNow() } catch (_: Throwable) {}
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         try { saveSessions() } catch (_: Throwable) {}
+        // Ponko-EX 页：解绑所有插件、停掉试听播放。
+        // 只在 Activity 真正销毁时做 —— 切 tab 不能 release，否则切回来要重新连接。
+        try { pluginPage?.release() } catch (_: Throwable) {}
+        pluginPage = null
         scope.cancel()
         // 绘图引擎：只有「绘图 API 在跑」时才把句柄留给服务继续出图，否则正常释放（别白占内存）。
         // 顺序不能反——先断开 DrawCore 的引用，再真正 free。
@@ -930,6 +982,12 @@ class MainActivity : Activity() {
         drawPage = dpg
         tabModels = buildModelsPage()
         tabSettings = buildSettingsPage()
+        // Ponko-EX（插件页）：2.0.0 起是底部菜单第 4 项。
+        // 复用同一个 PluginPage 实例（和 DrawPage 同样的道理）：换主题时重建的是视图，
+        // 已绑定的插件连接与引擎状态都留在实例里，不会因为换一次主题就重新连接。
+        val ppg = pluginPage ?: com.litertchat.app.plugin.PluginPage(this, pal).also { pluginPage = it }
+        ppg.setPalette(pal)
+        tabPlugin = ppg.build()
         // 绘图模型就绪 → 进入绘图模式（对话页输入即正面提示词）
         dpg.onPipelineReady = {
             // 回调可能来自 IO 线程，UI 操作统一回主线程
@@ -970,6 +1028,8 @@ class MainActivity : Activity() {
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         contentFrame.addView(tabDraw, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        contentFrame.addView(tabPlugin, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         main.addView(contentFrame, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
 
@@ -988,7 +1048,7 @@ class MainActivity : Activity() {
         switchTab(0)
         // 主题切换导致的重建：回到重建前那一页（一次性，正常启动不受影响）
         val restoreTab = chatPrefs().getInt("restoreTab", -1)
-        if (restoreTab in 0..3) {
+        if (restoreTab in 0..4) {
             chatPrefs().edit().remove("restoreTab").apply()
             switchTab(restoreTab)
         }
@@ -1066,7 +1126,7 @@ class MainActivity : Activity() {
             textSize = 17f
             setTextColor(Color.WHITE)
             typeface = Typeface.DEFAULT_BOLD
-        }, matchWrap())
+        }.also { appBarTitle = it }, matchWrap())
         val statusRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -1081,6 +1141,9 @@ class MainActivity : Activity() {
         }
         statusRow.addView(statusTv, wrapWrap())
         titleBox.addView(statusRow, matchWrap())
+        // 提成成员：Ponko-EX 页要把这一行藏掉（那一页不显示引擎/模型状态，
+        // 因为状态说的是宿主自己的模型，放在插件页会让人误以为是插件状态）
+        appBarStatusRow = statusRow
 
         r1.addView(titleBox, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         appBarPlus = iconButton("＋") { newSession() }
@@ -2170,10 +2233,11 @@ class MainActivity : Activity() {
             elevation = dp(6).toFloat()
         }
         val items = listOf(
-            Triple("💬", getString(R.string.s_074), 0),
-            Triple("🧠", getString(R.string.s_124), 1),
-            Triple("🎨", getString(R.string.s_150), 2),
-            Triple("ℹ️", getString(R.string.s_048), 3),
+            Triple("💬", getString(R.string.s_074), 0),   // 对话
+            Triple("🎨", getString(R.string.s_150), 1),   // 绘图
+            Triple("🧠", getString(R.string.s_124), 2),   // 模型
+            Triple("🧩", getString(R.string.s_467), 3),   // Ponko-EX（插件）
+            Triple("ℹ️", getString(R.string.s_048), 4),   // 关于
         )
         for ((icon, label, idx) in items) {
             val item = LinearLayout(this).apply {
@@ -2199,14 +2263,33 @@ class MainActivity : Activity() {
         return nav
     }
 
+    /**
+     * 切页。**索引即底部菜单顺序**（2.0.0 起）：
+     * 0 对话 · 1 绘图 · 2 模型 · 3 Ponko-EX · 4 关于
+     *
+     * ⚠ 加页/换序时三处要一起改：本函数、[buildBottomNav] 的 items、
+     *   以及 `buildUi()` 里 `contentFrame.addView` 的顺序（顺序不影响功能，
+     *   但会决定 View 叠放次序 —— 有问题时先查这里）。
+     */
     private fun switchTab(index: Int) {
         currentTab = index
         tabChat.visibility = if (index == 0) View.VISIBLE else View.GONE
-        tabModels.visibility = if (index == 1) View.VISIBLE else View.GONE
-        tabDraw.visibility = if (index == 2) View.VISIBLE else View.GONE
-        tabSettings.visibility = if (index == 3) View.VISIBLE else View.GONE
+        tabDraw.visibility = if (index == 1) View.VISIBLE else View.GONE
+        tabModels.visibility = if (index == 2) View.VISIBLE else View.GONE
+        tabPlugin.visibility = if (index == 3) View.VISIBLE else View.GONE
+        tabSettings.visibility = if (index == 4) View.VISIBLE else View.GONE
         // 切到「模型」页时刷新绘图模型 / LoRA 列表，避免导入后状态滞后
-        if (index == 1) { refreshDrawModels(); refreshLoraUi(); refreshTaggerUi(); refreshApiUi(); refreshDrawApiUi() }
+        if (index == 2) { refreshDrawModels(); refreshLoraUi(); refreshTaggerUi(); refreshApiUi(); refreshDrawApiUi() }
+        // 切到 Ponko-EX 时重扫插件：用户可能刚装完 APK 回来
+        if (index == 3) pluginPage?.refreshNow()
+        // 标题跟着页走：Ponko-EX 页要让人知道这是另一套东西（插件工程）
+        if (::appBarTitle.isInitialized) {
+            appBarTitle.text = if (index == 3) "Ponko-EX" else "Ponko"
+        }
+        // 状态行只说宿主自己的引擎/模型，在 Ponko-EX 页没有意义（还会被误读成插件状态）
+        if (::appBarStatusRow.isInitialized) {
+            appBarStatusRow.visibility = if (index == 3) View.GONE else View.VISIBLE
+        }
         inputBar.visibility = if (index == 0) View.VISIBLE else View.GONE
         val isChat = index == 0
         appBarMenu.visibility = if (isChat) View.VISIBLE else View.INVISIBLE
@@ -3271,6 +3354,8 @@ class MainActivity : Activity() {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         if (drawPage?.onActivityResult(requestCode, resultCode, data) == true) return
+        // 插件页也要接：用户可能正在选参考音频
+        if (pluginPage?.onActivityResult(requestCode, resultCode, data) == true) return
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == REQ_PICK_MODEL && resultCode == RESULT_OK) {
             data?.data?.let { copyModelToPrivate(it) }
@@ -4662,8 +4747,9 @@ class MainActivity : Activity() {
                 when (which) {
                     0 -> saveImageToGallery(bmp, name)
                     1 -> quoteImage(bmp)
-                    2 -> { drawPage?.sendImageToI2i(bmp); switchTab(2) }
-                    else -> { drawPage?.sendImageToTagger(bmp); switchTab(2) }
+                    // 绘图页在 2.0.0 起是第 2 个 tab（索引 1）
+                    2 -> { drawPage?.sendImageToI2i(bmp); switchTab(1) }
+                    else -> { drawPage?.sendImageToTagger(bmp); switchTab(1) }
                 }
             }
             .setNegativeButton(getString(R.string.s_066), null)

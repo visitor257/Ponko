@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Ponko 插件 SDK —— 只有接口与基类，不含任何组件声明。
+
+  这个 SDK 只由「插件」依赖；宿主 Ponko 通过它拿到同一份 AIDL 定义。
+  SDK 自己不声明 Service / 权限，那些由插件自己的 Manifest 声明。
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" />

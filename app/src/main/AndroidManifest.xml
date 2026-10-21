@@ -23,7 +23,58 @@
         <intent>
             <action android:name="android.media.action.IMAGE_CAPTURE" />
         </intent>
+        <!-- 插件发现：不声明这一条，queryIntentServices 会**静默返回空**，
+             表现为「装插件了但列表里看不到」，且没有任何报错 -->
+        <intent>
+            <action android:name="com.litertchat.ponko.PLUGIN" />
+        </intent>
     </queries>
+
+    <!--
+      插件可见性的兜底。
+
+      ⚠ 为什么光靠上面的 <queries> 不够：
+
+      bindService 内部会检查「调用方能否看到目标包」（AOSP
+      ActiveServices.retrieveServiceLocked → filterAppAccess），不通过就 return null，
+      bindService 直接返回 false —— 而且**和"组件不存在"打同一句日志**，
+      普通应用读不到 logcat，只能靠猜。
+
+      实测出现过「queryIntentServices 能扫到、getPackageInfo 能读，
+      但 bindService 就是返回 false」的情况 —— 那时 queries 已经声明对了。
+      厂商 ROM 的组件隔离会让这种不一致更难预测。
+
+      这是 normal 级权限，安装即授予，不会弹框。
+      Ponko 是侧载分发（GitHub / 网盘），不走 Google Play，
+      所以没有 QUERY_ALL_PACKAGES 的应用商店政策限制。
+      真要上架时只需删掉这一行 + 依赖 <queries>（插件功能会更容易受 ROM 影响）。
+    -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+
+    <!--
+      Ponko 插件绑定权限。protectionLevel="signature" 意味着：
+      **只有和宿主签同一把密钥的 APK 才能 bind**，系统在 bindService 时就拒绝，
+      宿主代码里一行校验都不用写。
+
+      代价：第三方插件用不了（他们没我们的私钥）。真要开放时改成 normal +
+      宿主侧校验证书 SHA-256 白名单，并加用户手动信任流程。
+    -->
+    <permission
+        android:name="com.litertchat.ponko.permission.BIND_PLUGIN"
+        android:protectionLevel="signature" />
+
+    <!--
+      ⚠ 必须显式申请自己定义的这个权限。
+
+      直觉上"我定义的权限我当然有"，但 Android 的授权是在**安装时**走一遍
+      PackageManager 的流程：`<permission>` 只负责"定义"，真正让某个 uid
+      拿到它的是授权环节。定义者通常会被自动授予，但在
+      「插件先装、宿主后装」或同名权限曾被别的应用创建过的设备上，
+      会出现宿主自己没拿到、bindService 直接抛 SecurityException 的情况。
+
+      显式声明零成本，还能在 `dumpsys package` 里看到持有记录，排查时不用猜。
+    -->
+    <uses-permission android:name="com.litertchat.ponko.permission.BIND_PLUGIN" />
 
     <application
         android:label="Ponko"
