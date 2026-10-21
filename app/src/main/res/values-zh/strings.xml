@@ -476,4 +476,18 @@
     <string name="s_451">更完整的说明——功能与用法、已知限制、第三方组件清单与各许可证全文——请见项目仓库中的 README 与 NOTICE。</string>
     <string name="s_452">在 GitHub 上查看 README</string>
     <string name="s_453">在 GitHub 上查看 NOTICE</string>
+    <string name="s_454">插件</string>
+    <string name="s_455">插件是独立的 APK 文件。安装后在 Ponko 里启用即可使用。安装时系统会提示「未知来源」——这是 Android 的强制要求，无法省略。</string>
+    <string name="s_456">管理插件</string>
+    <string name="s_457">打不开插件页：%1$s</string>
+    <string name="s_458">没有找到插件</string>
+    <string name="s_459">已启用</string>
+    <string name="s_460">启用</string>
+    <string name="s_461">停用</string>
+    <string name="s_462">重新扫描</string>
+    <string name="s_463">朗读</string>
+    <string name="s_464">正在朗读…</string>
+    <string name="s_465">把 AI 回答念出来</string>
+    <string name="s_466">管理插件</string>
+    <string name="s_467">Ponko-EX</string>
 </resources>

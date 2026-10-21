@@ -1,0 +1,413 @@
+// Ponko · (c) 2026 visitor257 · MIT License · github.com/visitor257/Ponko
+package com.litertchat.app.plugin
+
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
+import android.content.pm.ResolveInfo
+import android.os.Build
+import com.litertchat.plugin.PluginConst
+
+/**
+ * 扫描手机上装了哪些 Ponko 插件，并把「为什么连不上」查清楚。
+ *
+ * 靠 `queryIntentServices(ACTION_PLUGIN)` 找到插件 —— 插件在自己的 Service 上挂这个
+ * action，系统就会把它列出来。
+ *
+ * ## ⚠ 会让「插件列表永远空」的坑
+ *
+ * 宿主的 Manifest 必须声明 `<queries>`（Android 11+ 包可见性）。漏了不会报错，
+ * `queryIntentServices` 就是**静默返回空列表**。
+ *
+ * ## ⚠ 会让「列表有、但 bind 返回 false」的坑
+ *
+ * 扫描**不等于**能连上。以下四种情况扫描都看得到，`bindService` 却会失败：
+ *
+ * | 原因 | 扫描能否看到 | bind 表现 |
+ * |---|---|---|
+ * | 包/组件被停用（`MATCH_DISABLED_COMPONENTS` 才会被返回） | ✅ | 返回 **false** |
+ * | 包处于 **stopped** 状态（装完从没启动过） | ✅ | 返回 **false** |
+ * | 签名不一致（`signature` 权限不成立） | ✅ | 抛 `SecurityException` |
+ * | 宿主没持有 `BIND_PLUGIN` 权限 | ✅ | 抛 `SecurityException` |
+ *
+ * 返回 **false 意味着系统根本没解析到这个服务**，跟权限无关 —— 权限问题是抛异常。
+ * 所以 [diagnose] 的重点就是回答「为什么解析不到」。
+ */
+object PluginDiscovery {
+
+    /**
+     * `ApplicationInfo.FLAG_SUSPENDED` 的值（API 24 起）。
+     *
+     * 不直接用 `ApplicationInfo.FLAG_SUSPENDED` 是因为它在高版本才暴露成公开常量，
+     * 而这个值从引入起就没变过 —— 写死比加版本判断更简单，也更好读。
+     */
+    private const val FLAG_SUSPENDED = 1 shl 30
+
+    /**
+     * 扫到的插件（尚未绑定，所以还没有 [com.litertchat.plugin.PluginManifest]）。
+     *
+     * @param packageName 用它在 [PluginRegistry] 里记「已启用」，也是 bind 的目标
+     * @param serviceClass 插件 Service 的完整类名；解析不到时为空。
+     *                     bind 时用它拼显式 ComponentName —— 官方推荐做法，
+     *                     能排除隐式 intent 的解析差异
+     * @param label 从包信息里读到的应用名，作为绑定前的临时显示名
+     */
+    data class Found(
+        val packageName: String,
+        val serviceClass: String,
+        val label: String,
+        val versionName: String,
+        val enabled: Boolean,
+        /** 签名算法读不到时为空 */
+        val signerShort: String,
+        /** 包是否处于启用状态（`ApplicationInfo.enabled`）。false = 被用户/系统停用 */
+        val installed: Boolean,
+        /** 用 flags=0 能否解析到 Service。false = 组件被禁，bind 一定失败 */
+        val resolvable: Boolean,
+        /** 包处于 stopped 状态：装完从未启动过，其他应用 bind 不到它 */
+        val stopped: Boolean,
+        /** 插件自带的启动入口（用来「点开一次」清掉 stopped）；没有则 null */
+        val hasLauncher: Boolean,
+    )
+
+    fun scan(c: Context): List<Found> {
+        val pm = c.packageManager
+        val intent = Intent(PluginConst.ACTION_PLUGIN)
+
+        // 关键：这里**不加** MATCH_DISABLED_COMPONENTS / MATCH_ALL。
+        //
+        // 加了之后列表里会出现「看起来在、其实 bind 不到」的条目 —— 用户点启用就报
+        // 「bindService 返回 false」，却完全看不出原因。现在改成：
+        //   · 主扫描用 flags=0 —— 只列真正能连的
+        //   · 再用 MATCH_DISABLED_COMPONENTS 补扫一遍 —— 找出被停用的，
+        //     放进列表但标成「已停用」，让用户知道"它在这，只是被关了"
+        val normal = resolve(pm, intent, 0)
+        val withDisabled = resolve(pm, intent, PackageManager.MATCH_DISABLED_COMPONENTS)
+
+        // 被停用的：补扫里有、主扫描里没有
+        val normalPkgs = normal.mapNotNull { it.serviceInfo?.packageName }.toSet()
+
+        val all = LinkedHashMap<String, String>()   // pkg -> serviceClass
+        withDisabled.forEach { ri ->
+            val si = ri.serviceInfo ?: return@forEach
+            all.putIfAbsent(si.packageName, si.name)
+        }
+        normal.forEach { ri ->
+            val si = ri.serviceInfo ?: return@forEach
+            all[si.packageName] = si.name     // 能正常解析的以主扫描为准
+        }
+
+        return all.mapNotNull { (pkg, cls) ->
+            describe(c, pkg, cls, resolvable = pkg in normalPkgs)
+        }.sortedBy { it.label.lowercase() }
+    }
+
+    private fun resolve(pm: PackageManager, intent: Intent, extraFlags: Int): List<ResolveInfo> =
+        try {
+            @Suppress("DEPRECATION")
+            pm.queryIntentServices(intent, extraFlags)
+        } catch (t: Throwable) {
+            emptyList()
+        }
+
+    private fun describe(c: Context, pkg: String, serviceClass: String, resolvable: Boolean): Found? {
+        val pm = c.packageManager
+        return try {
+            val info = pm.getPackageInfo(pkg, 0)
+            val ai = info.applicationInfo ?: return null
+            Found(
+                packageName = pkg,
+                serviceClass = serviceClass,
+                label = ai.loadLabel(pm).toString().ifEmpty { pkg },
+                versionName = info.versionName ?: "?",
+                enabled = PluginRegistry.isEnabled(c, pkg),
+                signerShort = signerShort(pm, pkg),
+                // 两个状态分开报：包被停用和组件被禁是不同原因、不同解法。
+                // 合成一个字段会让 UI 说不出到底是哪种，用户只能瞎试
+                installed = ai.enabled,
+                resolvable = resolvable,
+                stopped = (ai.flags and ApplicationInfo.FLAG_STOPPED) != 0,
+                hasLauncher = hasLauncher(pm, pkg),
+            )
+        } catch (t: Throwable) {
+            // 包在扫描和读取之间被卸载了（竞态），跳过即可
+            null
+        }
+    }
+
+    /** 插件有没有可启动的激活组件 —— 有它才能清掉 stopped 状态 */
+    private fun hasLauncher(pm: PackageManager, pkg: String): Boolean =
+        activatorClassOf(pm, pkg) != null
+
+    /**
+     * 找插件的**激活组件**类名；没有返回 null。
+     *
+     * 两条路，优先第一条：
+     *
+     * 1. **`ACTION_ACTIVATOR`** —— 插件继承 [com.litertchat.plugin.PonkoActivatorActivity]
+     *    并声明这个 action。**没有 `CATEGORY_LAUNCHER`，所以桌面不显示图标**，
+     *    启动时也不画界面。这是推荐做法（"像系统组件一样隐藏"）。
+     * 2. **`CATEGORY_LAUNCHER`** —— 兼容老插件（它们只有能看见的说明页）。
+     *    桌面会有图标，但至少能连上。
+     */
+    private fun activatorClassOf(pm: PackageManager, pkg: String): String? {
+        // ① 无界面的激活组件（首选）
+        val byAction = try {
+            @Suppress("DEPRECATION")
+            pm.queryIntentActivities(
+                Intent(com.litertchat.plugin.PonkoActivation.ACTION_ACTIVATOR)
+                    .setPackage(pkg), 0
+            ).firstOrNull()?.activityInfo?.name
+        } catch (t: Throwable) {
+            null
+        }
+        if (!byAction.isNullOrEmpty()) return byAction
+
+        // ② 退回桌面图标（老插件）
+        return try {
+            pm.queryIntentActivities(
+                Intent(Intent.ACTION_MAIN)
+                    .addCategory(Intent.CATEGORY_LAUNCHER)
+                    .setPackage(pkg), 0
+            ).firstOrNull()?.activityInfo?.name
+        } catch (t: Throwable) {
+            null
+        }
+    }
+
+    /** 对外版本：传给 [com.litertchat.plugin.PonkoActivation.buildIntent] 用 */
+    fun launcherClassOf(c: Context, pkg: String): String? =
+        activatorClassOf(c.packageManager, pkg)
+
+    /**
+     * 故意**不提供**「普通启动插件」的方法。
+     *
+     * 宿主启动插件只有一个目的：清 stopped 标记。那就必须带
+     * [com.litertchat.plugin.PonkoActivation.EXTRA_ACTIVATE_ONLY]，
+     * 让插件立刻 finish —— 见 [com.litertchat.plugin.PonkoActivation.buildIntent]。
+     *
+     * 留一个能"正常打开插件界面"的入口会诱使人误用：用户点一下结果被扔进
+     * 一个不相干的说明页，还得自己按返回。
+     */
+
+    // ==================== 诊断 ====================
+
+    /**
+     * 一次绑定的"体检结果"。
+     *
+     * 每一项都对应 `bindService` 失败的一个**真实**原因 —— 这些不是我猜的，
+     * 是按 AOSP `ActiveServices.retrieveServiceLocked()` 里 `return null` 的路径倒推的：
+     *
+     * ```java
+     * // ① 显式 component 时走这里；拿不到 ServiceInfo 就 return null
+     * r = getServiceInfo(service.getComponent(), flags, userId);
+     * // ② 可见性/跨用户过滤，同样 return null
+     * if (filterAppAccess(r.packageName, callingUid, userId)) return null;
+     * ```
+     *
+     * 两条路径**打同一句日志**（`Unable to start service ...: not found`），
+     * 而普通应用读不到 logcat —— 所以只能靠 [explicitProbe] 把它们分开。
+     */
+    data class Diag(
+        val holdsPermission: Boolean,
+        val selfSigner: String,
+        val pluginSigner: String,
+        /** 隐式（action + package）能否解析到 Service */
+        val resolvable: Boolean,
+        /**
+         * **显式** `getServiceInfo(ComponentName)` 是否拿得到。
+         *
+         * 这是区分两类失败的关键：
+         * · `resolvable=true` 但这里 `false` → 组件名对不上，或跨用户（分身/工作资料）
+         * · 两个都 `true` 但 bind 仍失败 → 只看可见性了，靠 QUERY_ALL_PACKAGES 兜
+         */
+        val explicitProbe: Boolean,
+        val serviceClass: String,
+        val packageEnabled: Boolean,
+        val componentEnabled: Boolean,
+        val stopped: Boolean,
+        /** `FLAG_SUSPENDED`：被系统「暂停」，组件一律不可用 */
+        val suspended: Boolean,
+        val hasLauncher: Boolean,
+        /** 插件所在的用户 ID（uid / 100000） */
+        val pluginUserId: Int,
+        /** 宿主所在的用户 ID */
+        val selfUserId: Int,
+        /** 插件进程名；与包名不同说明它跑在独立进程 */
+        val processName: String,
+    ) {
+        /** 签名是否一致（不一致 → SecurityException） */
+        val signerMatch: Boolean
+            get() = selfSigner.isNotEmpty() && pluginSigner.isNotEmpty() && selfSigner == pluginSigner
+
+        /** 插件装在别的用户空间（应用分身 / 工作资料）—— 跨用户一律 bind 不到 */
+        val crossUser: Boolean
+            get() = pluginUserId != selfUserId
+
+        fun headline(): String = when {
+            !holdsPermission ->
+                "Ponko 没拿到插件权限（系统还没授予），重启手机后再试"
+            !signerMatch && pluginSigner.isNotEmpty() ->
+                "签名不一致：Ponko=$selfSigner，插件=$pluginSigner"
+            !packageEnabled ->
+                "插件被系统停用了（设置 → 应用 → 找到该插件 → 启用）"
+            !componentEnabled ->
+                "插件服务被禁用（多半是系统的后台限制，去应用设置里放开）"
+            suspended ->
+                "插件被系统「暂停」了（设置 → 应用 → 该插件 → 取消暂停）"
+            crossUser ->
+                "插件装在另一个用户空间（应用分身 / 工作资料），系统禁止跨用户连接。" +
+                    "把 Ponko 和插件装在**同一个**空间里"
+            stopped ->
+                if (hasLauncher) "插件装好后还没启动过（点下面「打开插件」一次即可）"
+                else "插件装好后还没启动过，而且它没有可点的图标，只能卸载重装后先启动一次"
+            !resolvable ->
+                "系统找不到插件的服务组件（版本太旧或 APK 安装不完整，重装试试）"
+            !explicitProbe ->
+                "系统认得这个服务，但用完整类名找不到它 —— 组件名解析有问题，" +
+                    "重装插件后再试"
+            else ->
+                "系统能看到这个服务，但拒绝连接。多半是厂商 ROM 的组件隔离，" +
+                    "把 Ponko 和插件都加进「后台白名单 / 自启动」再试"
+        }
+
+        /** 给开发者看的一行，用户复制给作者用 */
+        fun detailLine(): String = buildString {
+            append("解析=").append(if (resolvable) "OK" else "失败")
+            append(" 显式=").append(if (explicitProbe) "OK" else "失败")
+            append(" 包=").append(if (packageEnabled) "启用" else "停用")
+            append(" 服务=").append(if (componentEnabled) "启用" else "禁用")
+            append(" 未启动=").append(if (stopped) "是" else "否")
+            append(" 暂停=").append(if (suspended) "是" else "否")
+            append(" 用户=").append(selfUserId).append("/").append(pluginUserId)
+        }
+    }
+
+    fun diagnose(c: Context, pkg: String): Diag {
+        val pm = c.packageManager
+        var serviceClass = ""
+        var resolvable = false
+        var pkgEnabled = false
+        var compEnabled = false
+        var stopped = false
+        var suspended = false
+        var launcher = false
+        var pluginUid = -1
+        var processName = ""
+
+        try {
+            val i = Intent(PluginConst.ACTION_PLUGIN).setPackage(pkg)
+            @Suppress("DEPRECATION")
+            val ri = pm.queryIntentServices(i, 0).firstOrNull()
+            if (ri?.serviceInfo != null) {
+                resolvable = true
+                serviceClass = ri.serviceInfo.name
+                processName = ri.serviceInfo.processName ?: ""
+            }
+            val info = pm.getPackageInfo(pkg, 0)
+            val ai = info.applicationInfo
+            pkgEnabled = ai?.enabled == true
+            stopped = ai != null && (ai.flags and ApplicationInfo.FLAG_STOPPED) != 0
+            suspended = ai != null && (ai.flags and FLAG_SUSPENDED) != 0
+            pluginUid = ai?.uid ?: -1
+            launcher = hasLauncher(pm, pkg)
+        } catch (t: Throwable) {
+            // 包不存在 / 被卸载
+        }
+
+        // 显式探测：这一步能把「找不到组件」和「可见性/跨用户过滤」分开。
+        // 用 GET_META_DATA 让系统把 ServiceInfo 真正组装出来；返回 null 就是找不到
+        var explicitProbe = false
+        if (serviceClass.isNotEmpty()) {
+            explicitProbe = try {
+                @Suppress("DEPRECATION")
+                pm.getServiceInfo(ComponentName(pkg, serviceClass), 0) != null
+            } catch (t: Throwable) {
+                false
+            }
+        }
+
+        // 组件级开关。没有显式设置时是 DEFAULT，按"跟随包"处理
+        if (serviceClass.isNotEmpty()) {
+            compEnabled = try {
+                when (pm.getComponentEnabledSetting(ComponentName(pkg, serviceClass))) {
+                    PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                    PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER,
+                    PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED -> false
+                    else -> true
+                }
+            } catch (t: Throwable) {
+                true
+            }
+        }
+
+        return Diag(
+            holdsPermission = holdsBindPermission(c),
+            selfSigner = selfSignerShort(c),
+            pluginSigner = signerShort(pm, pkg),
+            resolvable = resolvable,
+            explicitProbe = explicitProbe,
+            serviceClass = serviceClass,
+            packageEnabled = pkgEnabled,
+            componentEnabled = compEnabled,
+            stopped = stopped,
+            suspended = suspended,
+            hasLauncher = launcher,
+            // uid 的高位就是用户 ID：多用户/分身下是 10xxxxx、11xxxxx 这种
+            pluginUserId = if (pluginUid > 0) pluginUid / 100000 else -1,
+            selfUserId = android.os.Process.myUid() / 100000,
+            processName = processName,
+        )
+    }
+
+
+    // ==================== 包信息小工具 ====================
+
+    /**
+     * 取签名摘要前 8 位，给用户一个「这是不是同一个人做的」的粗判断。
+     *
+     * ⚠ 这**不是**安全校验 —— 真正的防护是 signature 权限（系统层）。
+     * 这里只是让用户能一眼看出插件换了人。
+     */
+    fun signerShort(pm: PackageManager, pkg: String): String = try {
+        val sigs = if (Build.VERSION.SDK_INT >= 28) {
+            pm.getPackageInfo(pkg, PackageManager.GET_SIGNING_CERTIFICATES)
+                .signingInfo?.apkContentsSigners
+        } else {
+            @Suppress("DEPRECATION")
+            pm.getPackageInfo(pkg, PackageManager.GET_SIGNATURES).signatures
+        }
+        val bytes = sigs?.firstOrNull()?.toByteArray() ?: return ""
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+        digest.joinToString("") { "%02x".format(it) }.take(8)
+    } catch (t: Throwable) {
+        ""
+    }
+
+    /**
+     * 取**宿主自己**的签名摘要前 8 位。
+     *
+     * 专门用来和插件对比：签名不一致这件事只有把两个指纹摆在一起才看得出来 ——
+     * 否则用户只会看到一句 "SecurityException"，完全无从下手。
+     */
+    fun selfSignerShort(c: Context): String = try {
+        signerShort(c.packageManager, c.packageName)
+    } catch (t: Throwable) {
+        ""
+    }
+
+    /**
+     * 宿主当前是否真的持有 [PluginConst.PERMISSION_BIND_PLUGIN]。
+     *
+     * 这是排查 `SecurityException` 的第一现场：如果这里返回 false，
+     * 说明问题在宿主的权限授权上（跟插件无关），装再多插件也没用。
+     */
+    fun holdsBindPermission(c: Context): Boolean = try {
+        c.checkSelfPermission(PluginConst.PERMISSION_BIND_PLUGIN) ==
+            PackageManager.PERMISSION_GRANTED
+    } catch (t: Throwable) {
+        false
+    }
+}

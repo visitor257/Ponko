@@ -476,4 +476,18 @@
 <string name="s_451">For the fuller picture - features and usage, known limitations, the complete list of third-party components and their full license texts - see the README and the NOTICE in the project repository.</string>
 <string name="s_452">View the README on GitHub</string>
 <string name="s_453">View the NOTICE on GitHub</string>
+<string name="s_454">Plugins</string>
+<string name="s_455">Plugins are separate APKs. Install one, then enable it here. Android will warn about "unknown sources" - that prompt is mandatory and cannot be skipped.</string>
+<string name="s_456">Manage plugins</string>
+<string name="s_457">Cannot open the plugin page: %1$s</string>
+<string name="s_458">Found no plugins</string>
+<string name="s_459">Enabled</string>
+<string name="s_460">Enable</string>
+<string name="s_461">Disable</string>
+<string name="s_462">Rescan</string>
+<string name="s_463">Read aloud</string>
+<string name="s_464">Reading aloud…</string>
+<string name="s_465">Generate speech from an AI reply</string>
+<string name="s_466">Manage plugins</string>
+<string name="s_467">Ponko-EX</string>
 </resources>

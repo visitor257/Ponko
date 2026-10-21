@@ -13,8 +13,8 @@ android {
         applicationId = "com.litertchat.app"
         minSdk = 28
         targetSdk = 36
-        versionCode = 15
-        versionName = "1.7.2"
+        versionCode = 20
+        versionName = "2.0.0"
         ndk {
             // LiteRT-LM 与 llama.cpp 的 native 都只跑 arm64 真机，去掉 x86_64 可减小 APK
             abiFilters += "arm64-v8a"
@@ -51,6 +51,9 @@ android {
 }
 
 dependencies {
+    // 插件 SDK（AIDL 接口 + Parcelable + 基类 Service）。宿主与插件共用同一份定义，
+    // 所以宿主也依赖它 —— 不是单向依赖。
+    implementation(project(":ponko-plugin-sdk"))
     // Google LiteRT-LM Android API (loads & runs .litertlm models)
     implementation("com.google.ai.edge.litertlm:litertlm-android:0.17.0")
     // Coroutines (the streaming sendMessageAsync returns a Flow)

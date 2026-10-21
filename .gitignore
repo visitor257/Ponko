@@ -42,6 +42,9 @@ keystore.properties
 # 提交信息草稿
 .commit_msg.txt
 
+# 内部投递工具（含自建网盘地址与默认口令，不入公开仓库）
+tools/upload-pan.py
+
 # Python 缓存
 __pycache__/
 *.pyc
