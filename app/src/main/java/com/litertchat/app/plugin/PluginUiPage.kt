@@ -89,6 +89,24 @@ class PluginUiPage(
     /** 内容容器。重画时清空它再填 */
     private var host: LinearLayout? = null
 
+    /**
+     * 「功能」块的备用挂载点（标题下面那一格）。
+     *
+     * 插件没在 schema 里放 [UiType.HOST_SLOT] 时，功能块就挂这儿 ——
+     * 也就是老行为。放在字段里是因为 [render] 每次都要判断：
+     * 这一版 schema 有没有坑位。
+     */
+    private var topSlot: LinearLayout? = null
+
+    /**
+     * 「功能」块本体。**建一次，之后只搬不重建**（见 [build] 里的说明）。
+     * 空 = 这个插件没有可用的宿主动作。
+     */
+    private var actionBlock: View? = null
+
+    /** 这一帧 schema 里有没有画过 [UiType.HOST_SLOT]。每次 [render] 开头复位 */
+    private var hostSlotConsumed = false
+
     /** 「功能」区的状态提示（试听进度、完成、失败） */
     private var actionHint: TextView? = null
 
@@ -203,7 +221,24 @@ class PluginUiPage(
     private var audioTicker: Runnable? = null
 
     /**
-     * 宿主的音频播放能力。由 [PluginPage] 实现，包着它那个 MediaPlayer。
+     * 把播放条那一条音频存进音乐库。
+     *
+     * 由 [PluginPage] 注入。参数是 `AUDIO` 条目的 key —— v7 起每条可以有
+     * **自己那份**文件，所以"存哪一条"必须跟着条目的 key 走，
+     * 不能只存"最近一次产物"。
+     *
+     * 为空 = 宿主不支持逐条保存，那时保存按钮不显示。
+     */
+    var audioSaver: ((key: String) -> Unit)? = null
+
+    /**
+     * 宿主的音频播放能力。由 [PluginPage] 实现，包着它那些 MediaPlayer。
+     *
+     * ## 为什么要按 [key] 分
+     *
+     * v4 时只有一个播放器、只播"宿主最近一次产物"，所以接口没有参数。
+     * v7 起插件可以给每个 `AUDIO` 条目送自己那份音频（历史记录场景），
+     * 于是"第 3 条"和"第 5 条"必须是两个独立播放器 —— 点第 3 条不能听到最新那条。
      *
      * ## 为什么不让插件自己播
      *
@@ -211,16 +246,16 @@ class PluginUiPage(
      * 用户退出页面后声音还在响，找不到地方关。
      */
     interface AudioHost {
-        /** 有没有可播的音频（宿主最近一次合成的产物） */
-        fun hasAudio(): Boolean
-        fun isPlaying(): Boolean
+        /** 这个 key 有没有可播的音频（插件送的那份，或宿主最近一次产物） */
+        fun hasAudio(key: String): Boolean
+        fun isPlaying(key: String): Boolean
         /** 当前位置（毫秒） */
-        fun positionMs(): Int
+        fun positionMs(key: String): Int
         /** 总长（毫秒）；没有音频返回 0 */
-        fun durationMs(): Int
-        fun play()
-        fun pause()
-        fun seekTo(ms: Int)
+        fun durationMs(key: String): Int
+        fun play(key: String)
+        fun pause(key: String)
+        fun seekTo(key: String, ms: Int)
     }
 
     /** 一个播放条的所有控件。[AudioHost] 变化时刷它 */
@@ -229,8 +264,12 @@ class PluginUiPage(
         val seek: SeekBar,
         val time: TextView,
         val empty: TextView,
+        /** 这个条目的 key —— 所有 [AudioHost] 调用都靠它区分播哪份 */
+        val key: String,
         /** 用户正按着滑块时不能被 tick 覆盖 */
         var dragging: Boolean = false,
+        /** 「保存」小按钮；宿主没提供保存能力时为 null */
+        var save: TextView? = null,
     )
 
     fun build(): View {
@@ -262,10 +301,23 @@ class PluginUiPage(
 
         // ---- 功能（宿主提供的动作）----
         //
-        // 放在插件配置上面：用户点进这一页通常是要"做点什么"，
-        // 先给动作、再给参数。参数是给动作调味的，不是主角。
+        // ## v7：挂载点由插件决定
+        //
+        // 以前这块**写死**挂在标题下面。插件想把「开始推理」放进自己的
+        // 「参数」标签页里做不到 —— schema 没有任何语法能说"把宿主那块画进我的 tab"。
+        //
+        // 现在：先建好但**不挂**，等 render() 看完 schema 再决定挂哪儿：
+        // · 有 [UiType.HOST_SLOT] → 塞进那个坑
+        // · 没有 → 挂在这个 topSlot 里（老行为，向后兼容）
+        //
+        // **只建一次**，之后靠 re-parent 搬家。重建的话里面那些输入框
+        // （目标文本 / 逐字稿）会被换掉，用户正在打的字全没了。
+        val slot = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL }
+        topSlot = slot
+        root.addView(slot, matchWrap())
         if (hostActions.isNotEmpty()) {
-            root.addView(buildActionBlock(), matchWrap().apply { topMargin = dp(10) })
+            actionBlock = buildActionBlock()
+            actionBlock?.let { slot.addView(it, matchWrap().apply { topMargin = dp(10) }) }
         }
 
         // ---- 内容区（每次重画都重建这里）----
@@ -311,6 +363,7 @@ class PluginUiPage(
         audioBars.clear()
         firstLogKey = null
         firstImageKey = null
+        hostSlotConsumed = false
         stopAudioTicker()
         host.removeAllViews()
 
@@ -390,12 +443,26 @@ class PluginUiPage(
                         android.util.Log.w("PonkoPluginUi", "多余的 TABS_END，已忽略")
                     }
                 }
+                UiType.HOST_SLOT -> {
+                    // v7：插件挖的坑，把宿主功能块搬进来。
+                    // 已经有坑位用掉时 takeActionBlock 返回 null → 多写的坑位是空的，
+                    // 不会把同一块 View 挂两处（那会直接抛 IllegalStateException）
+                    val blk = takeActionBlock()
+                    if (blk != null) {
+                        target.last().content()
+                            .addView(blk, matchWrap().apply { topMargin = dp(10) })
+                    }
+                }
                 else -> {
                     val v = renderItem(item) ?: return@forEach
                     target.last().content().addView(v, matchWrap())
                 }
             }
         }
+
+        // 插件没挖坑（或这一版 schema 把坑删了）→ 功能块回到标题下面。
+        // 少了这一步，上一帧搬进 tab 的块会跟着那个已脱离视图树的父容器一起消失
+        if (actionBlock != null && !hostSlotConsumed) ensureActionBlockAtTop()
 
         // 插件可能漏写 TABS_END —— 那些组在 TABS_END 分支里`finish`不到，
         // 这里补一次，保证空标签条一定被藏掉、恢复上次那页也一定发生。
@@ -410,6 +477,30 @@ class PluginUiPage(
     }
 
     // ==================== 功能区（宿主提供）====================
+
+    /**
+     * 把功能块取出来准备挂到别处。
+     *
+     * **只认第一个** `HOST_SLOT`：插件写两个坑位时，第二个什么都不画 ——
+     * 同一个 View 挂两处会抛 `IllegalStateException`，
+     * 而"两个坑位都想显示功能块"本身就是插件侧写错了。
+     */
+    private fun takeActionBlock(): View? {
+        val blk = actionBlock ?: return null
+        if (hostSlotConsumed) return null
+        hostSlotConsumed = true
+        (blk.parent as? ViewGroup)?.removeView(blk)
+        return blk
+    }
+
+    /** 功能块回到标题下面（老位置）。已经在就不动，避免无谓的重排 */
+    private fun ensureActionBlockAtTop() {
+        val blk = actionBlock ?: return
+        val slot = topSlot ?: return
+        if (blk.parent === slot) return
+        (blk.parent as? ViewGroup)?.removeView(blk)
+        slot.addView(blk, matchWrap().apply { topMargin = dp(10) })
+    }
 
     /**
      * 「功能」区：宿主自己的动作按钮 + 可选的参数区 + 一行状态提示 + 诊断区。
@@ -435,14 +526,27 @@ class PluginUiPage(
             setPadding(0, dp(8), 0, dp(2))
         }, matchWrap())
 
-        val row = LinearLayout(act).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(6), 0, 0)
-        }
+        // ## 等宽均分，超三个就折成两行
+        //
+        // 原来是 `WRAP_CONTENT` + 左右各 16dp 内边距 + 8dp 间距。宽度一超，
+        // 最后的按钮就被裁掉（实测第 4 个「保存」少 46dp，文字显示不全）——
+        // 而 LinearLayout 横向排布**不会**因为放不下就换行，它直接把尾巴切掉。
+        //
+        // 现在按等权重分：`weight = 1` 让每个按钮拿到相同的宽度，
+        // 文案超长就单行省略（见 applyActionStyle）。四个以上折成两行 ——
+        // 5 个按钮挤一行的结果是每个只剩 50dp，不如两行平均。
+        val perRow = if (hostActions.size <= 3) hostActions.size
+        else (hostActions.size + 1) / 2
+        var row = newActionRow()
+        var inRow = 0
         hostActions.forEachIndexed { i, action ->
+            if (i > 0 && i % perRow == 0) {
+                block.addView(row, matchWrap().apply { topMargin = dp(8) })
+                row = newActionRow()
+                inRow = 0
+            }
             val btn = TextView(act).apply {
-                setPadding(dp(16), dp(9), dp(16), dp(9))
+                setPadding(dp(6), dp(9), dp(6), dp(9))
                 applyActionText(this, action.id, action.label)
                 applyActionStyle(this, action.enabled)
                 setOnClickListener {
@@ -457,9 +561,11 @@ class PluginUiPage(
                 }
             }
             actionButtons[action.id] = btn
-            row.addView(btn, wrapWrap().apply { if (i > 0) leftMargin = dp(8) })
+            row.addView(btn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                .apply { if (inRow > 0) leftMargin = dp(8) })
+            inRow++
         }
-        block.addView(row, matchWrap())
+        block.addView(row, matchWrap().apply { topMargin = dp(6) })
 
         // ---- 宿主自己的参数区（试听文本 / 模式 / 参考音频 …）----
         hostExtra?.let { builder ->
@@ -531,6 +637,12 @@ class PluginUiPage(
         return block
     }
 
+    /** 功能按钮的一行。按钮按 `weight = 1` 均分宽度，见 [buildActionBlock] 里的说明 */
+    private fun newActionRow(): LinearLayout = LinearLayout(act).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+    }
+
     /**
      * 按钮**样式**（只改配色和可点性，不动文字）。
      *
@@ -543,6 +655,10 @@ class PluginUiPage(
         tv.isClickable = enabled
         tv.gravity = Gravity.CENTER
         tv.textSize = 13f
+        // 等宽均分之后每个按钮只有 60~90dp，长文案必须截断而不是换行 ——
+        // 换行会把整行撑高，几个按钮高度不一致比截断更难看
+        tv.maxLines = 1
+        tv.ellipsize = android.text.TextUtils.TruncateAt.END
         if (enabled) {
             tv.setTextColor(pal.surface)
             tv.background = rounded(pal.primary, 10)
@@ -725,7 +841,14 @@ class PluginUiPage(
      */
     private fun buildGroup(item: UiItem): Pair<View, LinearLayout> {
         val key = item.key.ifBlank { item.label }
-        val open = groupOpen[key] ?: true
+        // 默认展开，但插件可以说"这一组默认收起"：GROUP_START 的 value 写 "collapsed"。
+        //
+        // 之前 `value` 对 GROUP_START **完全没被读取**，插件没有任何表达方式 ——
+        // 参数十几个的插件只能把用户丢进一屏长滚动里。
+        //
+        // 用户手动折过之后以 `groupOpen` 为准：那是他的选择，不该被下一次
+        // schema 刷新顶回默认值。
+        val open = groupOpen[key] ?: !item.value.trim().equals("collapsed", ignoreCase = true)
 
         val body = LinearLayout(act).apply {
             orientation = LinearLayout.VERTICAL
@@ -1597,20 +1720,35 @@ class PluginUiPage(
             visibility = View.GONE
         }
 
+        val key = item.key.ifBlank { "audio#${audioBars.size}" }
+
+        // v7：逐条保存。只有宿主注入了 saver 才画这个按钮 ——
+        // 画一个点了没反应的按钮，比不画更让人困惑
+        val save: TextView? = audioSaver?.let {
+            TextView(act).apply {
+                text = "保存"
+                textSize = 11f
+                setTextColor(pal.primary)
+                setPadding(dp(10), dp(6), dp(2), dp(6))
+                isClickable = true
+                setOnClickListener { audioSaver?.invoke(key) }
+            }
+        }
+
         row.addView(btn, wrapWrap())
         row.addView(seek, LinearLayout.LayoutParams(0, dp(32), 1f))
         row.addView(time, wrapWrap())
+        save?.let { row.addView(it, wrapWrap()) }
         box.addView(row, matchWrap())
         box.addView(empty, matchWrap())
 
-        val bar = AudioBar(btn, seek, time, empty)
-        val key = item.key.ifBlank { "audio#${audioBars.size}" }
+        val bar = AudioBar(btn, seek, time, empty, key, save = save)
         audioBars[key] = bar
 
         btn.setOnClickListener {
             val h = audioHost ?: return@setOnClickListener
-            if (!h.hasAudio()) return@setOnClickListener
-            if (h.isPlaying()) h.pause() else h.play()
+            if (!h.hasAudio(key)) return@setOnClickListener
+            if (h.isPlaying(key)) h.pause(key) else h.play(key)
             refreshAudioBars()
             startAudioTicker()
         }
@@ -1622,8 +1760,8 @@ class PluginUiPage(
             override fun onStopTrackingTouch(sb: SeekBar?) {
                 bar.dragging = false
                 val h = audioHost ?: return
-                val dur = h.durationMs()
-                if (dur > 0) h.seekTo(dur * (sb?.progress ?: 0) / 1000)
+                val dur = h.durationMs(key)
+                if (dur > 0) h.seekTo(key, dur * (sb?.progress ?: 0) / 1000)
                 refreshAudioBars()
             }
         })
@@ -1737,19 +1875,20 @@ class PluginUiPage(
      */
     private fun refreshAudioBars() {
         val h = audioHost
-        // 宿主没提供播放能力时，所有播放条都显示成"没有可播放的音频"
-        val has = h?.hasAudio() == true
-        val dur = if (has) h?.durationMs() ?: 0 else 0
-        val pos = if (has) h?.positionMs() ?: 0 else 0
-        val playing = has && h?.isPlaying() == true
-
         audioBars.values.forEach { bar ->
+            // 每条**各自问一遍**：v7 起不同 key 可能是不同文件、不同播放器，
+            // 甚至只有其中几条有音频
+            val has = h?.hasAudio(bar.key) == true
             bar.btn.visibility = if (has) View.VISIBLE else View.GONE
             bar.seek.visibility = if (has) View.VISIBLE else View.GONE
             bar.time.visibility = if (has) View.VISIBLE else View.GONE
+            bar.save?.visibility = if (has) View.VISIBLE else View.GONE
             bar.empty.visibility = if (has) View.GONE else View.VISIBLE
             if (!has) return@forEach
 
+            val dur = h?.durationMs(bar.key) ?: 0
+            val pos = h?.positionMs(bar.key) ?: 0
+            val playing = h?.isPlaying(bar.key) == true
             bar.btn.text = if (playing) "⏸" else "▶"
             bar.time.text = "${fmtMs(pos)} / ${fmtMs(dur)}"
             // 用户正按着滑块时不能改它的位置 —— 手指和控件会打架
@@ -1759,10 +1898,15 @@ class PluginUiPage(
         }
     }
 
+    /** 有没有任意一条在响。ticker 靠它决定要不要继续跑 */
+    private fun anyPlaying(): Boolean {
+        val h = audioHost ?: return false
+        return audioBars.values.any { h.isPlaying(it.key) }
+    }
+
     /** 让某个播放条跟着播放器走。播放中每 200ms 刷一次，暂停就停 */
     private fun startAudioTicker() {
-        val running = audioHost?.isPlaying() == true
-        if (!running) {
+        if (!anyPlaying()) {
             audioTicker?.let { handler.removeCallbacks(it) }
             audioTicker = null
             return
@@ -1770,7 +1914,7 @@ class PluginUiPage(
         if (audioTicker != null) return
         val r = object : Runnable {
             override fun run() {
-                if (audioHost?.isPlaying() != true) {
+                if (!anyPlaying()) {
                     refreshAudioBars()
                     audioTicker = null
                     return

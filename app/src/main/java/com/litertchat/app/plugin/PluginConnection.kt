@@ -72,6 +72,23 @@ class PluginConnection(
          * @param append true = 追加（日志）；false = 替换（进度、状态）
          */
         fun onUiPatch(key: String, value: String?, append: Boolean) {}
+
+        /**
+         * 插件请求宿主**用当前参数合成一次**（v7）。
+         *
+         * 什么时候算「当前参数」由宿主决定（就是插件页上那份 `PreviewParams`）。
+         * 插件页没开着时这条请求没有意义 —— 那时没有"当前参数"。
+         */
+        fun onSynthesisRequested() {}
+
+        /**
+         * 插件给某个 `AUDIO` 条目送了自己那份音频（v7）。
+         *
+         * [bytes] 已读进内存、FD 已关（同 [onImage] 的理由：FD 不能跨线程传）。
+         *
+         * @param key 对应 `UiItem.key`；空 = 绑定到"最近一次产物"那个位置
+         */
+        fun onAudioFile(key: String, bytes: ByteArray, displayName: String?) {}
     }
 
     companion object {
@@ -88,6 +105,15 @@ class PluginConnection(
          * 真有大图需求该走"存成文件、把路径还给用户"，不是塞进界面。
          */
         private const val MAX_IMAGE_BYTES = 32 * 1024 * 1024
+
+        /**
+         * 插件送来的单份音频上限（64MB）。
+         *
+         * 48kHz / 16bit / 单声道 WAV 约 96KB/s，64MB ≈ 11 分钟。
+         * 历史记录场景下插件送的是**已经生成好**的片段，不该有这么长的；
+         * 真超过说明用法不对（想拿宿主当存储用），直接丢比 OOM 好。
+         */
+        private const val MAX_AUDIO_BYTES = 64 * 1024 * 1024
     }
 
     private val main = Handler(Looper.getMainLooper())
@@ -250,6 +276,32 @@ class PluginConnection(
 
         override fun onUiPatch(key: String, value: String?, append: Boolean) {
             post { listener?.onUiPatch(key, value, append) }
+        }
+
+        override fun requestSynthesis() {
+            // 没有数据要读，直接转主线程
+            post { listener?.onSynthesisRequested() }
+        }
+
+        override fun onAudioFile(key: String?, fd: android.os.ParcelFileDescriptor?, displayName: String?) {
+            if (fd == null) {
+                Log.w(TAG, "onAudioFile 收到空 fd，忽略")
+                return
+            }
+            val bytes: ByteArray? = try {
+                android.os.ParcelFileDescriptor.AutoCloseInputStream(fd).use { ins ->
+                    readLimited(ins, MAX_AUDIO_BYTES)
+                }
+            } catch (t: Throwable) {
+                Log.w(TAG, "读取插件音频失败", t)
+                null
+            }
+            if (bytes == null) {
+                Log.w(TAG, "插件音频超过上限或读取失败，已丢弃")
+                return
+            }
+            val k = key ?: ""
+            post { listener?.onAudioFile(k, bytes, displayName) }
         }
     }
 

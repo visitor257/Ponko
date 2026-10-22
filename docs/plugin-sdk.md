@@ -146,6 +146,17 @@ oneway interface IPonkoCallback {
      * key 必须和 schema 里那个 item 完全一致；append=true 追加（日志），false 替换。
      */
     void onUiPatch(in String key, in @nullable String value, boolean append);
+
+    // ---- v7：插件反向指挥宿主 ----
+
+    /** 请宿主用**当前参数**合成一次。参数、校验、进度回报全归宿主，插件只是发起 */
+    void requestSynthesis();
+
+    /**
+     * 给某个 AUDIO 条目送**它自己**的音频（历史记录场景）。
+     * key 对应 UiItem.key；同一个 key 再送 = 替换。FD 归宿主所有。
+     */
+    void onAudioFile(in String key, in ParcelFileDescriptor fd, in @nullable String displayName);
 }
 ```
 
@@ -161,7 +172,8 @@ Binder 事务的余量，更别说多张。宿主收到后**在 Binder 线程就
 
 Binder 的事务码按声明顺序分配。在中间插入会让后面所有方法的事务码整体后移，
 老插件收到的码对不上 → **调用串味**（本该调 A 却执行了 B），比直接报错更难查。
-v2 的 `onSchemaChanged` 和 v4 的两个方法都守住了这条。
+v2 的 `onSchemaChanged`、v4 的两个方法、v7 的两个方法都守住了这条
+（`getActionLabels` 至今仍是第 13 个事务码，没动过）。
 
 ### 3.3 Parcelable 定义
 
@@ -802,8 +814,8 @@ ponko-plugin-sdk/
 └── src/main/
     ├── AndroidManifest.xml   空（SDK 不含组件声明）
     ├── aidl/com/litertchat/plugin/
-    │   ├── IPonkoPlugin.aidl          主接口（13 方法）
-    │   ├── IPonkoCallback.aidl        回调（9 方法，v4 加 2）
+    │   ├── IPonkoPlugin.aidl          主接口（15 方法）
+    │   ├── IPonkoCallback.aidl        回调（11 方法：v4 加 2、v7 加 2）
     │   └── 12 个 Parcelable 声明文件
     └── java/com/litertchat/plugin/
         ├── PluginConst.kt             API 版本 / 角色 / 模式 / 限流常量
@@ -964,13 +976,15 @@ object UiType {
     const val TABS_END   = 17  // 标签页组结束
     // ---- v6 ----
     const val MODEL_SLOT = 18  // 模型文件槽位（导入/清除由宿主出按钮）
-    const val MAX_KNOWN = 18
+    // ---- v7 ----
+    const val HOST_SLOT  = 19  // 宿主功能块挂在这里（不写就还在标题下面）
+    const val MAX_KNOWN = 19
 }
 ```
 
 **类型集合是刻意克制的**。每加一种，宿主就要多一份渲染代码 + 多一套主题适配；
 最早那 7 种能覆盖「配置型插件」的绝大多数需求（VoxCPM2 全部设置都在其中）。
-v2 加到 12 个、v4 加到 15 个、v5 加到 18 个（编号 0–17，`MAX_KNOWN = 17`），
+v2 加到 12 个、v4 加到 15 个、v5 加到 18 个、v7 加到 19 个（编号 0–19），
 都是被具体场景逼出来的，
 不是为了"提供更多选择"。
 
@@ -990,8 +1004,9 @@ v2 加到 12 个、v4 加到 15 个、v5 加到 18 个（编号 0–17，`MAX_KN
 缓解手段有三条，已全部实现：
 
 1. **一次放够类型**。2026-10-21 补到 12 种，全部来自「做 VoxCPM2 时一定会撞上」的
-   真实场景（进度条、状态行、多行文本、可折叠分组）。2026-10-22 又补到 15 种
-   （日志、结果图、播放条）。宁可多放，不要以后被迫发版。
+   真实场景（进度条、状态行、多行文本、可折叠分组）。2026-10-22 又补了日志、结果图、
+   播放条（v4）、标签页（v5）、模型槽位（v6）、宿主功能块槽位（v7）。
+   宁可多放，不要以后被迫发版。
 2. **老宿主优雅降级**。`type > UiType.MAX_KNOWN` 时不崩、不整页空白，
    显示成「标签 + 值 + 这个控件需要更新 Ponko」的文字块。核心功能不受影响。
 3. **`UiType.MAX_KNOWN`**：插件作者可以据此判断"我用的类型是不是太新了"。
@@ -1182,15 +1197,118 @@ override fun onModelDeleteRequested(role: String) {
 | 槽位 `key` = 角色 | `key` 就是 `importModel` 的 `role`，必须非空且唯一 |
 | 引擎跑着时别让换模型 | 把那个槽位的 `enabled` 设 `false`，按钮会灰掉。比等用户点了再报错体面 |
 
+### v7 补充：插件反向指挥宿主
+
+前三版都是"宿主问、插件答"。v7 补的是反方向 —— 这三件事都是插件开发者的
+实测反馈，缺了它们，插件界面只能是个**只读的配置表单**。
+
+#### ① `requestSynthesis()` —— 参数页里的「开始推理」
+
+**问题**：`ACTION` 点下去只回到插件自己（`onActionInvoked`），而合成的执行者是宿主：
+它读 `PreviewParams`、开参考音频 FD、发 `synthesize`、收音频、落盘。
+插件没有任何办法说"现在开始合成一次"，用户只能滚回顶部去点宿主那个按钮。
+
+**用法**：
+
+```kotlin
+UiItem(key = "go", type = UiType.ACTION, label = "开始推理", primary = true)
+
+override fun onActionInvoked(key: String) {
+    if (key == "go") notifyRequestSynthesis()
+}
+```
+
+**语义**：
+
+| 情况 | 结果 |
+|---|---|
+| 正常 | 宿主走**和用户点自己那个按钮完全同一条路径**：同样的参数校验、同样的参考音频 FD、同样的进度回报 |
+| 参数不合法（文本空 / 缺参考音频 / 缺逐字稿） | 不发起，把那条拒绝理由显示在功能区的提示行上 |
+| 已经在合成中 | 这一次被丢掉（不排队）—— 用户连点两下不该跑两遍一分钟的推理 |
+| 没有返回值 | 想知道开没开始，看 `onStage` 有没有来。`oneway` 方法拿不到回执 |
+
+**只有插件界面开着时才有意义**：所谓"当前参数"就是这一页上填的那些值，
+页面不在就没有可用的参数，请求会被丢弃（logcat 有一条 `请求合成，但它的界面没开着`）。
+
+> 如果只是想让按钮"待在参数页里"，其实用 ③ `HOST_SLOT` 把宿主那块整体搬过去更省事：
+> 那是宿主自己的按钮，文案、可用态、进度全都自动正确。`requestSynthesis` 用在
+> "我要自己排版、自己决定按钮长什么样"的场合。
+
+#### ② `HOST_SLOT` —— 把宿主的功能块搬进你的 tab
+
+```kotlin
+TABS_START(key = "main")
+  TAB(key = "param", label = "参数")
+    UiItem(type = UiType.HOST_SLOT)        // ← 功能块画在这里
+    UiItem(key = "cfg", type = UiType.SLIDER, label = "CFG", …)
+  TAB(key = "result", label = "结果")
+    UiItem(key = "play", type = UiType.AUDIO, label = "试听")
+TABS_END
+```
+
+功能块 = 「加载引擎 / 合成 / 播放 / 停止 / 保存」那一排按钮 + 宿主的试听参数区
+（目标文本、模式、参考音频、逐字稿、种子、线程、CPU/GPU）+ 进度提示 + 诊断。
+
+| 规则 | 说明 |
+|---|---|
+| **只认第一个** | 放多个只有第一个生效，其余的什么都不画 |
+| **不写就不变** | 没这个 item 的插件，功能块仍在标题下面（完全向后兼容） |
+| **放进哪个 tab 就只在那个 tab 出现** | 宿主不会额外复制一份到别处 |
+| **字段全忽略** | `key`/`label`/`value` 都不用，写 `key` 只为你自己好读 |
+| 该页没有功能块 | 用户就看不到合成按钮 —— 这时配 ① `requestSynthesis` 自己出一个 |
+
+**为什么不干脆让插件重画整个功能块**：那排按钮背后是宿主的状态机
+（引擎是否已加载、是否正在合成、参考音频 FD、保存到音乐库）。插件重画就得把这些
+也搬过去，两边各存一份必然打架。这里只改**挂载点**，逻辑仍然只有一份。
+
+#### ③ `onAudioFile(key, fd, name)` —— 历史记录每条独立播/存
+
+**问题**：v4 的 `AUDIO` 播的是"宿主最近一次产物"，界面上放 5 条历史记录，
+点哪条都是**最新那条**的声音。
+
+**用法**：
+
+```kotlin
+// 每生成一条就送一份，key 和 schema 里那条 AUDIO 对齐
+notifyAudioFile("hist-3", File(dir, "hist-3.wav"))
+
+UiItem(key = "hist-3", type = UiType.AUDIO, label = "第 3 条 · 12:03")
+```
+
+| 行为 | 说明 |
+|---|---|
+| 同一个 key 再送 = 替换 | 宿主删掉上一份，`tts/` 目录不会越攒越多 |
+| 没送过文件的 key | 退回播宿主最近产物（v4 行为，老插件不用改） |
+| 播放条上多一个「保存」 | 存的是**那一条**，不是最新那条 |
+| 同一时间只响一条 | 点第 5 条会把第 3 条暂停 —— 两段声音叠着像"卡了" |
+| 文件格式 | 按你给的文件名的扩展名存（`.wav` / `.mp3` / `.m4a`），`name` 传 null 就当 wav |
+
+#### ④ `GROUP_START` 的 `value` —— 默认收起
+
+```kotlin
+UiItem(key = "advanced", type = UiType.GROUP_START,
+       label = "高级参数", value = "collapsed")   // ← 默认收起
+```
+
+之前 `value` 对 `GROUP_START` **完全没被读取**，插件没有任何表达方式，
+参数十几个的插件只能把用户丢进一屏长滚动里。
+
+- 用户手动折过之后以用户的选择为准（`groupOpen` 优先），不会被下次刷新顶回默认
+- 其它 `value` 一律当展开（只有 `"collapsed"` 这一个开关值，大小写不敏感）
 
 
-`PonkoPluginService` 提供了三个 `protected` 辅助方法，插件直接用，不用碰 AIDL：
+
+
+
+`PonkoPluginService` 提供了几个 `protected` 辅助方法，插件直接用，不用碰 AIDL：
 
 | 方法 | 用途 |
 |---|---|
 | `notifySchemaChanged()` | 整页重画（**能不用就不用**） |
 | `notifyUiPatch(key, value, append)` | 原地改一个控件 |
 | `notifyImage(fd / file, w, h, mime)` | 送结果图 |
+| `notifyRequestSynthesis()` | v7：请宿主用当前参数合成一次 |
+| `notifyAudioFile(key, fd / file, name)` | v7：给 `AUDIO` 条目送它自己的音频 |
 
 ```kotlin
 class MyPluginService : PonkoPluginService() {
@@ -1492,7 +1610,7 @@ AIDL 调用遇到对方不认识的方法时，行为**不保证抛异常**：
 `API_VERSION` 是编译期写死进插件二进制的。所以"旧插件报 1、新插件报 2"这件事
 自动成立，不需要插件作者做任何事。
 
-### 现状（v5 = 2026-10-22）
+### 现状（v7 = 2026-10-22）
 
 | 版本 | 引入 | 宿主能否连接 |
 |---|---|---|
@@ -1501,31 +1619,40 @@ AIDL 调用遇到对方不认识的方法时，行为**不保证抛异常**：
 | v3 | 按钮文案（`getActionLabels()`） | ✅ 支持 |
 | v4 | 日志框 / 结果图 / 播放条 + `onImage` / `onUiPatch` | ✅ 支持 |
 | v5 | 标签页（`TABS_START` / `TAB` / `TABS_END`），可多层嵌套 | ✅ 支持 |
+| v6 | 模型槽位（`MODEL_SLOT`）+ `importModel` / `deleteModel` | ✅ 支持 |
+| v7 | `requestSynthesis` / `onAudioFile` / `HOST_SLOT`，以及分组的默认收起 | ✅ 支持 |
 
 **「能否连接」和「能力是否齐」是两件事。** 上表问的是前者，答案永远是"能"——
 只要 `apiVersion >= API_MIN_SUPPORTED`（现在是 1）就会绑定。
 后者要看 `apiVersion` 落在哪：
 
-| 插件版本 | 跑在当前宿主（v5）上的实际效果 |
+| 插件版本 | 跑在当前宿主（v7）上的实际效果 |
 |---|---|
 | v1 | 能合成，没有界面 |
 | v2 / v3 | 有界面，缺日志框/结果图/播放条 |
-| v4 | 有过程与产物，缺标签页 |
-| v5 | 全部功能 |
-| v6+（未来） | 老功能照常，新控件降级成文字块，新回调被丢弃 |
+| v4 | 有过程与产物，缺标签页、模型槽位、反向指挥 |
+| v5 | 缺模型槽位、反向指挥 |
+| v6 | 缺 `requestSynthesis` / `onAudioFile` / `HOST_SLOT` |
+| v7 | 全部功能 |
+| v8+（未来） | 老功能照常，新控件降级成文字块，新回调被丢弃 |
 
 宿主自己的 `API_MAX_SUPPORTED` 只影响最后一行的**提示文案**，不影响能否连接。
 
-- `API_VERSION = 5`，`API_WITH_SCHEMA = 2`，`API_WITH_ACTION_LABELS = 3`，
-  `API_WITH_RICH_UI = 4`，`API_WITH_TABS = 5`
-- 宿主兼容下限 `API_MIN_SUPPORTED = 1` → **v1–v5 老插件照常连接、照常合成**，
+- `API_VERSION = 7`，`API_WITH_SCHEMA = 2`，`API_WITH_ACTION_LABELS = 3`，
+  `API_WITH_RICH_UI = 4`，`API_WITH_TABS = 5`，`API_WITH_MODEL_IMPORT = 6`，
+  `API_WITH_SYNTH_REQUEST = 7`（v7 的三项共用这一个版本号 —— 常量名沿用最先落地的那个，
+  判断写 `api >= API_WITH_SYNTH_REQUEST` 即可）
+- 宿主兼容下限 `API_MIN_SUPPORTED = 1` → **v1–v7 老插件照常连接、照常合成**，
   只是拿不到对应版本才有的能力：
-  · v1 插件没有插件界面，卡片上不显示「进入」，并提示"插件 SDK v1（当前 v5）"
+  · v1 插件没有插件界面，卡片上不显示「进入」，并提示"插件 SDK v1（当前 v7）"
   · v1 / v2 插件不能改按钮文案，一律用宿主默认
   · v1–v3 插件的日志/图片/播放条三项不会出现（它们不认识这些类型）
   · v1–v4 插件没有标签页
-- `API_MAX_SUPPORTED = 5` 是**认识上限**，不是拒绝阈值。
-  `api > 5` 的插件仍会连接，只是新控件降级、新回调被丢弃
+  · v1–v5 插件没有模型槽位
+  · v1–v6 插件不能反向指挥宿主（`requestSynthesis` / `onAudioFile` / `HOST_SLOT`），
+    每条历史记录也只能播"最近一次产物"
+- `API_MAX_SUPPORTED = 7` 是**认识上限**，不是拒绝阈值。
+  `api > 7` 的插件仍会连接，只是新控件降级、新回调被丢弃
 - `API_MIN_SUPPORTED` **一直是 1** —— 至今所有改动都是扩展，没有破坏性改动
 
 ### v3 的 `getActionLabels()`：为什么是一个方法，不是 manifest 的字段
@@ -1717,4 +1844,12 @@ Ponko-EX/                          ← 插件项目（独立工程，自己的 g
   ACTION + 下载逻辑"，但那条路**根本走不通**：插件是 bound Service，
   没有 `startActivityForResult`，Android 10+ 也禁止它后台启动 Activity。
   所以选择器只能宿主弹 —— 那就必然需要一个宿主侧的槽位控件
+- ~~❌ 合成的发起方只能是宿主~~
+  —— **已推翻**（v7 实现了 `requestSynthesis`）。当初的理由是"参数归宿主、
+  执行归宿主，插件没必要发起"，但实际做插件时"参数页里放一个能用的开始按钮"
+  是最基本的要求，而用户必须滚回顶部点按钮这件事本身就是缺陷。
+  **参数仍然归宿主**（插件不传参数，只说"现在开始"），所以没有出现两套参数
+- ~~❌ 功能块只能挂在标题下面~~
+  —— **已推翻**（v7 实现了 `HOST_SLOT`）。当初根本没考虑过"插件想把宿主控件
+  放进自己 tab"这种需求；实现成本只是改挂载点，逻辑仍只有一份
 

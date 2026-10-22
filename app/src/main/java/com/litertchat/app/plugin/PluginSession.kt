@@ -68,6 +68,19 @@ class PluginSession(private val context: Context) {
          * 插件要求原地改一个控件（v4）。宿主只改那一个 view，不重画整页。
          */
         fun onPluginUiPatch(pkg: String, key: String, value: String?, append: Boolean) {}
+
+        /**
+         * 插件请求宿主用当前参数合成一次（v7）。
+         *
+         * 「当前参数」= 插件页上那份 `PreviewParams`。所以只有界面开着时才有意义，
+         * 那份判断留给 [PluginPage]（它才知道页面开没开）。
+         */
+        fun onPluginSynthesisRequested(pkg: String) {}
+
+        /**
+         * 插件给 `AUDIO` 条目送了自己的音频（v7）。[bytes] 已读进内存。
+         */
+        fun onPluginAudioFile(pkg: String, key: String, bytes: ByteArray, displayName: String?) {}
     }
 
     /**
@@ -380,6 +393,16 @@ class PluginSession(private val context: Context) {
             // 补丁是高频的（刷日志），**不写日志** —— 否则 logcat 会被刷满，
             // 真正要看的东西反而找不到
             listener?.onPluginUiPatch(pkg, key, value, append)
+        }
+
+        override fun onSynthesisRequested() {
+            Log.i(TAG, "[$pkg] 插件请求合成")
+            listener?.onPluginSynthesisRequested(pkg)
+        }
+
+        override fun onAudioFile(key: String, bytes: ByteArray, displayName: String?) {
+            Log.i(TAG, "[$pkg] 收到音频 key='$key' ${bytes.size}B ${displayName ?: ""}")
+            listener?.onPluginAudioFile(pkg, key, bytes, displayName)
         }
     }
 
