@@ -543,6 +543,91 @@ abstract class PonkoPluginService : Service() {
         }
     }
 
+    /**
+     * **原地**改一个控件（v4）。比 [notifySchemaChanged] 轻得多。
+     *
+     * 典型用途：
+     * - [UiType.LOG] 追加一行日志（`append = true`）
+     * - [UiType.PROGRESS] 推进度（`append = false`，value 是 0–100 的字符串）
+     * - [UiType.STATUS] 换一行值
+     *
+     * ## 为什么必须有它，不能靠 [notifySchemaChanged]
+     *
+     * `notifySchemaChanged` 会让宿主 `removeAllViews()` **整页重建**：
+     * 用户滚到一半被拉回顶部、输入框失焦、正在编辑的 `TEXTAREA` 内容被覆盖。
+     * 日志一行一条的话，那个界面基本没法用。
+     *
+     * ## 必须节流
+     *
+     * `IPonkoCallback` 是 `oneway`、**没有背压**。每读一行就发一个 Binder 事务，
+     * 宿主处理慢于插件时消息会在宿主侧排队，极端情况吃满那 1MB 配额并连累其它 IPC。
+     * 建议自己攒 100ms 再发一次。
+     *
+     * @param key    目标 [UiItem.key]，**必须和 schema 里那个 item 完全一致**；
+     *               对不上宿主静默忽略（不会去猜）
+     * @param value  新内容（[UiType.LOG] 是**要追加的那一段**）
+     * @param append true = 追加到末尾；false = 整段替换
+     */
+    protected fun notifyUiPatch(key: String, value: String, append: Boolean) {
+        val cb = callback ?: return
+        try {
+            cb.onUiPatch(key, value, append)
+        } catch (t: Throwable) {
+            Log.w(TAG, "onUiPatch 回调失败", t)
+        }
+    }
+
+    /**
+     * 送一张结果图（v4），显示在 [UiType.IMAGE] 控件里。
+     *
+     * ## FD 所有权
+     *
+     * 交给宿主后**不要自己 close** —— 宿主读完负责关。自己先关会让宿主读到
+     * 已失效的句柄（而且它是异步读的，你无法知道它读没读完）。
+     *
+     * ## 为什么要自己 open
+     *
+     * 图片可能几十 MB，不能塞进 Parcel 的那 1MB 配额。宿主会在自己的 Binder 线程
+     * 上把它读成字节并立刻关闭，所以这里传完就可以不再管它。
+     *
+     * @param fd     已打开的只读 FD
+     * @param width  像素宽；不确定传 0，宿主按实际解码结果（**以解码结果为准**，
+     *               插件算错尺寸比不传更常见）
+     * @param height 像素高；同上
+     * @param mime   形如 `image/png`，可为 null（宿主按魔数判断）
+     */
+    protected fun notifyImage(
+        fd: android.os.ParcelFileDescriptor,
+        width: Int,
+        height: Int,
+        mime: String?,
+    ) {
+        val cb = callback ?: run {
+            // 没连上就别泄漏 FD
+            runCatching { fd.close() }
+            return
+        }
+        try {
+            cb.onImage(fd, width, height, mime)
+        } catch (t: Throwable) {
+            Log.w(TAG, "onImage 回调失败", t)
+            runCatching { fd.close() }
+        }
+    }
+
+    /** 方便调用的重载：给一个文件路径，自己 open。 */
+    protected fun notifyImage(file: java.io.File, width: Int, height: Int, mime: String? = "image/png") {
+        val fd = try {
+            android.os.ParcelFileDescriptor.open(
+                file, android.os.ParcelFileDescriptor.MODE_READ_ONLY
+            )
+        } catch (t: Throwable) {
+            Log.w(TAG, "打开结果图失败：$file", t)
+            return
+        }
+        notifyImage(fd, width, height, mime)
+    }
+
     override fun onBind(intent: Intent?): IBinder {
         // ⚠ Android 12+ 禁止后台启动前台服务。此刻宿主刚 bindService、还在前台，
         //   所以这里起一定能过；等到 synthesize 里再起就可能抛

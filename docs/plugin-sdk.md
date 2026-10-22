@@ -127,12 +127,36 @@ oneway interface IPonkoCallback {
     void onResult(in ResultBundle result);
 
     void onError(in PluginError err);
+
+    // ---- v2：界面 ----
+    /** 界面数据变了 → 宿主重拉 schema **整页重画**。能只改一处就别用这个 */
+    void onSchemaChanged();
+
+    // ---- v4：过程与产物（都追加在末尾，老的 transaction code 不移动）----
+    /** 送一张结果图给 UiType.IMAGE。FD 归宿主所有，插件不要先 close */
+    void onImage(in ParcelFileDescriptor fd, int width, int height, in @nullable String mime);
+
+    /**
+     * 原地改一个控件，不重画整页。
+     * key 必须和 schema 里那个 item 完全一致；append=true 追加（日志），false 替换。
+     */
+    void onUiPatch(in String key, in @nullable String value, boolean append);
 }
 ```
 
 **为什么 chunk 走 `byte[]` 而不是 FD**：
 64 KB 远低于 1 MB 配额，走 Parcel 最省事；每块都要新开一个 FD 反而更贵。
 **整段音频**（可能几十 MB）才走 FD，见 `ResultBundle`。
+
+**为什么结果图也走 FD**：一张 1024×1024 的 PNG 通常 1–3 MB，已经超过单个
+Binder 事务的余量，更别说多张。宿主收到后**在 Binder 线程就立刻读成字节并关掉 FD** ——
+`oneway` 方法一返回 parcel 就被回收，插件那边可能已经 close，FD 会变成死句柄。
+
+### ⚠ 追加方法必须加在 `.aidl` 的**最末尾**
+
+Binder 的事务码按声明顺序分配。在中间插入会让后面所有方法的事务码整体后移，
+老插件收到的码对不上 → **调用串味**（本该调 A 却执行了 B），比直接报错更难查。
+v2 的 `onSchemaChanged` 和 v4 的两个方法都守住了这条。
 
 ### 3.3 Parcelable 定义
 
@@ -730,9 +754,9 @@ ponko-plugin-sdk/
 └── src/main/
     ├── AndroidManifest.xml   空（SDK 不含组件声明）
     ├── aidl/com/litertchat/plugin/
-    │   ├── IPonkoPlugin.aidl          主接口（9 方法）
-    │   ├── IPonkoCallback.aidl        回调（6 方法）
-    │   └── 9 个 Parcelable 声明文件
+    │   ├── IPonkoPlugin.aidl          主接口（13 方法）
+    │   ├── IPonkoCallback.aidl        回调（9 方法，v4 加 2）
+    │   └── 12 个 Parcelable 声明文件
     └── java/com/litertchat/plugin/
         ├── PluginConst.kt             API 版本 / 角色 / 模式 / 限流常量
         ├── PluginManifest.kt          插件自述
@@ -810,6 +834,13 @@ oneway void invokeAction(in String key);
 // ---- 新增到 IPonkoCallback ----
 /** 插件自己改动了设置（如下载进度、模型就绪）→ 宿主重新拉 schema 重画 */
 void onSchemaChanged();
+
+// ---- v4 追加到 IPonkoCallback（末尾）----
+/** 送一张结果图给 UiType.IMAGE；FD 归宿主，插件不要先 close */
+void onImage(in ParcelFileDescriptor fd, int width, int height, in @nullable String mime);
+
+/** 原地改一个控件，不重画整页：日志追加、进度推进、状态换值 */
+void onUiPatch(in String key, in @nullable String value, boolean append);
 ```
 
 ```kotlin
@@ -868,8 +899,10 @@ object UiType {
 }
 ```
 
-**只有 7 种类型是刻意的**。每加一种，宿主就要多一份渲染代码 + 多一套主题适配；
-7 种能覆盖「配置型插件」的绝大多数需求（VoxCPM2 全部设置都在其中）。
+**类型集合是刻意克制的**。每加一种，宿主就要多一份渲染代码 + 多一套主题适配；
+最早那 7 种能覆盖「配置型插件」的绝大多数需求（VoxCPM2 全部设置都在其中）。
+v2 加到 12 种、v4 加到 14 种（`MAX_KNOWN = 14`），都是被具体场景逼出来的，
+不是为了"提供更多选择"。
 
 ### ⚠ 加一种控件类型 = 主 app 必须更新
 
@@ -935,6 +968,72 @@ callback.onImage(pfd, 1024, 1024, "image/png")
 `AUDIO` 不需要插件送任何东西 —— 它播的是**宿主持有**的那份产物
 （宿主最近一次合成结果）。插件只是要求"在这一页放一个播放器"。
 
+### 完整写法（插件侧）
+
+`PonkoPluginService` 提供了三个 `protected` 辅助方法，插件直接用，不用碰 AIDL：
+
+| 方法 | 用途 |
+|---|---|
+| `notifySchemaChanged()` | 整页重画（**能不用就不用**） |
+| `notifyUiPatch(key, value, append)` | 原地改一个控件 |
+| `notifyImage(fd / file, w, h, mime)` | 送结果图 |
+
+```kotlin
+class MyPluginService : PonkoPluginService() {
+
+    private val logBuf = StringBuilder()
+    private var lastFlush = 0L
+    private var pct = 0.0
+
+    override fun buildSettingsSchema(): UiSchema = UiSchema(
+        items = listOf(
+            // 日志框：key 用来收补丁，value 是**初始**内容
+            UiItem(key = "log", type = UiType.LOG, label = "运行日志",
+                   value = logBuf.toString(), help = "长按可复制"),
+            // 进度条：value 是 0–100
+            UiItem(key = "dl", type = UiType.PROGRESS, label = "下载模型",
+                   value = pct.toString(), help = "1.05 / 2.83 GB"),
+            // 结果图：value 是**还没图时**的占位文字
+            UiItem(key = "out", type = UiType.IMAGE, label = "生成结果",
+                   value = "点上面的按钮生成"),
+            // 播放条：播宿主那份产物，插件什么都不用传
+            UiItem(key = "play", type = UiType.AUDIO, label = "试听"),
+        )
+    )
+
+    /** 刷日志。**必须节流** —— 每读一行就发一个 Binder 事务会吃满配额 */
+    private fun log(line: String) {
+        logBuf.append(line).append('\n')
+        val now = SystemClock.uptimeMillis()
+        if (now - lastFlush < 100) return
+        lastFlush = now
+        notifyUiPatch("log", line + "\n", append = true)
+    }
+
+    private fun setProgress(p: Double) {
+        pct = p
+        notifyUiPatch("dl", "%.1f".format(p), append = false)   // false = 替换
+    }
+
+    private fun deliverImage(f: File, w: Int, h: Int) {
+        // FD 交给宿主后**不要自己 close**
+        notifyImage(f, w, h, "image/png")
+    }
+}
+```
+
+四个容易踩的点：
+
+1. **`log()` 里的节流不能省。** `onUiPatch` 是 `oneway`、没有背压。日志刷得快、
+   宿主处理慢，消息会在宿主侧排队，极端情况吃满那 1MB Binder 配额并连累其它 IPC。
+2. **`value` 只用于首次/整页刷新。** 之后的变化一律走 `notifyUiPatch` ——
+   往 schema 里塞最新日志再 `notifySchemaChanged()` 会整页重建，
+   用户滚到一半被拉回顶部、输入框失焦。
+3. **key 必须和 schema 里那个 `UiItem.key` 完全一致。** 对不上宿主静默忽略，
+   不会去猜"你大概想改哪个"。整页只有一个日志框时，空 key 能兜底，但只有这一种情况。
+4. **老宿主收不到 `notifyImage` / `notifyUiPatch`。** oneway 调一个不存在的方法会
+   **静默无操作**，不报错也不生效。要可靠的话先判断宿主报的 API 版本。
+
 ### ⚠ `onUiPatch` 的两个硬限制
 
 1. **key 必须和 schema 里那个 item 完全一致。** 对不上就静默忽略（宿主不会去猜）。
@@ -972,7 +1071,8 @@ callback.onImage(pfd, 1024, 1024, "image/png")
 ### 已实现（2026-10-21 02:28）
 
 **SDK 侧**（`ponko-plugin-sdk`）：
-- `UiSchema.kt`：`UiSchema` / `UiItem` / `UiOption` 三个 `@Parcelize` + `UiType` 七个常量
+- `UiSchema.kt`：`UiSchema` / `UiItem` / `UiOption` 三个 `@Parcelize` + `UiType` 常量
+  （v2 时 7 个，v2 补到 12 个，v4 补到 14 个）
 - `IPonkoPlugin.aidl` 新增：`UiSchema getSettingsSchema()`（同步）、
   `oneway setSetting(String,String)`、`oneway invokeAction(String)`
 - `IPonkoCallback.aidl` 新增：`void onSchemaChanged()`
@@ -980,8 +1080,15 @@ callback.onImage(pfd, 1024, 1024, "image/png")
   `buildSettingsSchema()` / `onSettingChanged(key,value)` / `onActionInvoked(key)`，
   以及给插件用的 `notifySchemaChanged()`
 
+**v4 追加（2026-10-22）**：
+- `UiType` 补 `LOG` / `IMAGE` / `AUDIO`（`MAX_KNOWN = 14`）
+- `IPonkoCallback.aidl` 末尾追加 `onImage(...)` / `onUiPatch(...)`
+- `PonkoPluginService` 追加两个 protected 方法 `notifyUiPatch(key,value,append)` /
+  `notifyImage(fd|file, w, h, mime)` —— **不给这两个方法，插件根本调不到新回调**
+  （`callback` 字段是 private，之前只有 `notifySchemaChanged()` 一个出口）
+
 **宿主侧**（`app`）：
-- `PluginUiPage.kt`：schema → 控件的渲染器，7 种类型全部实现
+- `PluginUiPage.kt`：schema → 控件的渲染器，v1 的 7 种 + v2 的 5 种 + v4 的 3 种全部实现
 - `PluginConnection`：`settingsSchema()` / `setSetting()` / `invokeAction()`
 - `PluginSession`：`schemaOf(pkg)` / `setSetting(pkg,…)` / `invokeAction(pkg,…)`
   + `Listener.onPluginSchemaChanged(pkg)`
