@@ -920,13 +920,18 @@ object UiType {
     const val LOG     = 12  // 只读日志框（配 onUiPatch 追加）
     const val IMAGE   = 13  // 结果图（配 onImage 送图）
     const val AUDIO   = 14  // 播放条（播宿主持有的那份产物）
-    const val MAX_KNOWN = 14
+    // ---- v5 ----
+    const val TABS_START = 15  // 标签页组开始（key 记上次停在哪页）
+    const val TAB        = 16  // 一页（label 是标签文字）
+    const val TABS_END   = 17  // 标签页组结束
+    const val MAX_KNOWN = 17
 }
 ```
 
 **类型集合是刻意克制的**。每加一种，宿主就要多一份渲染代码 + 多一套主题适配；
 最早那 7 种能覆盖「配置型插件」的绝大多数需求（VoxCPM2 全部设置都在其中）。
-v2 加到 12 个、v4 加到 15 个（编号 0–14，`MAX_KNOWN = 14`），都是被具体场景逼出来的，
+v2 加到 12 个、v4 加到 15 个、v5 加到 18 个（编号 0–17，`MAX_KNOWN = 17`），
+都是被具体场景逼出来的，
 不是为了"提供更多选择"。
 
 ### ⚠ 加一种控件类型 = 主 app 必须更新
@@ -1007,6 +1012,51 @@ callback.onImage(pfd, 1024, 1024, "image/png")
 > 向上冒泡**，外层整页 ScrollView 会跟着把日志滚进视野 —— 表现是"日志一有内容，
 > 整个页面唰地跳过去"。宿主已改用 `scrollTo()`（只改自己的 `mScrollY`）。
 > 这条写在这里是因为它是个很容易重犯的坑：`fullScroll` 看起来是更"正确"的写法。
+
+### v5 补充：标签页（页中页，可以套多层）
+
+三个类型凑成一组，和 `GROUP_START`/`GROUP_END` 同一套思路，所以**天然支持嵌套**
+—— 页中页中页只是再套一层：
+
+```kotlin
+UiSchema(items = listOf(
+    UiItem(type = UiType.TABS_START, key = "main", label = ""),
+
+    UiItem(type = UiType.TAB, key = "param", label = "参数"),
+    // 这一页里再分一层
+    UiItem(type = UiType.TABS_START, key = "param.mode", label = ""),
+    UiItem(type = UiType.TAB, key = "t2i", label = "文"),
+    UiItem(type = UiType.TEXT, key = "prompt", label = "提示词"),
+    UiItem(type = UiType.TAB, key = "i2i", label = "图"),
+    UiItem(type = UiType.IMAGE, key = "ref", label = "参考图"),
+    UiItem(type = UiType.TAB, key = "tag", label = "标签"),
+    UiItem(type = UiType.TEXT, key = "tags", label = "标签词"),
+    UiItem(type = UiType.TABS_END),
+
+    UiItem(type = UiType.TAB, key = "result", label = "结果"),
+    UiItem(type = UiType.IMAGE, key = "out", label = "输出"),
+    UiItem(type = UiType.AUDIO, key = "play", label = "试听"),
+
+    UiItem(type = UiType.TABS_END),
+))
+```
+
+要点：
+
+| 规则 | 说明 |
+|---|---|
+| 一定要成对 | `TABS_START` / `TABS_END` 少写一个，后面的项会落进最后一个还开着的区块 |
+| `TABS_START.key` 必写 | 这是"上次停在哪一页"的键；空的话每次重画都跳回第一页 |
+| `TAB.key` 也建议写 | 宿主按 **key** 而不是索引记选中页 —— 你把页的顺序调整了也能回到同一个 |
+| 标签文字要短 | 一行放 3~4 个是上限，超了被省略号截断。五个以上在手机上已经难用了 |
+| 切页不通知插件 | 宿主只改 `visibility`。**插件自己的状态要留在自己那边**，别指望靠 tab 切换触发什么 |
+
+**切换是纯 visibility，不重建。** 所以切走再切回来，输入框内容、滚动位置、
+滑块值都还在。这是刻意做的：反过来（切页重建）会滚动复位 + 输入框失焦。
+
+**降级提醒**：老宿主（v4 及更早）不认识这三个类型，会把它们**逐个**当成
+"未知控件"画成文字块 —— 界面上会是一串方块加断断续续的内容。
+所以想在老宿主上也体面，先用版本号判断再决定用不用。
 
 ### 完整写法（插件侧）
 
@@ -1112,7 +1162,7 @@ class MyPluginService : PonkoPluginService() {
 
 **SDK 侧**（`ponko-plugin-sdk`）：
 - `UiSchema.kt`：`UiSchema` / `UiItem` / `UiOption` 三个 `@Parcelize` + `UiType` 常量
-  （v1 七个、v2 十二个、v4 十五个，编号 0–14）
+  （v1 七个、v2 十二个、v4 十五个、v5 十八个，编号 0–17）
 - `IPonkoPlugin.aidl` 新增：`UiSchema getSettingsSchema()`（同步）、
   `oneway setSetting(String,String)`、`oneway invokeAction(String)`
 - `IPonkoCallback.aidl` 新增：`void onSchemaChanged()`
@@ -1122,6 +1172,10 @@ class MyPluginService : PonkoPluginService() {
 
 **v4 追加（2026-10-22）**：
 - `UiType` 补 `LOG` / `IMAGE` / `AUDIO`（`MAX_KNOWN = 14`）
+
+**v5 追加（2026-10-22）**：
+- `UiType` 补 `TABS_START` / `TAB` / `TABS_END`（`MAX_KNOWN = 17`），
+  宿主用栈渲染，嵌套层数不限
 - `IPonkoCallback.aidl` 末尾追加 `onImage(...)` / `onUiPatch(...)`
 - `PonkoPluginService` 追加两个 protected 方法 `notifyUiPatch(key,value,append)` /
   `notifyImage(fd|file, w, h, mime)` —— **不给这两个方法，插件根本调不到新回调**
@@ -1311,7 +1365,7 @@ AIDL 调用遇到对方不认识的方法时，行为**不保证抛异常**：
 `API_VERSION` 是编译期写死进插件二进制的。所以"旧插件报 1、新插件报 2"这件事
 自动成立，不需要插件作者做任何事。
 
-### 现状（v4 = 2026-10-22）
+### 现状（v5 = 2026-10-22）
 
 | 版本 | 引入 | 宿主能否连接 |
 |---|---|---|
@@ -1319,29 +1373,32 @@ AIDL 调用遇到对方不认识的方法时，行为**不保证抛异常**：
 | v2 | 插件界面（`getSettingsSchema` / `setSetting` / `invokeAction`） | ✅ 支持 |
 | v3 | 按钮文案（`getActionLabels()`） | ✅ 支持 |
 | v4 | 日志框 / 结果图 / 播放条 + `onImage` / `onUiPatch` | ✅ 支持 |
+| v5 | 标签页（`TABS_START` / `TAB` / `TABS_END`），可多层嵌套 | ✅ 支持 |
 
 **「能否连接」和「能力是否齐」是两件事。** 上表问的是前者，答案永远是"能"——
 只要 `apiVersion >= API_MIN_SUPPORTED`（现在是 1）就会绑定。
 后者要看 `apiVersion` 落在哪：
 
-| 插件版本 | 跑在当前宿主（v4）上的实际效果 |
+| 插件版本 | 跑在当前宿主（v5）上的实际效果 |
 |---|---|
 | v1 | 能合成，没有界面 |
 | v2 / v3 | 有界面，缺日志框/结果图/播放条 |
-| v4 | 全部功能 |
-| v5+（未来） | 老功能照常，新控件降级成文字块，新回调被丢弃 |
+| v4 | 有过程与产物，缺标签页 |
+| v5 | 全部功能 |
+| v6+（未来） | 老功能照常，新控件降级成文字块，新回调被丢弃 |
 
 宿主自己的 `API_MAX_SUPPORTED` 只影响最后一行的**提示文案**，不影响能否连接。
 
-- `API_VERSION = 4`，`API_WITH_SCHEMA = 2`，`API_WITH_ACTION_LABELS = 3`，
-  `API_WITH_RICH_UI = 4`
-- 宿主兼容下限 `API_MIN_SUPPORTED = 1` → **v1/v2/v3 老插件照常连接、照常合成**，
+- `API_VERSION = 5`，`API_WITH_SCHEMA = 2`，`API_WITH_ACTION_LABELS = 3`，
+  `API_WITH_RICH_UI = 4`，`API_WITH_TABS = 5`
+- 宿主兼容下限 `API_MIN_SUPPORTED = 1` → **v1–v5 老插件照常连接、照常合成**，
   只是拿不到对应版本才有的能力：
-  · v1 插件没有插件界面，卡片上不显示「进入」，并提示"插件 SDK v1（当前 v4）"
+  · v1 插件没有插件界面，卡片上不显示「进入」，并提示"插件 SDK v1（当前 v5）"
   · v1 / v2 插件不能改按钮文案，一律用宿主默认
   · v1–v3 插件的日志/图片/播放条三项不会出现（它们不认识这些类型）
-- `API_MAX_SUPPORTED = 4` 是**认识上限**，不是拒绝阈值。
-  `api > 4` 的插件仍会连接，只是新控件降级、新回调被丢弃
+  · v1–v4 插件没有标签页
+- `API_MAX_SUPPORTED = 5` 是**认识上限**，不是拒绝阈值。
+  `api > 5` 的插件仍会连接，只是新控件降级、新回调被丢弃
 - `API_MIN_SUPPORTED` **一直是 1** —— 至今所有改动都是扩展，没有破坏性改动
 
 ### v3 的 `getActionLabels()`：为什么是一个方法，不是 manifest 的字段

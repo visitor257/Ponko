@@ -39,6 +39,15 @@ object PluginConst {
      * 新插件调老宿主没有的 `onImage` / `onUiPatch` 时，oneway 调用会**静默无操作**，
      * 不报错也不生效。所以插件要用 `API_VERSION` 判断，别假定宿主一定收到了。
      *
+     * ## 为什么加到 5（2026-10-22）
+     *
+     * v5 加了标签页 `TABS_START` / `TAB` / `TABS_END` —— 插件可以把界面分成
+     * 「参数 / 结果」这种页，参数里再分「文 / 图 / 标签」，层数不限于一。
+     *
+     * 降级后果比 v4 的重：老宿主不认识这三个类型，会**逐个**降级成
+     * 「未知控件」文字块 —— 用户看到的是一串方块加断断续续的内容，不是完整界面。
+     * 所以想在老宿主上也体面的话，插件该按版本判断后再决定用不用标签页。
+     *
      * ## 两类不兼容，处理方式不同
      *
      * · **扩展**（加方法、加字段、加常量）→ 版本 +1，老插件继续能用，
@@ -51,7 +60,7 @@ object PluginConst {
      * Binder 的事务码按声明顺序分配。在中间插入会让后面所有方法的事务码整体后移，
      * 老插件收到的码对不上 → **调用串味**（本该调 A 却执行了 B），比直接报错更糟。
      */
-    const val API_VERSION = 4
+    const val API_VERSION = 5
 
     /**
      * 从这一版起，插件支持「界面」那组方法（`getSettingsSchema` 等）。
@@ -81,9 +90,16 @@ object PluginConst {
      */
     const val API_WITH_RICH_UI = 4
 
+    /**
+     * 从这一版起，插件可以用标签页（[UiType.TABS_START] / [UiType.TAB] / [UiType.TABS_END]）。
+     *
+     * 宿主按版本判断要不要渲染；不认识就逐个降级成文字块（不会崩，但界面会散）。
+     */
+    const val API_WITH_TABS = 5
+
     /** 宿主兼容区间：允许老插件继续跑，所以下限保持 1 */
     const val API_MIN_SUPPORTED = 1
-    const val API_MAX_SUPPORTED = 4
+    const val API_MAX_SUPPORTED = 5
 
     // ---- 插件 Action（宿主靠它发现插件）----
     const val ACTION_PLUGIN = "com.litertchat.ponko.PLUGIN"
