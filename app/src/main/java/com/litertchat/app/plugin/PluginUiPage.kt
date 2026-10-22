@@ -396,7 +396,9 @@ class PluginUiPage(
         //
         // 但两种区块**往里加东西的方式不同**：
         // · 分组（[Slot.Box]）只有一条内容流，直接往 body 里加
-        // · 标签页（[Slot.Tab]）有多个页，要往**当前选中那一页**里加
+        // · 标签页（[Slot.Tab]）有多个页，要往**最后开始的那一页**里加
+        //   （不是"用户正在看的那一页" —— 那两者在渲染期不是一回事，
+        //    见 [TabGroup.fillTarget] 里记的那个 bug）
         // 所以栈元素不能只是一个 `LinearLayout`。
         val target = ArrayDeque<Slot>()
         target.addLast(Slot.Box(host))
@@ -1130,7 +1132,8 @@ class PluginUiPage(
         }
 
         class Tab(val group: TabGroup) : Slot() {
-            override fun content(): LinearLayout = group.currentPage()
+            // ⚠ 是 **fillTarget**，不是 currentPage —— 这两者不一样，见 fillTarget 的说明
+            override fun content(): LinearLayout = group.fillTarget()
         }
     }
 
@@ -1321,16 +1324,19 @@ class PluginUiPage(
                 0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
             chips.add(chip)
 
-            // ⚠ 这里**不选页**，只刷样式。
+            // ⚠ 这里**不选页**，也不碰页的可见性，只刷新 chip 的样式。
             //
-            // 两个原因：
+            // 三个原因：
             // 1. 此刻还没收集完所有 tab 的 key，`restoreIndex()` 找不全
             //    （上次停在第 2 页的话，第 2 个 TAB 还没建出来）
             // 2. 用户已经翻到第 3 页时，插件重发 schema 会重建整页 ——
             //    在 beginTab 里 select 会把选中项顶回第 1 页
+            // 3. 渲染期 [current] 一直是 0，若在这里 applySelection()，
+            //    会把每页的 visibility 按"第 1 页"重刷一遍（还会重复
+            //    setCurrentItem）。显示哪一页该由 [finish] 决定
             //
             // 真正的"恢复到上次那页"放在 [finish]（TABS_END 时）统一做一次。
-            applySelection()
+            styleChips()
         }
 
         /** 重建后恢复哪一页：按 **key** 找，找不到就第一页 */
@@ -1352,8 +1358,13 @@ class PluginUiPage(
          */
         fun finish() {
             if (chips.isEmpty()) {
+                // 插件只写了 TABS_START/TABS_END 没写 TAB：标签条没意义，藏掉。
+                // 内容全在隐式页里，仍然正常显示。
                 bar.visibility = View.GONE
                 view.setPadding(0, 0, 0, 0)
+                // ⚠ pager 的高度还是要算 —— 这种情况下 pagesHost 仍然是 pager，
+                // 不给定高它就是 0dp，用户看到一整块空白
+                pager?.post { stretchToTallestPage() }
                 return
             }
             // restoreIndex 用 keys 查，此时已是完整列表
@@ -1436,6 +1447,25 @@ class PluginUiPage(
             page.post { scrollLogsToBottomIn(page) }
         }
 
+        /**
+         * 渲染期间往哪一页加内容 = **最后开始的那一页**。
+         *
+         * ## 为什么不能用 [current]（这里踩过）
+         *
+         * `TAB` 的顺序语义是"从这里开始属于这一页，直到下一个 TAB 或 TABS_END"。
+         * 渲染时只用 `pages.last()` 才能表达这个意思。
+         *
+         * 而 [current] 是**用户正在看哪一页**，它的取值要等 [finish]（TABS_END）
+         * 才能按 key 恢复 —— 在那之前它一直是 0。所以如果渲染时往 [current] 加内容，
+         * `TAB(a) 内容 TAB(b) 内容 TAB(c) 内容` 的结果是**三页的内容全堆进 a 页**，
+         * b、c 两页全是空的。插件侧看到的现象就是"没法把控件分配到指定页"。
+         *
+         * 两个概念必须分开：**填充目标**（本轮渲染写到哪）和 **选中页**（显示哪一页）。
+         * [current] / [currentPage] 只管后者。
+         */
+        fun fillTarget(): LinearLayout = pages.last()
+
+        /** 用户当前看到的那一页。只用于滚动、日志粘底这类"显示状态"的事 */
         fun currentPage(): LinearLayout = pages.getOrNull(current) ?: implicitPage
     }
 
