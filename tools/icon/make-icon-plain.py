@@ -44,10 +44,17 @@ VISIBLE = 72.0 / 108.0  # 系统可见区 / 画布
 
 DENS = [("mdpi", 48), ("hdpi", 72), ("xhdpi", 96), ("xxhdpi", 144), ("xxxhdpi", 192)]
 
-# 署名位置与字号（图标用的这套参数）。0.70 是"贴可见圆的右下角"能取到的位置，
-# 再往外就被启动器的圆形遮罩裁掉。字号 0.050 是"能认出来但不抢画面"的值 ——
-# 第一版用了 0.070 并且居中，在圆形图标上看起来是挡在正中的一块，太大。
-SIGN_KW = dict(height_ratio=0.050, right_ratio=0.70, bottom_ratio=0.70)
+# 图标署名参数。
+#
+# · 文案固定 `©`（不是 `© Ponko`）。图标可见区是**内切圆**，右下角是一段弧，
+#   只有单字符放得进去：`© Ponko` 宽约 0.21n，右边界顶到圆边（显示区 0.80）时
+#   左边界回到 0.59n，**中心还在 0.70**，看起来依旧偏中。一个 `©` 宽约 0.06n，
+#   中心能到 0.77~0.79，才是真的右下角。
+# · 位置用显示区坐标（[visible_sign.to_canvas] 内部换算），传统图标和
+#   自适应前景层的显示区大小不同，但换算后视觉位置一致。
+# · 字号 0.055：单字符可以大一点（不会横向铺开），在 48px 上也有 3px 高。
+SIGN_KW = dict(height_ratio=0.055)
+SIGN_TEXT = visible_sign.TEXT_TINY
 
 img = Image.open(SRC).convert("RGBA")
 w, h = img.size
@@ -104,14 +111,21 @@ def lost_ratio(im, tol=30):
 for d, px in DENS:
     # 署名在**最终尺寸**上画，不能先画再缩 —— 缩放会把字糊成一团。
     # 传统图标（方图 + 圆图）也各自画一遍，同理。
-    full = visible_sign.sign_visible(compose(px, FILL), **SIGN_KW)
+    #
+    # 两个层的 visible 不同，但换算后视觉位置一致：
+    #   传统图标整图显示 → visible=1.0（启动器套内切圆，半径 0.5n）
+    #   自适应前景层只显示中间 72/108 → visible=0.667（半径 n/3）
+    full = visible_sign.sign_visible(
+        compose(px, FILL), SIGN_TEXT, visible=1.0, **SIGN_KW)
     save(full, os.path.join(RES, "mipmap-" + d, "ic_launcher.png"))
     save(full, os.path.join(RES, "mipmap-" + d, "ic_launcher_round.png"))
     big = int(round(px * 108 / 48.0))
     # 背景层**不署名**：它垫在前景下面，署名会被立绘遮出残字（见文件头注释）
     save(Image.new("RGBA", (big, big), BG),
          os.path.join(RES, "mipmap-" + d, "ic_launcher_background.png"))
-    save(visible_sign.sign_visible(compose_fg(big, FILL), **SIGN_KW),
+    save(visible_sign.sign_visible(
+             compose_fg(big, FILL), SIGN_TEXT,
+             visible=visible_sign.ADAPTIVE_VISIBLE, **SIGN_KW),
          os.path.join(RES, "mipmap-" + d, "ic_launcher_foreground.png"))
 
 old = os.path.join(RES, "drawable", "ic_launcher_foreground.xml")
@@ -138,24 +152,38 @@ for name in ("ic_launcher.xml", "ic_launcher_round.xml"):
         fh.write(ADAPTIVE)
     print("  write res/mipmap-anydpi-v26/" + name)
 
-# ---- 校验：署名必须落在可见圆内，否则圆形启动器会把它裁成半截字 ----
+# ---- 校验两项 ----
+#
+# ① 署名必须落在可见圆内，否则圆形启动器会把它裁成半截字
+# ② 署名**看起来**必须在右下角 —— 用墨迹中心在显示区里的坐标判定。
+#    第①项过了不代表第②项成立：第一版就在圆内、但中心在显示区 0.60，
+#    用户看到的就是"在中间"。这条判定必须按中心来，不能只看右边界。
 bad = []
+MIN_CENTER = 0.72          # 显示区里，中心至少要到 72% 才算"右下角"
 for d, px in DENS:
-    for label, size in (("ic_launcher", px), ("ic_launcher_foreground", int(round(px * 108 / 48.0)))):
-        rect = visible_sign.sign_region(size, **SIGN_KW)
-        ok, worst, rad = visible_sign.inside_visible_circle(size, rect)
+    for label, size, vis in (
+        ("ic_launcher", px, 1.0),
+        ("ic_launcher_foreground", int(round(px * 108 / 48.0)), visible_sign.ADAPTIVE_VISIBLE),
+    ):
+        rect = visible_sign.sign_region(size, SIGN_TEXT, height_ratio=SIGN_KW["height_ratio"],
+                                       visible=vis)
+        ok, worst, rad = visible_sign.inside_visible_circle(size, rect, vis)
         if not ok:
-            bad.append("%s/%s 最远角 %.1f > 半径 %.1f" % (d, label, worst, rad))
+            bad.append("%s/%s 最远角 %.1f > 半径 %.1f（会被裁）" % (d, label, worst, rad))
+        cx, cy = visible_sign.center_in_display(rect, size, vis)
+        if cx < MIN_CENTER or cy < MIN_CENTER:
+            bad.append("%s/%s 显示区中心 (%.2f, %.2f) 偏中（需 ≥ %.2f）"
+                       % (d, label, cx, cy, MIN_CENTER))
 if bad:
-    print("  ✗ 署名超出可见圆：")
+    print("  ✗ 署名自检失败：")
     for b in bad:
         print("     " + b)
     raise SystemExit(1)
-print("  署名圆内自检：%d 个尺寸全部通过" % (len(DENS) * 2))
+print("  署名自检：%d 个尺寸，圆内且在右下角" % (len(DENS) * 2))
 
 # ---- 预览：旧 61% 圆形(标红被切部分) / 新比例圆形 / 新比例 48px ----
 S = 432
-new_c = visible_sign.sign_visible(compose(S, FILL), **SIGN_KW)
+new_c = visible_sign.sign_visible(compose(S, FILL), SIGN_TEXT, visible=1.0, **SIGN_KW)
 ln, tt, lost, nonwhite = lost_ratio(new_c)
 print("  %.3f 比例在圆形下被切 %d/%d 像素 (%.2f%%)" % (FILL, ln, tt, 100.0 * ln / tt))
 vis = np.asarray(new_c.convert("RGB")).copy()
