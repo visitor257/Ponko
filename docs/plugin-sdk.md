@@ -55,7 +55,12 @@ import com.litertchat.plugin.EngineStatus;
 import com.litertchat.plugin.PluginError;
 
 interface IPonkoPlugin {
-    /** 插件实现的 SDK 版本；宿主按区间校验（见 3.6） */
+    /**
+     * 插件实现的 SDK 版本。
+     *
+     * 宿主只拿它跟 **API_MIN_SUPPORTED** 比：低于下限拒绝连接；
+     * 高于 API_MAX_SUPPORTED 照常连接，只是不认识的新控件/回调用不了（见 3.6）。
+     */
     int getApiVersion();
 
     /** 插件自述：id、名称、版本、能力、支持的模型家族、是否需要宿主提供模型 */
@@ -452,14 +457,16 @@ FD 跨 Binder 是 dup 过的，两边各持一份，关错会连累对面。
      ↓ queryIntentServices(action="com.litertchat.ponko.PLUGIN")
 ② 逐个读包信息：包名、versionName、是否 enabled
      ↓ （signature 权限已在系统层过滤，这里只剩正品）
-③ 显示列表：名称 / 版本 / 能力 / 状态（未启用 / 已启用 / 不兼容）
+③ 显示列表：名称 / 版本 / 能力 / 状态（未启用 / 已启用 / 版本偏旧 / 插件偏新）
      ↓ 用户点「启用」
 ④ bindService(intent, conn, BIND_AUTO_CREATE)
      ↓
 ⑤ onServiceConnected → IPonkoPlugin.Stub.asInterface(binder)
      ↓ registerCallback(this)
 ⑥ getApiVersion() 校验 → getManifest() 读能力
-     ↓ 不兼容 → unbind + 显示「需要更新」
+     ↓ api < API_MIN_SUPPORTED → unbind + 「插件太旧，请更新插件」
+     ↓ api > API_MAX_SUPPORTED → **照常绑定** + 「更新 Ponko 可获得完整功能」
+     ↓ 否则（含高于上限）→ **照常绑定**
 ⑦ 就绪。用户点「生成」时：
      ↓ loadEngine(null, config) → 等 onEngineLoaded
      ↓ synthesize(req) → onStage / onAudioChunk / onResult
@@ -919,7 +926,7 @@ object UiType {
 
 **类型集合是刻意克制的**。每加一种，宿主就要多一份渲染代码 + 多一套主题适配；
 最早那 7 种能覆盖「配置型插件」的绝大多数需求（VoxCPM2 全部设置都在其中）。
-v2 加到 12 种、v4 加到 14 种（`MAX_KNOWN = 14`），都是被具体场景逼出来的，
+v2 加到 12 个、v4 加到 15 个（编号 0–14，`MAX_KNOWN = 14`），都是被具体场景逼出来的，
 不是为了"提供更多选择"。
 
 ### ⚠ 加一种控件类型 = 主 app 必须更新
@@ -1090,7 +1097,7 @@ class MyPluginService : PonkoPluginService() {
 
 **SDK 侧**（`ponko-plugin-sdk`）：
 - `UiSchema.kt`：`UiSchema` / `UiItem` / `UiOption` 三个 `@Parcelize` + `UiType` 常量
-  （v2 时 7 个，v2 补到 12 个，v4 补到 14 个）
+  （v1 七个、v2 十二个、v4 十五个，编号 0–14）
 - `IPonkoPlugin.aidl` 新增：`UiSchema getSettingsSchema()`（同步）、
   `oneway setSetting(String,String)`、`oneway invokeAction(String)`
 - `IPonkoCallback.aidl` 新增：`void onSchemaChanged()`
@@ -1289,20 +1296,38 @@ AIDL 调用遇到对方不认识的方法时，行为**不保证抛异常**：
 `API_VERSION` 是编译期写死进插件二进制的。所以"旧插件报 1、新插件报 2"这件事
 自动成立，不需要插件作者做任何事。
 
-### 现状（v3 = 2026-10-22）
+### 现状（v4 = 2026-10-22）
 
-| 版本 | 引入 | 宿主兼容 |
+| 版本 | 引入 | 宿主能否连接 |
 |---|---|---|
-| v1 | 基础：绑定、加载、合成、取消 | ✅ 仍支持 |
-| v2 | 插件界面（`getSettingsSchema` / `setSetting` / `invokeAction`） | ✅ 仍支持 |
-| v3 | 按钮文案（`getActionLabels()`） | ✅ 仍支持 |
+| v1 | 基础：绑定、加载、合成、取消 | ✅ 支持 |
+| v2 | 插件界面（`getSettingsSchema` / `setSetting` / `invokeAction`） | ✅ 支持 |
+| v3 | 按钮文案（`getActionLabels()`） | ✅ 支持 |
+| v4 | 日志框 / 结果图 / 播放条 + `onImage` / `onUiPatch` | ✅ 支持 |
 
-- `API_VERSION = 3`，`API_WITH_SCHEMA = 2`，`API_WITH_ACTION_LABELS = 3`
-- 宿主兼容区间 `1..3` → **用 v1 / v2 SDK 编的老插件照常连接、照常合成**，
-  只是拿不到对应版本才有的那两个能力：
-  · v1 插件没有插件界面，卡片上不显示「进入」，并提示"插件 SDK v1（当前 v3）"
+**「能否连接」和「能力是否齐」是两件事。** 上表问的是前者，答案永远是"能"——
+只要 `apiVersion >= API_MIN_SUPPORTED`（现在是 1）就会绑定。
+后者要看 `apiVersion` 落在哪：
+
+| 插件版本 | 跑在当前宿主（v4）上的实际效果 |
+|---|---|
+| v1 | 能合成，没有界面 |
+| v2 / v3 | 有界面，缺日志框/结果图/播放条 |
+| v4 | 全部功能 |
+| v5+（未来） | 老功能照常，新控件降级成文字块，新回调被丢弃 |
+
+宿主自己的 `API_MAX_SUPPORTED` 只影响最后一行的**提示文案**，不影响能否连接。
+
+- `API_VERSION = 4`，`API_WITH_SCHEMA = 2`，`API_WITH_ACTION_LABELS = 3`，
+  `API_WITH_RICH_UI = 4`
+- 宿主兼容下限 `API_MIN_SUPPORTED = 1` → **v1/v2/v3 老插件照常连接、照常合成**，
+  只是拿不到对应版本才有的能力：
+  · v1 插件没有插件界面，卡片上不显示「进入」，并提示"插件 SDK v1（当前 v4）"
   · v1 / v2 插件不能改按钮文案，一律用宿主默认
-- `API_MIN_SUPPORTED = 1` **没动** —— 这次全是扩展，没有破坏性改动
+  · v1–v3 插件的日志/图片/播放条三项不会出现（它们不认识这些类型）
+- `API_MAX_SUPPORTED = 4` 是**认识上限**，不是拒绝阈值。
+  `api > 4` 的插件仍会连接，只是新控件降级、新回调被丢弃
+- `API_MIN_SUPPORTED` **一直是 1** —— 至今所有改动都是扩展，没有破坏性改动
 
 ### v3 的 `getActionLabels()`：为什么是一个方法，不是 manifest 的字段
 
