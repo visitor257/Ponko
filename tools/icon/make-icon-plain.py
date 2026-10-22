@@ -56,6 +56,22 @@ DENS = [("mdpi", 48), ("hdpi", 72), ("xhdpi", 96), ("xxhdpi", 144), ("xxxhdpi", 
 SIGN_KW = dict(height_ratio=0.055)
 SIGN_TEXT = visible_sign.TEXT_TINY
 
+# `SIGN=0` 时不署名，只生成干净底图。
+# 给 tools/icon/stamp_gui.py 用：那个工具需要从**没有署名**的原图开始，
+# 否则手动印上去会叠在旧署名上面。
+DO_SIGN = os.environ.get("SIGN", "1") != "0"
+
+# 只重建一部分 —— 用来**局部修复**，不碰已经手工盖好章的其他档。
+#   ONLY_DENS=xxxhdpi        只处理这一档（逗号分隔多档）
+#   ONLY_FILES=foreground    只处理这几种（launcher = 方图+圆图，background，foreground）
+# 都不设 = 全量重建（默认行为不变）。
+ONLY_DENS = [s.strip() for s in os.environ.get("ONLY_DENS", "").split(",") if s.strip()]
+ONLY_FILES = [s.strip() for s in os.environ.get("ONLY_FILES", "").split(",") if s.strip()]
+
+
+def want(kind):
+    return not ONLY_FILES or kind in ONLY_FILES
+
 img = Image.open(SRC).convert("RGBA")
 w, h = img.size
 if w != h:
@@ -87,13 +103,35 @@ def compose_fg(size, fill):
     return c
 
 
-def circle(im):
-    m = Image.new("L", im.size, 0)
-    r = im.size[0] * VISIBLE
-    o = (im.size[0] - r) / 2.0
-    ImageDraw.Draw(m).ellipse((o, o, o + r - 1, o + r - 1), fill=255)
-    out = im.copy()
-    out.putalpha(m)
+def _sign(im, visible):
+    """按 DO_SIGN 决定要不要盖章。`SIGN=0` 直接返回底图。"""
+    if not DO_SIGN:
+        return im
+    return visible_sign.sign_visible(im, SIGN_TEXT, visible=visible, **SIGN_KW)
+
+
+def circle(im, radius_ratio=None, ss=8):
+    """把图裁成**圆形内容**：圆外变透明，圆内保持原样。
+
+    `radius_ratio` 默认 0.5（内切于画布）。`ic_launcher_round.png` 就该是
+    这种图 —— Android 的 `android:roundIcon` 约定是**资源本身就是圆的**，
+    系统拿到后直接显示、不再套遮罩。给它一张方图的话，在"圆形图标"模式下
+    会显示成一个方块，那就等于没有圆图。
+
+    传 `VISIBLE`（72/108）用于"预览自适应图标在圆遮罩下的效果"，
+    和正式产物无关。
+
+    `ss` = 超采样倍数。`ImageDraw.ellipse` 不抗锯齿，直接画会得到一圈硬台阶；
+    在 `ss` 倍画布上画再 LANCZOS 缩回来，边缘是渐变 alpha，肉眼平滑。
+    """
+    n = im.size[0]
+    r = 0.5 if radius_ratio is None else radius_ratio
+    big = Image.new("L", (n * ss, n * ss), 0)
+    d = (n * ss - n * ss * r) / 2.0
+    ImageDraw.Draw(big).ellipse((d, d, n * ss - d - 1, n * ss - d - 1), fill=255)
+    mask = big.resize((n, n), Image.LANCZOS)
+    out = im.convert("RGBA").copy()
+    out.putalpha(mask)
     return out
 
 
@@ -109,24 +147,28 @@ def lost_ratio(im, tol=30):
 
 
 for d, px in DENS:
+    if ONLY_DENS and d not in ONLY_DENS:
+        continue
     # 署名在**最终尺寸**上画，不能先画再缩 —— 缩放会把字糊成一团。
     # 传统图标（方图 + 圆图）也各自画一遍，同理。
     #
     # 两个层的 visible 不同，但换算后视觉位置一致：
     #   传统图标整图显示 → visible=1.0（启动器套内切圆，半径 0.5n）
     #   自适应前景层只显示中间 72/108 → visible=0.667（半径 n/3）
-    full = visible_sign.sign_visible(
-        compose(px, FILL), SIGN_TEXT, visible=1.0, **SIGN_KW)
-    save(full, os.path.join(RES, "mipmap-" + d, "ic_launcher.png"))
-    save(full, os.path.join(RES, "mipmap-" + d, "ic_launcher_round.png"))
+    if want("launcher"):
+        full = _sign(compose(px, FILL), 1.0)
+        save(full, os.path.join(RES, "mipmap-" + d, "ic_launcher.png"))
+        # round 图必须是**圆形内容**（圆外透明），不能直接复制方图 ——
+        # 系统拿 roundIcon 是不套遮罩直接显示的，方图会显示成方块。
+        save(circle(full), os.path.join(RES, "mipmap-" + d, "ic_launcher_round.png"))
     big = int(round(px * 108 / 48.0))
-    # 背景层**不署名**：它垫在前景下面，署名会被立绘遮出残字（见文件头注释）
-    save(Image.new("RGBA", (big, big), BG),
-         os.path.join(RES, "mipmap-" + d, "ic_launcher_background.png"))
-    save(visible_sign.sign_visible(
-             compose_fg(big, FILL), SIGN_TEXT,
-             visible=visible_sign.ADAPTIVE_VISIBLE, **SIGN_KW),
-         os.path.join(RES, "mipmap-" + d, "ic_launcher_foreground.png"))
+    if want("background"):
+        # 背景层**不署名**：它垫在前景下面，署名会被立绘遮出残字（见文件头注释）
+        save(Image.new("RGBA", (big, big), BG),
+             os.path.join(RES, "mipmap-" + d, "ic_launcher_background.png"))
+    if want("foreground"):
+        save(_sign(compose_fg(big, FILL), visible_sign.ADAPTIVE_VISIBLE),
+             os.path.join(RES, "mipmap-" + d, "ic_launcher_foreground.png"))
 
 old = os.path.join(RES, "drawable", "ic_launcher_foreground.xml")
 if os.path.exists(old):
@@ -159,8 +201,9 @@ for name in ("ic_launcher.xml", "ic_launcher_round.xml"):
 #    第①项过了不代表第②项成立：第一版就在圆内、但中心在显示区 0.60，
 #    用户看到的就是"在中间"。这条判定必须按中心来，不能只看右边界。
 bad = []
+# SIGN=0 时没盖任何东西，自检无意义
 MIN_CENTER = 0.72          # 显示区里，中心至少要到 72% 才算"右下角"
-for d, px in DENS:
+for d, px in (DENS if DO_SIGN else []):
     for label, size, vis in (
         ("ic_launcher", px, 1.0),
         ("ic_launcher_foreground", int(round(px * 108 / 48.0)), visible_sign.ADAPTIVE_VISIBLE),
@@ -179,11 +222,14 @@ if bad:
     for b in bad:
         print("     " + b)
     raise SystemExit(1)
-print("  署名自检：%d 个尺寸，圆内且在右下角" % (len(DENS) * 2))
+if DO_SIGN:
+    print("  署名自检：%d 个尺寸，圆内且在右下角" % (len(DENS) * 2))
+else:
+    print("  SIGN=0：只生成底图，未署名、未自检")
 
 # ---- 预览：旧 61% 圆形(标红被切部分) / 新比例圆形 / 新比例 48px ----
 S = 432
-new_c = visible_sign.sign_visible(compose(S, FILL), SIGN_TEXT, visible=1.0, **SIGN_KW)
+new_c = _sign(compose(S, FILL), 1.0)
 ln, tt, lost, nonwhite = lost_ratio(new_c)
 print("  %.3f 比例在圆形下被切 %d/%d 像素 (%.2f%%)" % (FILL, ln, tt, 100.0 * ln / tt))
 vis = np.asarray(new_c.convert("RGB")).copy()
@@ -194,7 +240,7 @@ marked = Image.fromarray(vis).convert("RGBA")
 
 out = os.path.join(HERE, "out", "preview")
 os.makedirs(out, exist_ok=True)
-items = [marked, circle(new_c),
+items = [marked, circle(new_c, VISIBLE),
          new_c.resize((48, 48), Image.LANCZOS).resize((S, S), Image.NEAREST)]
 sheet = Image.new("RGBA", (S * 3 + 80, S + 40), (22, 24, 32, 255))
 for i, im2 in enumerate(items):
