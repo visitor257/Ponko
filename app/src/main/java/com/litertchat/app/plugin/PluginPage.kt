@@ -118,6 +118,14 @@ class PluginPage(
     private var refLabel: android.widget.TextView? = null
 
     /**
+     * 「文本」输入框（要合成的内容）。
+     *
+     * 存引用只为一件事：文本为空时把焦点送过去，让用户立刻能填。
+     * 行为本身不依赖它 —— 合成读的是 [params] 里那份值。
+     */
+    private var speakTextInput: android.widget.EditText? = null
+
+    /**
      * 上一次生成的音频文件。
      *
      * 写进 `getExternalFilesDir("tts")`（带时间戳，不覆盖），
@@ -615,6 +623,8 @@ class PluginPage(
         currentUiPage = null
         openUiPkg = null
         refLabel = null
+        // 这个引用指向即将被移除的视图，留着只会让 focusSpeakText 摸到死控件
+        speakTextInput = null
         listLayer?.visibility = View.VISIBLE
     }
 
@@ -1157,7 +1167,11 @@ class PluginPage(
     private fun startPreview(pkg: String) {
         val p = params(pkg)
         if (p.text.isBlank()) {
-            setUiHint("合成文本不能为空（在上面的参数里填）")
+            // 只说"不能为空"是不够的：用户不一定知道那个框在哪（插件自己的
+            // schema 可能很长，文本区被挤到很上面）。直接把焦点给过去 ——
+            // 输入框拿到焦点会自动滚进视野，而且能立刻开始打字
+            setUiHint("先在「文本」里填要合成的内容，再点合成")
+            focusSpeakText()
             return
         }
         val tts = openUiIsTts
@@ -1232,6 +1246,20 @@ class PluginPage(
         refFd = null
     }
 
+    /**
+     * 把焦点送到「文本」输入框。
+     *
+     * 用 `requestFocus()` 而不是手动算滚动位置：输入框拿到焦点时，
+     * Android 会自己 `requestChildRectangleOnScreen` 把它滚进视野 ——
+     * 这正是我们要的效果（以前这个机制在日志框上是 bug，这里反过来是特性）。
+     */
+    private fun focusSpeakText() {
+        val v = speakTextInput ?: return
+        if (v.parent == null) return      // 页面已经换掉了
+        v.requestFocus()
+        v.setSelection(v.text.length)
+    }
+
     /** 按 SAF Uri 打开参考音频。失败返回 null（授权过期是最常见的原因） */
     private fun openReference(p: PreviewParams): android.os.ParcelFileDescriptor? {
         val uri = p.refUriOrNull() ?: return null
@@ -1289,7 +1317,7 @@ class PluginPage(
         // 能做的、该做的只是把耗时**告诉**用户 —— 下面那行实时估算。
         // 它同样是估算（按中文 ~4.5 字/秒、RTF 10~30），所以措辞用"约"，
         // 并且不做任何强制。
-        box.addView(fieldLabel("文本"), wrapWrap())
+        box.addView(fieldLabel("文本（要合成的内容）"), wrapWrap())
         val estimate = TextView(act).apply {
             textSize = 11f
             setTextColor(pal.hint)
@@ -1310,7 +1338,7 @@ class PluginPage(
         }
         val textInput = EditText(act).apply {
             setText(cur.text)
-            hint = "要合成的内容"
+            hint = "在这里输入要合成的文字"
             inputType = android.text.InputType.TYPE_CLASS_TEXT or
                 android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
             setSingleLine(false)
@@ -1323,6 +1351,7 @@ class PluginPage(
                 refreshEstimate(s)
             })
         }
+        speakTextInput = textInput
         refreshEstimate(cur.text)
         box.addView(textInput, matchWrap().apply { topMargin = dp(4) })
         box.addView(estimate, matchWrap())

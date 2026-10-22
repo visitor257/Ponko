@@ -36,8 +36,8 @@ import com.litertchat.plugin.PluginConst
  * `<=0 / <0` 当作"用我的默认"，等插件自己在界面里暴露更合适。
  */
 data class PreviewParams(
-    /** 要合成/试听的文本 */
-    val text: String = DEFAULT_TEXT,
+    /** 要合成/试听的文本。**默认空** —— 见 [TEXT_NONE] 的说明 */
+    val text: String = TEXT_NONE,
 
     /** 见 [PluginConst.MODE_PLAIN] / `MODE_CLONE` / `MODE_CONTINUATION` */
     val mode: Int = PluginConst.MODE_PLAIN,
@@ -90,8 +90,32 @@ data class PreviewParams(
     fun refUriOrNull(): Uri? = refUri.takeIf { it.isNotEmpty() }?.let { Uri.parse(it) }
 
     companion object {
-        /** 默认试听文本 */
-        const val DEFAULT_TEXT = "你好，我是 Ponko。这是一段试听音频。"
+        /**
+         * 文本的初始值：**空**。
+         *
+         * ## 为什么是空，而不是一句示例话
+         *
+         * 这里曾经是「你好，我是 Ponko。这是一段试听音频。」—— 想的是"开箱
+         * 点一下就能听到声音"。实际效果是反的：输入框里永远躺着一句现成的话，
+         * 用户以为要合成的内容是**写死的**，而不是自己填的。
+         *
+         * 空着 + 占位提示（「要合成的内容」）反而更清楚：这是个输入框，等你填。
+         * 点合成时文本为空会被明确拦下（"合成文本不能为空"），不会静默用一句
+         * 别人的话生成一段音频。
+         */
+        const val TEXT_NONE = ""
+
+        /**
+         * 旧版本的默认示例文本。
+         *
+         * 只用于**迁移**：老用户 prefs 里可能存着这句（他进过插件页、没改过文本，
+         * `closePluginUi` 就把默认值存下去了）。读出来时把它当成空 ——
+         * 否则改了这个常量对老用户毫无作用，他照样一进去就看到"固定文字"。
+         *
+         * 判断依据是"和旧默认值逐字符相同"，所以真需要合成这句话的人
+         * 手动输入一遍即可，代价可以忽略。
+         */
+        private const val LEGACY_DEFAULT_TEXT = "你好，我是 Ponko。这是一段试听音频。"
 
         /**
          * 试听文本**没有长度上限**。
@@ -135,7 +159,10 @@ data class PreviewParams(
         fun load(ctx: Context, pkg: String): PreviewParams {
             val g = prefs(ctx)
             return PreviewParams(
-                text = g.getString("$pkg.text", DEFAULT_TEXT) ?: DEFAULT_TEXT,
+                // 老用户 prefs 里可能存着旧的示例句（进过插件页、没改文本就被
+                // closePluginUi 存下去了）→ 读成空，否则改成空默认值对他是无效的
+                text = (g.getString("$pkg.text", TEXT_NONE) ?: TEXT_NONE)
+                    .let { if (it == LEGACY_DEFAULT_TEXT) TEXT_NONE else it },
                 mode = g.getInt("$pkg.mode", PluginConst.MODE_PLAIN),
                 transcript = g.getString("$pkg.transcript", "") ?: "",
                 seed = g.getInt("$pkg.seed", 0),
