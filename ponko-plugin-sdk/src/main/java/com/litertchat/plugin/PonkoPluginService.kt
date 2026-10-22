@@ -799,6 +799,49 @@ abstract class PonkoPluginService : Service() {
         notifyAudioFile(key, fd, displayName ?: file.name)
     }
 
+    /**
+     * 让宿主切换到某一页（v8）。
+     *
+     * ## 最典型的一行：推理完自动翻到结果页
+     *
+     * ```kotlin
+     * override fun synthesize(req: SynthesisRequest) {
+     *     val result = runInference(req)
+     *     callback.onResult(result)          // 结果先交出去
+     *     notifySelectTab("main", "result")  // 界面再翻过去
+     * }
+     * ```
+     *
+     * 先 `onResult` 再切页的顺序是有意义的：宿主是在 `onResult` 里把音频落盘、
+     * 让结果页的播放条变成可用的。反过来切过去可能先看到一条空播放条。
+     * （oneway 调用不保证严格顺序，但宿主会在主线程按到达顺序处理，
+     * 而这两个都在同一根 Binder 线程上发出，实际顺序是稳定的。）
+     *
+     * ## 参数
+     *
+     * @param groupKey 那个 `UiType.TABS_START` 的 `key`。**必须非空**，
+     *                 否则宿主认不出是哪一组（`TABS_START.key` 空的话
+     *                 这一组根本没法被外部定位）
+     * @param tabKey   目标 `UiType.TAB` 的 `key`
+     *
+     * ## 找不到会怎样
+     *
+     * 不报错。宿主会把目标记成"这一组该停在哪页"，下一次重画时生效 ——
+     * 所以"先发跳转再改 schema"也能正常跳到。
+     *
+     * 但如果 `groupKey` 一直对不上（拼错了），表现就是**跳转静默无效**。
+     * 排查方式：`adb logcat | grep PonkoPluginUi`，宿主会打一行
+     * `selectTab 没有匹配的组`。
+     */
+    protected fun notifySelectTab(groupKey: String, tabKey: String) {
+        val cb = callback ?: return
+        try {
+            cb.selectTab(groupKey, tabKey)
+        } catch (t: Throwable) {
+            Log.w(TAG, "selectTab 回调失败", t)
+        }
+    }
+
     override fun onBind(intent: Intent?): IBinder {
         // ⚠ Android 12+ 禁止后台启动前台服务。此刻宿主刚 bindService、还在前台，
         //   所以这里起一定能过；等到 synthesize 里再起就可能抛

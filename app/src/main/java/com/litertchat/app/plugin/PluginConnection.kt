@@ -89,6 +89,14 @@ class PluginConnection(
          * @param key 对应 `UiItem.key`；空 = 绑定到"最近一次产物"那个位置
          */
         fun onAudioFile(key: String, bytes: ByteArray, displayName: String?) {}
+
+        /**
+         * 插件要求宿主切换到某一页（v8）。
+         *
+         * @param groupKey `TABS_START` 的 key
+         * @param tabKey   目标 `TAB` 的 key
+         */
+        fun onSelectTab(groupKey: String, tabKey: String) {}
     }
 
     companion object {
@@ -302,6 +310,14 @@ class PluginConnection(
             }
             val k = key ?: ""
             post { listener?.onAudioFile(k, bytes, displayName) }
+        }
+
+        override fun selectTab(groupKey: String?, tabKey: String?) {
+            // 两个都空就没有意义；只空一个也定位不到，交给上层记日志
+            val g = groupKey ?: ""
+            val t = tabKey ?: ""
+            Log.i(TAG, "selectTab -> group='$g' tab='$t'")
+            post { listener?.onSelectTab(g, t) }
         }
     }
 

@@ -81,6 +81,11 @@ class PluginSession(private val context: Context) {
          * 插件给 `AUDIO` 条目送了自己的音频（v7）。[bytes] 已读进内存。
          */
         fun onPluginAudioFile(pkg: String, key: String, bytes: ByteArray, displayName: String?) {}
+
+        /**
+         * 插件要求切到某一页（v8）。宿主页开着才有效果。
+         */
+        fun onPluginSelectTab(pkg: String, groupKey: String, tabKey: String) {}
     }
 
     /**
@@ -403,6 +408,12 @@ class PluginSession(private val context: Context) {
         override fun onAudioFile(key: String, bytes: ByteArray, displayName: String?) {
             Log.i(TAG, "[$pkg] 收到音频 key='$key' ${bytes.size}B ${displayName ?: ""}")
             listener?.onPluginAudioFile(pkg, key, bytes, displayName)
+        }
+
+        // 注意方法名：Listener 上叫 onSelectTab（宿主内部事件），
+        // AIDL 的 Stub 上才叫 selectTab（插件侧调用）。两者不要混
+        override fun onSelectTab(groupKey: String, tabKey: String) {
+            listener?.onPluginSelectTab(pkg, groupKey, tabKey)
         }
     }
 

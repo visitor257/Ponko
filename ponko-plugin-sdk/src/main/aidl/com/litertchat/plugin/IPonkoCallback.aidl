@@ -185,4 +185,42 @@ oneway interface IPonkoCallback {
      * @param displayName  文件名（含扩展名），用于「保存」时命名，可为 null
      */
     void onAudioFile(in String key, in ParcelFileDescriptor fd, in @nullable String displayName);
+
+    // ==================== v8：插件控制宿主界面 ====================
+
+    /**
+     * 让宿主切换到某一页（v8）。对应 [UiType.TABS_START] / [UiType.TAB]。
+     *
+     * ## 典型用法：推理完成 → 跳到「结果」页
+     *
+     * ```kotlin
+     * override fun synthesize(req: SynthesisRequest) {
+     *     // …跑推理，出音频…
+     *     callback.onResult(result)
+     *     // 结果出来了，把界面翻到结果页
+     *     notifySelectTab("main", "result")
+     * }
+     * ```
+     *
+     * ## 命中规则
+     *
+     * · `groupKey` = 那个 [UiType.TABS_START] 的 `key`
+     * · `tabKey`   = 目标 [UiType.TAB] 的 `key`
+     * · **只作用于第一个** 匹配的组（同名组只有第一个生效）
+     * · 找不到组 / 找不到页 → **不报错，静默忽略**，但会把目标记进
+     *   "这一组该停在哪页"，下一次重画时自动生效 ——
+     *   所以"先发跳转、后改 schema"这种顺序也能work
+     *
+     * ## 什么时候会被丢弃
+     *
+     * 插件界面没开着（用户在别处）→ 忽略。**不缓存**：那是"过去的意图"，
+     * 等用户下次进来再自动跳过去会莫名其妙。
+     *
+     * ## 和"用户正在操作"的冲突
+     *
+     * 用户刚点了某一页、插件随后又要跳走 —— 后者赢。这是刻意的：
+     * 插件只在**有明确理由**时才该调它（结果出来了、阶段变了），
+     * 滥用会让标签页像自己会乱动。
+     */
+    void selectTab(in String groupKey, in String tabKey);
 }

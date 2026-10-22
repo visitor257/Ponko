@@ -364,6 +364,9 @@ class PluginUiPage(
         firstLogKey = null
         firstImageKey = null
         hostSlotConsumed = false
+        // 视图全要换，按 key 索引的组实例必须一起丢 ——
+        // 留着会让 selectTab 切到已经脱离视图树的旧页（屏幕上看不出变化）
+        tabGroups.clear()
         stopAudioTicker()
         host.removeAllViews()
 
@@ -1149,6 +1152,65 @@ class PluginUiPage(
     private val tabSelected = HashMap<String, String>()
 
     /**
+     * 本轮渲染出来、**能被外部定位**的标签页组（v8）。
+     *
+     * key = `TABS_START` 的 key。只有 key 非空的组会进来 —— 空 key 的组
+     * 收到 `selectTab` 时无从指认，放进来只会让"多个空 key 争第一个"这种行为
+     * 变得莫名其妙。
+     *
+     * 每次 [render] 重建，**不做增删维护** —— 视图都换了，旧实例必须一起丢。
+     */
+    private val tabGroups = LinkedHashMap<String, TabGroup>()
+
+    /**
+     * 切到某一页（v8，插件 `selectTab` 的落点）。
+     *
+     * ## 找不到怎么办：记进 [tabSelected]，不报错
+     *
+     * 两种"找不到"都是正常会发生的情况：
+     *
+     * | 情况 | 为什么会发生 |
+     * |---|---|
+     * | 组还没建出来 | 插件在 `onResult` 里调它，宿主可能正在 `refresh()` 途中 |
+     * | 那个 tab 是插件**新加的** | 插件先发跳转、再 `notifySchemaChanged()` 加页 |
+     *
+     * 两种的正确处理都不是"报错给用户"，而是**记住意图**，等下一次渲染按 key
+     * 恢复 —— 这正好是 [tabSelected] 本来的语义（"这一组该停在哪页"），
+     * 所以不需要额外的 pending 队列。
+     *
+     * @return 这一次有没有真的切过去（false = 已记账，等下次渲染）
+     */
+    fun selectTab(groupKey: String, tabKey: String): Boolean {
+        if (groupKey.isBlank() || tabKey.isBlank()) {
+            android.util.Log.w(
+                "PonkoPluginUi",
+                "selectTab 参数为空（group='$groupKey' tab='$tabKey'），已忽略"
+            )
+            return false
+        }
+        val g = tabGroups[groupKey]
+        if (g == null) {
+            // 组不存在：可能是 key 拼错，也可能还没渲染完。记账，下次渲染生效
+            tabSelected[groupKey] = tabKey
+            android.util.Log.w(
+                "PonkoPluginUi",
+                "selectTab 没有匹配的组：'$groupKey'（已记账，下次重画时生效）。" +
+                    "现有组：${tabGroups.keys}"
+            )
+            return false
+        }
+        val ok = g.selectByKey(tabKey, smooth = true)
+        if (!ok) {
+            tabSelected[groupKey] = tabKey
+            android.util.Log.w(
+                "PonkoPluginUi",
+                "selectTab 组 '$groupKey' 里没有 tab '$tabKey'（已记账）"
+            )
+        }
+        return ok
+    }
+
+    /**
      * 一组标签页。
      *
      * ## 一次建全，切换只改 visibility
@@ -1394,17 +1456,39 @@ class PluginUiPage(
         }
 
         /**
+         * 按 `TAB` 的 key 选页（v8，给 `selectTab` 用）。
+         *
+         * @param tabKey 目标页的 key
+         * @param smooth true = pager 用滑动动画过去。插件触发的跳转用它，
+         *               用户点标签条时不用（点了立刻响应更跟手）
+         * @return 有没有找到这一页
+         *
+         * **找不到就返回 false，不改任何状态** —— 由调用方决定怎么兜底
+         * （[PluginUiPage.selectTab] 会写进 [tabSelected] 让下次渲染生效）。
+         */
+        fun selectByKey(tabKey: String, smooth: Boolean): Boolean {
+            val i = keys.indexOf(tabKey)
+            if (i < 0) return false
+            if (i == current) return true          // 已经在那一页，什么都不用做
+            current = i
+            applySelection(smooth)
+            tabSelected[stateKey] = tabKey
+            settleCurrentPage()
+            return true
+        }
+
+        /**
          * 只刷样式，不动 [current]。
          *
          * 单独拆出来是因为 [beginTab] 里新加一个标签之后也要刷一遍样式
          * （新 chip 还是默认色），但**不能**顺手改选中项。
          */
-        private fun applySelection() {
+        private fun applySelection(smooth: Boolean = false) {
             if (pager != null) {
                 // pager 自己管显示哪一页；这里只同步选中项和标签样式。
                 // **不能**再改 page.visibility —— pager 会把非当前页也 attach 住，
                 // 设成 GONE 会让它布局错乱（滑过去是空白）
-                if (pager.currentItem != current) pager.setCurrentItem(current, false)
+                if (pager.currentItem != current) pager.setCurrentItem(current, smooth)
                 styleChips()
                 return
             }
@@ -1532,7 +1616,23 @@ class PluginUiPage(
         item: com.litertchat.plugin.UiItem,
         depth: Int,
         swipeable: Boolean,
-    ): TabGroup = TabGroup(item.key, depth, swipeable)
+    ): TabGroup {
+        val g = TabGroup(item.key, depth, swipeable)
+        // 只有 key 非空的组能被 selectTab 指认（见 tabGroups 的说明）
+        if (item.key.isNotBlank()) {
+            if (tabGroups.containsKey(item.key)) {
+                // 同名组：只认第一个。后出现的仍然正常渲染（用户能点），
+                // 只是 selectTab 不会命中它 —— 插件写重了 key 应该被提醒
+                android.util.Log.w(
+                    "PonkoPluginUi",
+                    "TABS_START 的 key 重复：'${item.key}'，selectTab 只会命中第一个"
+                )
+            } else {
+                tabGroups[item.key] = g
+            }
+        }
+        return g
+    }
 
     /**
      * 只读日志框。固定高度 + 内部独立滚动。
