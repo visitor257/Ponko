@@ -16,10 +16,14 @@ ICON_FILL 可覆盖比例（默认 0.471 = 零裁切；0.50 只丢 0.6%；0.611 
 
 ## 可见署名
 
-除背景层外，每张图标底部居中都有 `© Ponko`（小图只写 `©`，见 visible_sign.py）。
+除背景层外，每张图标**右下角**都有 `© Ponko`（小图只写 `©`，见 visible_sign.py）。
 **背景层故意不加**：自适应图标是 background 垫底、foreground 盖在上面，
 foreground 只在立绘处不透明 —— 把署名画在背景层，它会被立绘遮掉大半，
 只在边缘露出残字，比不加更难看。同理署名必须画在**前景层**（最上层）才完整可见。
+
+位置参数 `SIGN_RIGHT` / `SIGN_BOTTOM` = 0.70 而不是贴边，因为自适应图标只显示
+中间 72/108 的圆：贴边（0.9+）会跑到圆外，在圆形启动器上被裁成半截字。
+0.70 换算到显示区是 80% 处，视觉上就是右下角。
 """
 import os
 import sys
@@ -39,6 +43,11 @@ BG = (255, 255, 255, 255)
 VISIBLE = 72.0 / 108.0  # 系统可见区 / 画布
 
 DENS = [("mdpi", 48), ("hdpi", 72), ("xhdpi", 96), ("xxhdpi", 144), ("xxxhdpi", 192)]
+
+# 署名位置与字号（图标用的这套参数）。0.70 是"贴可见圆的右下角"能取到的位置，
+# 再往外就被启动器的圆形遮罩裁掉。字号 0.050 是"能认出来但不抢画面"的值 ——
+# 第一版用了 0.070 并且居中，在圆形图标上看起来是挡在正中的一块，太大。
+SIGN_KW = dict(height_ratio=0.050, right_ratio=0.70, bottom_ratio=0.70)
 
 img = Image.open(SRC).convert("RGBA")
 w, h = img.size
@@ -95,14 +104,14 @@ def lost_ratio(im, tol=30):
 for d, px in DENS:
     # 署名在**最终尺寸**上画，不能先画再缩 —— 缩放会把字糊成一团。
     # 传统图标（方图 + 圆图）也各自画一遍，同理。
-    full = visible_sign.sign_visible(compose(px, FILL))
+    full = visible_sign.sign_visible(compose(px, FILL), **SIGN_KW)
     save(full, os.path.join(RES, "mipmap-" + d, "ic_launcher.png"))
     save(full, os.path.join(RES, "mipmap-" + d, "ic_launcher_round.png"))
     big = int(round(px * 108 / 48.0))
     # 背景层**不署名**：它垫在前景下面，署名会被立绘遮出残字（见文件头注释）
     save(Image.new("RGBA", (big, big), BG),
          os.path.join(RES, "mipmap-" + d, "ic_launcher_background.png"))
-    save(visible_sign.sign_visible(compose_fg(big, FILL)),
+    save(visible_sign.sign_visible(compose_fg(big, FILL), **SIGN_KW),
          os.path.join(RES, "mipmap-" + d, "ic_launcher_foreground.png"))
 
 old = os.path.join(RES, "drawable", "ic_launcher_foreground.xml")
@@ -133,7 +142,7 @@ for name in ("ic_launcher.xml", "ic_launcher_round.xml"):
 bad = []
 for d, px in DENS:
     for label, size in (("ic_launcher", px), ("ic_launcher_foreground", int(round(px * 108 / 48.0)))):
-        rect = visible_sign.sign_region(size)
+        rect = visible_sign.sign_region(size, **SIGN_KW)
         ok, worst, rad = visible_sign.inside_visible_circle(size, rect)
         if not ok:
             bad.append("%s/%s 最远角 %.1f > 半径 %.1f" % (d, label, worst, rad))
@@ -146,7 +155,7 @@ print("  署名圆内自检：%d 个尺寸全部通过" % (len(DENS) * 2))
 
 # ---- 预览：旧 61% 圆形(标红被切部分) / 新比例圆形 / 新比例 48px ----
 S = 432
-new_c = visible_sign.sign_visible(compose(S, FILL))
+new_c = visible_sign.sign_visible(compose(S, FILL), **SIGN_KW)
 ln, tt, lost, nonwhite = lost_ratio(new_c)
 print("  %.3f 比例在圆形下被切 %d/%d 像素 (%.2f%%)" % (FILL, ln, tt, 100.0 * ln / tt))
 vis = np.asarray(new_c.convert("RGB")).copy()

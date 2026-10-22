@@ -94,25 +94,35 @@ def sign_visible(
     im,
     text=None,
     *,
-    height_ratio=0.070,
-    bottom_ratio=0.76,
+    height_ratio=0.050,
+    right_ratio=0.92,
+    bottom_ratio=0.92,
+    align="right",
     fill=(255, 255, 255, 235),
     stroke=(26, 28, 34, 215),
 ):
-    """在图片底部居中画署名，返回新图（不修改入参）。
+    """在图片**右下角**画署名，返回新图（不修改入参）。
 
-    @param im             RGBA 图片（方形，图标场景下是画布）
+    ## 为什么是右下角，而且一开始做错了
+
+    第一版是**水平居中 + 底部**。在方形画布上看不出问题，但自适应图标只显示
+    中间 72/108 的圆 —— 居中文字落在这个圆的水平中轴上，视觉上就成了
+    "贴在圆中央偏下"，既不像角标也不像水印，就是一块挡在画面正中的东西。
+    右下角才是"署名"该待的位置：存在感低、不压主体。
+
+    ## 位置受可见圆约束（图标场景）
+
+    可见圆半径 n/3。右下角要落在圆内，必须
+        (x1 - n/2)² + (y1 - n/2)² ≤ (n/3)²
+    取默认 0.92 会超（距中心 0.594n）。所以图标调用方传的是更靠内的值，
+    由 [inside_visible_circle] 在生成时把关。
+
+    @param im             RGBA 图片（方形）
     @param text           覆盖署名文字；None = 按尺寸自动选
     @param height_ratio   字号占画布高度的比例
-    @param bottom_ratio   文字**底边**距画布顶部的比例。
-
-                         这个值不能随便定：可见圆最低点是 0.833（5/6），但**文字两端的
-                         角**比中心离圆心更远，所以先撞线的是角，不是底边中点。
-                         设文字宽 0.30n、居中，则底边 y 必须满足
-                             (0.15n)² + (y-0.5n)² ≤ (n/3)²
-                         解得 y ≤ 0.798n。取 0.78 留一点余量。
-                         （一开始写 0.88，算下来是负数 —— 那时署名整个在圆外，
-                          在圆形启动器上会被裁成半截字。见 sign_region 的自检。）
+    @param right_ratio    文字**右边界**距左边界的比例（1.0 = 贴右边缘）
+    @param bottom_ratio   文字**底边**距顶部的比例（1.0 = 贴底边）
+    @param align          `"right"` = 右对齐（默认）；`"center"` = 水平居中
     @param fill           文字颜色
     @param stroke         描边颜色
     """
@@ -121,57 +131,53 @@ def sign_visible(
     if im.size[1] != n:
         raise ValueError("署名只支持方形画布，当前 %dx%d" % im.size)
 
-    tiny = n <= MIN_WIDTH_FOR_TEXT
-    if text is None:
-        text = TEXT_TINY if tiny else TEXT_ICON
-
     out = im.copy()
     draw = ImageDraw.Draw(out)
-    font_px = _font_px(n, height_ratio, tiny)
-    font = _load_font(font_px)
-    tw, th = _measure(draw, text, font)
-
-    # anchor="mb" = middle-bottom：文字**底边中点**锚在给定点。
-    # 用 anchor 而不是自己算 (x, y)：字体度量里 ascent/descent 的分布各字体不同，
-    # 自己减容易偏；anchor 由 Pillow 按字体自己算。
-    #
-    # 描边按**字号**比例算，不按画布 —— 按画布算的话，1024px 的图上会得到 9px 描边，
-    # 而字才 46px 高，描边比笔画还粗。
-    #
-    # 0.07 是在"白色背景"和"深色立绘"两头都能用的值：
-    # 图标底是纯白，白字只能靠描边显出轮廓；立绘底部实测平均亮度 79（偏深），
-    # 白字本来就看得到，描边只需处理暗部里的亮点。
-    stroke_w = max(1, int(round(font_px * STROKE_RATIO)))
-
-    draw.text(
-        (n / 2.0, n * bottom_ratio), text, font=font, anchor="mb",
-        fill=fill, stroke_width=stroke_w, stroke_fill=stroke,
-    )
+    _draw_sign(draw, n, text, height_ratio, right_ratio, bottom_ratio,
+               align, fill, stroke)
     return out
 
 
-def sign_region(n, text=None, *, height_ratio=0.070, bottom_ratio=0.76):
-    """返回署名会占用的矩形 (x0, y0, x1, y1)，供校验用。
-
-    校验脚本拿它确认"署名确实落在可见圆内"，而不是凭肉眼看。
-    和 [sign_visible] 走同一套 anchor 逻辑，保证量出来的就是画出来的。
-    """
+def _draw_sign(draw, n, text, height_ratio, right_ratio, bottom_ratio,
+               align, fill, stroke):
+    """实际绘制。sign_visible 和 sign_region 共用，保证"量的"就是"画的"。"""
     tiny = n <= MIN_WIDTH_FOR_TEXT
     if text is None:
         text = TEXT_TINY if tiny else TEXT_ICON
+
     font_px = _font_px(n, height_ratio, tiny)
     font = _load_font(font_px)
+
+    # anchor：mb = 水平居中 + 底边；rb = 右对齐 + 底边。
+    # 用 anchor 而不是自己减宽高：字体度量里 ascent/descent 各字体不同，
+    # 手算必偏（第一版就偏了 23px 跑到区域外）。
+    anchor = "rb" if align == "right" else "mb"
+    x = n * right_ratio if align == "right" else n / 2.0
+
+    # 描边按**字号**算，不按画布 —— 按画布算的话 1024px 图上会得到 9px 描边，
+    # 而字才 46px 高，描边比笔画还粗。
+    stroke_w = max(1, int(round(font_px * STROKE_RATIO)))
+
+    draw.text(
+        (x, n * bottom_ratio), text, font=font, anchor=anchor,
+        fill=fill, stroke_width=stroke_w, stroke_fill=stroke,
+    )
+
+
+def sign_region(n, text=None, *, height_ratio=0.050, right_ratio=0.92,
+                bottom_ratio=0.92, align="right"):
+    """返回署名会占用的矩形 (x0, y0, x1, y1)，供校验用。
+
+    校验脚本拿它确认"署名确实落在可见圆内"，而不是凭肉眼看。
+    和 [sign_visible] 走完全同一套绘制逻辑，保证量出来的就是画出来的。
+    """
     probe = Image.new("RGBA", (n, n), (0, 0, 0, 0))
     draw = ImageDraw.Draw(probe)
-    stroke_w = max(1, int(round(font_px * STROKE_RATIO)))
-    draw.text(
-        (n / 2.0, n * bottom_ratio), text, font=font, anchor="mb",
-        fill=(255, 255, 255, 255), stroke_width=stroke_w,
-        stroke_fill=(0, 0, 0, 255),
-    )
+    _draw_sign(draw, n, text, height_ratio, right_ratio, bottom_ratio,
+               align, (255, 255, 255, 255), (0, 0, 0, 255))
     box = probe.getbbox()
     if box is None:
-        return (n / 2.0, n * bottom_ratio, n / 2.0, n * bottom_ratio)
+        return (n * right_ratio, n * bottom_ratio, n * right_ratio, n * bottom_ratio)
     return box
 
 
