@@ -323,28 +323,73 @@ class PluginUiPage(
             return
         }
 
-        // 分组要按顺序累积，所以不能简单 forEach —— 需要维护「当前往哪个容器里加」
-        // 用一个栈：GROUP_START 压、GROUP_END 弹。只有一层实际使用，但栈更安全
-        val target = ArrayDeque<LinearLayout>()
-        target.addLast(host)
+        // 分组 / 标签页要按顺序累积，所以不能简单 forEach —— 需要维护「当前往哪个容器里加」。
+        //
+        // ## 为什么是栈，且元素有两种形状
+        //
+        // `GROUP_START` / `TABS_START` 都会开一个新区块、`*_END` 关掉它，层数不固定
+        // （用户要的「页中页中页」就是三层标签页）。用一个栈最省事。
+        //
+        // 但两种区块**往里加东西的方式不同**：
+        // · 分组（[Slot.Box]）只有一条内容流，直接往 body 里加
+        // · 标签页（[Slot.Tab]）有多个页，要往**当前选中那一页**里加
+        // 所以栈元素不能只是一个 `LinearLayout`。
+        val target = ArrayDeque<Slot>()
+        target.addLast(Slot.Box(host))
 
         schema.items.forEach { item ->
             when (item.type) {
                 UiType.GROUP_START -> {
                     val group = buildGroup(item)
-                    target.last().addView(group.first, matchWrap())
-                    target.addLast(group.second)
+                    target.last().content().addView(group.first, matchWrap())
+                    target.addLast(Slot.Box(group.second))
                 }
                 UiType.GROUP_END -> {
-                    // 只有一个元素时弹出会把根也弹掉 —— 插件写错了也不能崩
+                    // 只有一个元素时弹出去会把根也弹掉 —— 插件写错了也不能崩
                     if (target.size > 1) target.removeLast()
+                }
+                UiType.TABS_START -> {
+                    // 深度 = 栈里已经有几层标签页。用数出来的，不用计数器：
+                    // 插件少写/多写 TABS_END 时计数器会永久偏掉
+                    val depth = target.count { it is Slot.Tab }
+                    val tabs = buildTabGroup(item, depth)
+                    target.last().content().addView(tabs.view, matchWrap())
+                    target.addLast(Slot.Tab(tabs))
+                }
+                UiType.TAB -> {
+                    // TAB 只对**最内层**那个标签页组有效。
+                    // 不在 TABS 里出现的 TAB 是插件写错了 —— 忽略，不崩
+                    val tab = target.lastOrNull() as? Slot.Tab
+                    if (tab != null) tab.group.beginTab(item) else {
+                        android.util.Log.w("PonkoPluginUi", "TAB 不在 TABS_START 内，已忽略：${item.label}")
+                    }
+                }
+                UiType.TABS_END -> {
+                    // 只在栈顶**确实是标签页组**时才弹。
+                    // 插件多写一个 TABS_END 时若无条件 pop，会把外面的分组弹掉，
+                    // 后面所有内容都会跑到更外层 —— 那种错位比"忽略多余结束标记"难查得多
+                    val top = target.lastOrNull()
+                    if (top is Slot.Tab) {
+                        top.group.finish()
+                        target.removeLast()
+                    } else {
+                        android.util.Log.w("PonkoPluginUi", "多余的 TABS_END，已忽略")
+                    }
                 }
                 else -> {
                     val v = renderItem(item) ?: return@forEach
-                    target.last().addView(v, matchWrap())
+                    target.last().content().addView(v, matchWrap())
                 }
             }
         }
+
+        // 插件可能漏写 TABS_END —— 那些组在 TABS_END 分支里`finish`不到，
+        // 这里补一次，保证空标签条一定被藏掉、恢复上次那页也一定发生。
+        // 从内到外弹：内层先收尾，再收外层（外层的高度依赖内层）
+        while (target.size > 1) {
+            (target.removeLast() as? Slot.Tab)?.group?.finish()
+        }
+
         // 重画完了：播放条要立刻反映当前播放状态（否则切回页面时显示成「▶」却在响）
         refreshAudioBars()
         startAudioTicker()
@@ -737,7 +782,253 @@ class PluginUiPage(
         return box
     }
 
-    // ==================== v4：日志 / 结果图 / 播放条 ====================
+    // ==================== v5：标签页（页中页）====================
+
+    /**
+     * 渲染栈的一层。见 [render] 里的说明：分组只有一条内容流，
+     * 标签页有多个页、要往当前页里加，所以得分两种形状。
+     */
+    private sealed class Slot {
+        /** 往哪加内容 */
+        abstract fun content(): LinearLayout
+
+        class Box(val body: LinearLayout) : Slot() {
+            override fun content(): LinearLayout = body
+        }
+
+        class Tab(val group: TabGroup) : Slot() {
+            override fun content(): LinearLayout = group.currentPage()
+        }
+    }
+
+    /**
+     * 各标签页组"上次停在哪一页"。
+     *
+     * key = `TABS_START` 的 key，value = 选中那个 `TAB` 的 key。
+     * **存 key 不存索引**：插件加一页/删一页，索引就错位了，
+     * 存 key 才能"哪怕顺序变了也回到同一个页"。
+     *
+     * 和 [groupOpen] 一样只放内存 —— 重启 App 回到第一页是对的。
+     */
+    private val tabSelected = HashMap<String, String>()
+
+    /**
+     * 一组标签页。
+     *
+     * ## 一次建全，切换只改 visibility
+     *
+     * 插件给的 schema 里本来就有**所有页**的内容，所以渲染时全部建好、
+     * 隐藏非当前页。切页只是 `visibility = GONE/VISIBLE`：
+     * 输入框内容、滚动位置、选中的滑块值全都还在。
+     *
+     * 反过来做（切页时重建）要付三笔账：滚动位置复位、输入框失焦、
+     * 正在编辑的 TEXTAREA 内容被覆盖。代价只是首次渲染多建几十个 View，
+     * 比"每次切页抖一下"划算得多。
+     */
+    private inner class TabGroup(
+        /** 记住选中状态的键。空 = 不记忆，重建后回到第一页 */
+        private val stateKey: String,
+        /** 嵌套深度，0 = 最外层。只影响标签条的字号和底色 */
+        val depth: Int,
+    ) {
+        val view: LinearLayout = LinearLayout(act).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(8), 0, 0)
+        }
+
+        /**
+         * 标签条。
+         *
+         * 外层用主色浅底、内层用字段底：三层都一样的话，看不出
+         * 哪个标签条属于哪一层。字号也差一档（13sp / 12sp）。
+         */
+        private val bar: LinearLayout = LinearLayout(act).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = rounded(
+                if (depth == 0) pal.primarySoft else pal.fieldBg,
+                if (depth == 0) 10 else 8
+            )
+            setPadding(dp(3), dp(3), dp(3), dp(3))
+        }
+
+        /** 所有页叠在这里，靠 visibility 切换 */
+        private val pagesHost = android.widget.FrameLayout(act)
+
+        private val pages = ArrayList<LinearLayout>()
+        private val chips = ArrayList<TextView>()
+
+        /** 每页的 TAB key，和 [pages] 同下标 */
+        private val keys = ArrayList<String>()
+
+        var current = 0
+            private set
+
+        /**
+         * 隐式页。
+         *
+         * 插件可能写 `TABS_START` 之后**直接给内容**（忘了写 TAB），
+         * 那样内容也得有地方放。第一个 `TAB` 到来时会"认领"这一页。
+         */
+        private val implicitPage = LinearLayout(act).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        init {
+            view.addView(bar, matchWrap())
+            view.addView(pagesHost, matchWrap())
+            pages.add(implicitPage)
+            keys.add("")
+            pagesHost.addView(implicitPage, android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT))
+        }
+
+        /**
+         * 开一个新页并加上标签。
+         *
+         * 第一个 `TAB` **认领隐式页**（只改名，不新建），所以正常的
+         * `TABS_START / TAB / …` 写法不会多出一个空页。
+         */
+        fun beginTab(item: com.litertchat.plugin.UiItem) {
+            val idx: Int
+            if (chips.isEmpty()) {
+                idx = 0
+                keys[0] = item.key
+            } else {
+                val page = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL }
+                pages.add(page)
+                keys.add(item.key)
+                pagesHost.addView(page, android.widget.FrameLayout.LayoutParams(
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                    android.widget.FrameLayout.LayoutParams.WRAP_CONTENT))
+                idx = pages.size - 1
+            }
+
+            val chip = buildChip(item.label.ifBlank { "页 " + (idx + 1) }, idx)
+            // 权重相同 → 均分。标签多了会自动挤窄，配合单行省略号
+            bar.addView(chip, LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            chips.add(chip)
+
+            // ⚠ 这里**不选页**，只刷样式。
+            //
+            // 两个原因：
+            // 1. 此刻还没收集完所有 tab 的 key，`restoreIndex()` 找不全
+            //    （上次停在第 2 页的话，第 2 个 TAB 还没建出来）
+            // 2. 用户已经翻到第 3 页时，插件重发 schema 会重建整页 ——
+            //    在 beginTab 里 select 会把选中项顶回第 1 页
+            //
+            // 真正的"恢复到上次那页"放在 [finish]（TABS_END 时）统一做一次。
+            applySelection()
+        }
+
+        /** 重建后恢复哪一页：按 **key** 找，找不到就第一页 */
+        private fun restoreIndex(): Int {
+            val want = tabSelected[stateKey]?.takeIf { it.isNotBlank() } ?: return 0
+            val i = keys.indexOf(want)
+            return if (i >= 0) i else 0
+        }
+
+        /**
+         * 一组标签页收集完毕（`TABS_END`）时调一次。
+         *
+         * 干两件事：
+         * 1. **一个 TAB 都没有**时把标签条藏掉。插件可能只写了
+         *    `TABS_START … TABS_END` 而没写 TAB，内容全落进隐式页 ——
+         *    那时显示一个 3dp 的空条只会让人以为界面坏了
+         * 2. 按 key 恢复到上次停的那一页。必须等到这里，因为要等
+         *    所有 tab 的 key 都齐了才找得准
+         */
+        fun finish() {
+            if (chips.isEmpty()) {
+                bar.visibility = View.GONE
+                view.setPadding(0, 0, 0, 0)
+                return
+            }
+            // restoreIndex 用 keys 查，此时已是完整列表
+            val want = restoreIndex()
+            if (want != current) select(want) else settleCurrentPage()
+        }
+
+        private fun buildChip(label: String, idx: Int): TextView = TextView(act).apply {
+            text = label
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            textSize = if (depth == 0) 13f else 12f
+            gravity = Gravity.CENTER
+            setPadding(dp(10), dp(7), dp(10), dp(7))
+            isClickable = true
+            setOnClickListener { select(idx) }
+        }
+
+        private fun select(idx: Int) {
+            if (idx !in pages.indices) return
+            current = idx
+            applySelection()
+            keys.getOrNull(idx)?.takeIf { it.isNotBlank() }?.let { tabSelected[stateKey] = it }
+            settleCurrentPage()
+        }
+
+        /**
+         * 只刷样式，不动 [current]。
+         *
+         * 单独拆出来是因为 [beginTab] 里新加一个标签之后也要刷一遍样式
+         * （新 chip 还是默认色），但**不能**顺手改选中项。
+         */
+        private fun applySelection() {
+            pages.forEachIndexed { i, p ->
+                p.visibility = if (i == current) View.VISIBLE else View.GONE
+            }
+            chips.forEachIndexed { i, c ->
+                val sel = i == current
+                c.setTextColor(if (sel) pal.primary else pal.subText)
+                c.typeface = if (sel) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+                // 选中项垫一块 surface 底：光变色在浅色主题下不够明显
+                c.background = if (sel) rounded(pal.surface, 8) else null
+            }
+        }
+
+        /**
+         * 切页后的收尾：把当前页里的日志框重新粘到底。
+         *
+         * 隐藏期间 View 没被测量，`isAtBottom` 读到的高度不可靠，
+         * 不管的话切回来会停在半路。等这一帧布局完成再滚。
+         */
+        private fun settleCurrentPage() {
+            val page = pages.getOrNull(current) ?: return
+            page.post { scrollLogsToBottomIn(page) }
+        }
+
+        fun currentPage(): LinearLayout = pages.getOrNull(current) ?: implicitPage
+    }
+
+    /** 在一棵子树里把所有日志框滚到底 */
+    private fun scrollLogsToBottomIn(root: View) {
+        val stack = ArrayDeque<View>()
+        stack.addLast(root)
+        while (stack.isNotEmpty()) {
+            when (val v = stack.removeLast()) {
+                is android.widget.ScrollView ->
+                    if (v.tag == LOG_SCROLL_TAG) scrollToBottom(v)
+                is ViewGroup ->
+                    for (i in 0 until v.childCount) stack.addLast(v.getChildAt(i))
+            }
+        }
+    }
+
+    /** 给日志框的 ScrollView 打的标记，[scrollLogsToBottomIn] 靠它认出来 */
+    private val LOG_SCROLL_TAG = "ponko:log"
+
+    /**
+     * 建一组标签页。
+     *
+     * @param depth 嵌套深度（外层 0）。由调用方数**当前栈里已有几层标签页**得出，
+     *              不自增计数器 —— 那种计数器一旦遇到插件写错的
+     *              `TABS_END`（少写/多写）就会永久偏掉。
+     */
+    private fun buildTabGroup(item: com.litertchat.plugin.UiItem, depth: Int): TabGroup =
+        TabGroup(item.key, depth)
 
     /**
      * 只读日志框。固定高度 + 内部独立滚动。
@@ -791,6 +1082,8 @@ class PluginUiPage(
             // 日志框自己不该抢焦点，理由同上
             isFocusable = false
             isFocusableInTouchMode = false
+            // 给 [scrollLogsToBottomIn] 认出来用（切标签页后要重新粘底）
+            tag = LOG_SCROLL_TAG
             addView(body, ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT))
