@@ -167,6 +167,38 @@ class PluginPage(
     private var player: android.media.MediaPlayer? = null
 
     /**
+     * v7：插件给 `AUDIO` 条目送的**自己那份**音频，按 `包名|key` 索引。
+     *
+     * 存在的理由：历史记录里每条都要能单独播/单独存。宿主那一个
+     * `lastAudioFile` 只能表示"最新一条"，点第 3 条听到的会是第 9 条的声音。
+     *
+     * 同一个 key 再来一份就替换，旧文件顺手删掉 —— 否则插件每出一条记录
+     * 就在 `getExternalFilesDir("tts")` 里多留一个文件，用户看不见也删不掉。
+     */
+    private val keyAudioFiles = HashMap<String, java.io.File>()
+
+    /**
+     * 每个 key 一个播放器。
+     *
+     * 为什么不能共用一个：切到第 5 条时第 3 条的位置/时长就没意义了，
+     * 而播放条是**同时**显示在所有条目上的（进度、▶/⏸）。
+     *
+     * 空 key（`""`）那条复用 [player]，那是"宿主最近产物"那条路径。
+     */
+    private val keyPlayers = HashMap<String, android.media.MediaPlayer>()
+
+    /** 每个 key 的播放器当前打开的是哪个文件。文件换了要重建播放器 */
+    private val keyPlayerFiles = HashMap<String, java.io.File>()
+
+    /**
+     * 时长缓存。索引是 `"dur:<绝对路径>"`。
+     *
+     * 为什么要缓存：`MediaMetadataRetriever` 每次都要打开文件解析头部，
+     * 而播放条每 200ms 就会问一次时长。
+     */
+    private val keyDurations = HashMap<String, Int>()
+
+    /**
      * 上一次已经弹过的失败原因。
      *
      * 用来去重：`refresh()` 会对已启用插件自动重连，如果插件处于 stopped 状态，
@@ -381,6 +413,34 @@ class PluginPage(
                 if (openUiPkg != pkg) return
                 currentUiPage?.patch(key, value, append)
             }
+
+            /**
+             * v7：插件请求"用当前参数合成一次"。
+             *
+             * 走的和用户点宿主那个「合成」按钮**完全同一条路**（`testSpeak`
+             * → `startPreview`），所以参数校验、参考音频 FD、进度回报全都一致 ——
+             * 没有第二条合成路径，也就没有第二套 bug。
+             *
+             * 页面没开着时直接丢：那时根本不存在"当前参数"（那是这一页上填的），
+             * 用上一次的缓存值合成是对用户意图的臆测。
+             */
+            override fun onPluginSynthesisRequested(pkg: String) {
+                if (openUiPkg != pkg || currentUiPage == null) {
+                    android.util.Log.i("PonkoPluginPage", "[$pkg] 请求合成，但它的界面没开着，已忽略")
+                    return
+                }
+                if (speaking) {
+                    // 不排队：用户连点两下不该跑两遍一分钟的推理
+                    setUiHint("正在合成中，等这次结束再点")
+                    return
+                }
+                testSpeak(pkg, openUiIsTts)
+            }
+
+            /** v7：插件给某条播放器送了自己那份音频 */
+            override fun onPluginAudioFile(pkg: String, key: String, bytes: ByteArray, displayName: String?) {
+                acceptPluginAudio(pkg, key, bytes, displayName)
+            }
         }
 
         refresh()
@@ -521,6 +581,9 @@ class PluginPage(
         }
         // 播放条要能控制**宿主**的播放器（插件在别的进程，它管不到声音）
         page.audioHost = audioHostFor(pkg)
+        // v7：每条播放器自己那个「保存」。插件不送文件的话这条仍能用 ——
+        // 存的就是宿主那份最近产物
+        page.audioSaver = { key -> saveAudioOf(pkg, key) }
         // 点结果图全屏看 —— 复用宿主已有的缩放视图，别写第二套手势
         page.zoomable = { bmp -> onZoomImage?.invoke(bmp) }
         // v6：模型槽位的两个动作。选择器必须由**宿主 Activity** 弹 ——
@@ -562,6 +625,13 @@ class PluginPage(
         currentUiPage?.stopAudioTicker()
         runCatching { player?.release() }
         player = null
+        // 每条播放器自己的播放器也要放 —— 只放共享那个的话，
+        // 正在播的历史条目会在退出这一页之后继续响
+        keyPlayers.values.forEach { runCatching { it.release() } }
+        keyPlayers.clear()
+        keyPlayerFiles.clear()
+        keyAudioFiles.clear()
+        keyDurations.clear()
         runCatching { refFd?.close() }
         refFd = null
         session.release()
@@ -1778,59 +1848,219 @@ class PluginPage(
      */
     private fun audioHostFor(pkg: String): PluginUiPage.AudioHost =
         object : PluginUiPage.AudioHost {
-            override fun hasAudio(): Boolean =
-                lastAudioPkg == pkg && lastAudioFile?.exists() == true
 
-            override fun isPlaying(): Boolean = try {
-                player?.isPlaying == true
+            override fun hasAudio(key: String): Boolean = fileOf(pkg, key) != null
+
+            override fun isPlaying(key: String): Boolean = try {
+                targetPlayer(pkg, key)?.isPlaying == true
             } catch (t: Throwable) {
                 false
             }
 
-            override fun positionMs(): Int = try {
-                player?.currentPosition ?: 0
+            override fun positionMs(key: String): Int = try {
+                targetPlayer(pkg, key)?.currentPosition ?: 0
             } catch (t: Throwable) {
                 0
             }
 
-            override fun durationMs(): Int = try {
-                val d = player?.duration ?: 0
-                if (d > 0) d else 0
-            } catch (t: Throwable) {
-                0
-            }
-
-            override fun play() {
-                val p = player
-                if (p != null) {
-                    // 已经有播放器：接着上次的位置播。这是"暂停后继续"，
-                    // 不是"从头再放"—— 用户按 ▶ 两次不该变成跳回开头
-                    try {
-                        p.start()
-                        return
-                    } catch (t: Throwable) {
-                        // 播不了（已完成/被释放）→ 落到下面重开一个
-                    }
+            override fun durationMs(key: String): Int {
+                // 先问播放器（它拿到的是准的），问不出来再读文件元信息。
+                // 还没点过播放的条目只有后者能给 —— 播放条上显示 "0:00 / 0:12"
+                // 比 "0:00 / 0:00" 有用得多
+                val live = try {
+                    targetPlayer(pkg, key)?.duration ?: 0
+                } catch (t: Throwable) {
+                    0
                 }
-                lastAudioFile?.let { playFile(it) }
+                if (live > 0) return live
+                return fileOf(pkg, key)?.let { durationOf(it) } ?: 0
             }
 
-            override fun pause() {
+            override fun play(key: String) {
+                val own = ownFile(pkg, key)
+                // 同一时间只响一条。不这么做的话，点第 3 条再点第 5 条会两段声音
+                // 叠在一起，用户第一反应是"卡了"
+                pauseEverythingExcept(pkg, key)
+                if (own == null) {
+                    // 走"宿主最近产物"这条：沿用「播放」按钮那个播放器，
+                    // 两边状态必须一致，否则会一个说在播、一个说没播
+                    val p = player
+                    if (p != null) {
+                        try {
+                            p.start()
+                            return
+                        } catch (t: Throwable) {
+                            // 已完成 / 被释放 → 落到下面重开一个
+                        }
+                    }
+                    lastAudioFile?.let { playFile(it) }
+                    return
+                }
                 try {
-                    player?.pause()
+                    keyPlayer(pkg, key, own)?.start()
+                } catch (t: Throwable) {
+                    android.util.Log.w("PonkoPluginPage", "播放插件音频失败：$key", t)
+                }
+            }
+
+            override fun pause(key: String) {
+                try {
+                    targetPlayer(pkg, key)?.pause()
                 } catch (t: Throwable) {
                     // 已完成或未准备，忽略
                 }
             }
 
-            override fun seekTo(ms: Int) {
+            override fun seekTo(key: String, ms: Int) {
                 try {
-                    player?.seekTo(ms)
+                    targetPlayer(pkg, key)?.seekTo(ms)
                 } catch (t: Throwable) {
                     // 同上
                 }
             }
         }
+
+    /** [keyAudioFiles] / [keyPlayers] 的索引键。带包名：两个插件可能用同一个 key */
+    private fun keySlot(pkg: String, key: String) = "$pkg|$key"
+
+    /** 插件给这个 key **自己送**的那份文件（还活着的话） */
+    private fun ownFile(pkg: String, key: String): java.io.File? =
+        keyAudioFiles[keySlot(pkg, key)]?.takeIf { it.exists() }
+
+    /**
+     * 这个 key 实际该播哪个文件。
+     *
+     * 插件送的优先；没送过就退回"宿主最近一次产物"—— 那正是 v4 的行为，
+     * 所以只会放一个播放器、不送文件的老插件完全不用改。
+     * `lastAudioPkg` 要一起比：换了插件就不该再播上一个插件的结果。
+     */
+    private fun fileOf(pkg: String, key: String): java.io.File? =
+        ownFile(pkg, key)
+            ?: lastAudioFile?.takeIf { lastAudioPkg == pkg && it.exists() }
+
+    /** 这个 key 现在由哪个播放器负责。null = 还没建（第一次 `play` 时才建） */
+    private fun targetPlayer(pkg: String, key: String): android.media.MediaPlayer? =
+        if (ownFile(pkg, key) != null) keyPlayers[keySlot(pkg, key)] else player
+
+    /**
+     * 拿到 key 自己的播放器；文件换了就重建。
+     *
+     * 不重建的话，播放器还指着上一份文件 —— 时长、进度、播出来的声音全是旧的，
+     * 而界面上写的是新那条的标题。这类错位比"播不出来"难查得多。
+     */
+    private fun keyPlayer(
+        pkg: String,
+        key: String,
+        file: java.io.File,
+    ): android.media.MediaPlayer? {
+        val slot = keySlot(pkg, key)
+        val old = keyPlayers[slot]
+        // 同一个文件就复用：暂停后接着播，不该跳回开头
+        if (old != null && keyPlayerFiles[slot] == file) return old
+        runCatching { old?.release() }
+        keyPlayers.remove(slot)
+        return try {
+            val p = android.media.MediaPlayer().apply {
+                setDataSource(file.absolutePath)
+                prepare()
+            }
+            keyPlayers[slot] = p
+            keyPlayerFiles[slot] = file
+            p
+        } catch (t: Throwable) {
+            android.util.Log.w("PonkoPluginPage", "准备插件音频失败：${file.name}", t)
+            null
+        }
+    }
+
+    /** 停掉除 [keepKey] 以外的所有声音（含宿主那个共享播放器） */
+    private fun pauseEverythingExcept(pkg: String, keepKey: String) {
+        val keepSlot = keySlot(pkg, keepKey)
+        keyPlayers.forEach { (slot, p) ->
+            if (slot != keepSlot) runCatching { if (p.isPlaying) p.pause() }
+        }
+        // 正在播的是"插件自己那份"时，共享播放器（最近产物）也得停
+        if (ownFile(pkg, keepKey) != null) {
+            runCatching { if (player?.isPlaying == true) player?.pause() }
+        }
+    }
+
+    /**
+     * 读文件元信息里的时长（毫秒）。失败返回 0 —— 那只是播放条上少一个数字，
+     * 不该让整条播放条不可用。
+     */
+    private fun durationOf(file: java.io.File): Int {
+        val cacheKey = "dur:" + file.absolutePath
+        keyDurations[cacheKey]?.let { return it }
+        val d = try {
+            val r = android.media.MediaMetadataRetriever()
+            try {
+                r.setDataSource(file.absolutePath)
+                r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)
+                    ?.toIntOrNull() ?: 0
+            } finally {
+                runCatching { r.release() }
+            }
+        } catch (t: Throwable) {
+            0
+        }
+        keyDurations[cacheKey] = d
+        return d
+    }
+
+    /**
+     * 插件送来的音频（v7）：落盘、登记到它的 key、换掉旧播放器。
+     *
+     * 同一个 key 再来一份就是**替换**：旧文件删掉。不删的话插件每出一条
+     * 历史记录就在 `tts/` 里留一个文件，用户在系统文件管理器里看不到也删不掉，
+     * 只能靠"清除应用数据"。
+     */
+    private fun acceptPluginAudio(pkg: String, key: String, bytes: ByteArray, name: String?) {
+        if (bytes.isEmpty()) return
+        try {
+            val f = writePluginAudio(pkg, key, bytes, name)
+            val slot = keySlot(pkg, key)
+            val old = keyAudioFiles.put(slot, f)
+            if (old != null && old != f) runCatching { old.delete() }
+            runCatching { keyPlayers.remove(slot)?.release() }
+            keyPlayerFiles.remove(slot)
+            // 那条播放条要立刻从"还没有可播放的音频"变成可用
+            if (openUiPkg == pkg) currentUiPage?.refreshAudio()
+        } catch (t: Throwable) {
+            android.util.Log.w("PonkoPluginPage", "保存插件音频失败：$key", t)
+        }
+    }
+
+    /**
+     * 把插件送来的音频写成文件。
+     *
+     * 扩展名取插件给的文件名的（插件送 mp3 就得是 `.mp3`，存成 `.wav`
+     * 文件名在撒谎）；key 只用来区分同一次会话里的多条，所以先过一遍白名单，
+     * 免得 key 里的 `/` 把文件写到别处去。
+     */
+    private fun writePluginAudio(
+        pkg: String,
+        key: String,
+        bytes: ByteArray,
+        displayName: String?,
+    ): java.io.File {
+        val base = act.getExternalFilesDir("tts") ?: act.cacheDir
+        if (!base.exists()) base.mkdirs()
+        val stamp = java.text.SimpleDateFormat(
+            "MMdd-HHmmss", java.util.Locale.US
+        ).format(java.util.Date())
+        val tag = pkg.substringAfterLast('.').ifBlank { "plugin" }
+        val ext = displayName?.substringAfterLast('.', "")
+            ?.takeIf { it.length in 1..5 && it.all { c -> c.isLetterOrDigit() } }
+            ?: "wav"
+        val safeKey = key.ifBlank { "latest" }
+            .filter { it.isLetterOrDigit() || it == '_' || it == '-' }
+            .take(24)
+            .ifBlank { "k" }
+        val f = java.io.File(base, "ponko-$tag-$safeKey-$stamp.$ext")
+        f.writeBytes(bytes)
+        return f
+    }
 
     /**
      * 播放一个已存在的音频文件。
@@ -1846,6 +2076,9 @@ class PluginPage(
             session.actionLabel(it, com.litertchat.plugin.ActionLabel.SAVE)
         } ?: "保存"
         try {
+            // 一开播就先把"逐条播放器"停掉：用户点了顶部的「播放」，
+            // 下面某条历史还在响就成了两段声音叠着
+            keyPlayers.values.forEach { runCatching { if (it.isPlaying) it.pause() } }
             player?.release()
             player = android.media.MediaPlayer().apply {
                 setDataSource(f.absolutePath)
@@ -1883,7 +2116,7 @@ class PluginPage(
     }
 
     /**
-     * 把刚生成的音频存进系统音乐库（`音乐/Ponko`）。
+     * 「保存」按钮：把**最近一次合成**的音频存进系统音乐库（`音乐/Ponko`）。
      *
      * 为什么走 MediaStore 而不是直接文件路径：Android 10 起应用不能随便往
      * 公共目录写。MediaStore 是官方通道，而且存完立刻能在任何播放器里看到。
@@ -1897,15 +2130,39 @@ class PluginPage(
             setUiHint("没有可保存的音频（先合成一次）")
             return
         }
+        saveAudioFile(f)
+    }
+
+    /**
+     * 存**某一条**播放器的音频（v7 起每个 `AUDIO` 条目都有自己的「保存」）。
+     *
+     * 和 [saveAudio] 的区别只有"选哪份文件"：那个永远存最新产物，
+     * 这个按 key 找 —— 插件送过就存插件那份，没送过退回最新产物。
+     */
+    private fun saveAudioOf(pkg: String, key: String) {
+        val f = fileOf(pkg, key)
+        if (f == null || !f.exists()) {
+            setUiHint("这一条还没有音频")
+            return
+        }
+        saveAudioFile(f)
+    }
+
+    /** 把一份音频复制进系统音乐库（`音乐/Ponko`） */
+    private fun saveAudioFile(f: java.io.File) {
         if (android.os.Build.VERSION.SDK_INT < 29) {
             setUiHint("已保存在：${f.absolutePath}")
             return
         }
         try {
             val resolver = act.contentResolver
+            // 插件送的可能是 mp3/m4a（v7 按插件给的文件名保留扩展名），
+            // 一律写成 audio/wav 会让音乐库按错误容器解析
+            val mime = android.webkit.MimeTypeMap.getSingleton()
+                .getMimeTypeFromExtension(f.extension.lowercase()) ?: "audio/wav"
             val values = android.content.ContentValues().apply {
                 put(android.provider.MediaStore.Audio.Media.DISPLAY_NAME, f.name)
-                put(android.provider.MediaStore.Audio.Media.MIME_TYPE, "audio/wav")
+                put(android.provider.MediaStore.Audio.Media.MIME_TYPE, mime)
                 put(
                     android.provider.MediaStore.Audio.Media.RELATIVE_PATH,
                     android.os.Environment.DIRECTORY_MUSIC + "/Ponko"

@@ -58,6 +58,19 @@ object PluginConst {
      * `startActivityForResult` 是 Activity 的 API，而且 Android 10+ 禁止
      * 后台启动 Activity。见 `IPonkoPlugin.importModel` 的说明。
      *
+     * ## 为什么加到 7（2026-10-22）
+     *
+     * v7 补的是"插件**反向**指挥宿主"的三件事，全部来自插件开发者的实测反馈：
+     *
+     * | 缺口 | 补法 |
+     * |---|---|
+     * | 参数页里放一个真能用的「开始推理」按钮，做不到 | `requestSynthesis()` |
+     * | 宿主的控件搬不进插件的 tab | `UiType.HOST_SLOT` |
+     * | 历史记录每条单独播/单独存，做不到（只有一份产物） | `onAudioFile(key, fd, name)` |
+     *
+     * 前两件之前根本没有通道：合成由宿主发起（插件只说"我有个按钮被点了"），
+     * 功能块由 `build()` 写死挂在标题下面。
+     *
      * ## 两类不兼容，处理方式不同
      *
      * · **扩展**（加方法、加字段、加常量）→ 版本 +1，老插件继续能用，
@@ -70,7 +83,7 @@ object PluginConst {
      * Binder 的事务码按声明顺序分配。在中间插入会让后面所有方法的事务码整体后移，
      * 老插件收到的码对不上 → **调用串味**（本该调 A 却执行了 B），比直接报错更糟。
      */
-    const val API_VERSION = 6
+    const val API_VERSION = 7
 
     /**
      * 从这一版起，插件支持「界面」那组方法（`getSettingsSchema` 等）。
@@ -115,9 +128,22 @@ object PluginConst {
      */
     const val API_WITH_MODEL_IMPORT = 6
 
+    /**
+     * 从这一版起，插件可以**反向指挥宿主**（v7 三件事一起来）：
+     *
+     * 1. [IPonkoCallback.requestSynthesis] —— 让宿主用当前参数合成一次
+     * 2. [IPonkoCallback.onAudioFile] —— 给 [UiType.AUDIO] 条目送自己的文件
+     *    （历史记录每条独立播放/保存）
+     * 3. [UiType.HOST_SLOT] —— 在插件页面里挖个坑，让宿主把功能块画进来
+     *
+     * 三项同一个版本号，所以判断只要一句 `api >= API_WITH_SYNTH_REQUEST`。
+     * 常量名沿用最先落地的那个（合成请求），**不代表只和它有关**。
+     */
+    const val API_WITH_SYNTH_REQUEST = 7
+
     /** 宿主兼容区间：允许老插件继续跑，所以下限保持 1 */
     const val API_MIN_SUPPORTED = 1
-    const val API_MAX_SUPPORTED = 6
+    const val API_MAX_SUPPORTED = 7
 
     // ---- 插件 Action（宿主靠它发现插件）----
     const val ACTION_PLUGIN = "com.litertchat.ponko.PLUGIN"

@@ -709,6 +709,96 @@ abstract class PonkoPluginService : Service() {
         notifyImage(fd, width, height, mime)
     }
 
+    /**
+     * 请宿主**用当前参数**合成一次（v7）。
+     *
+     * ## 什么时候用
+     *
+     * 你想在「参数」页里放一个自己文案的「开始推理」按钮：
+     *
+     * ```kotlin
+     * UiItem(key = "go", type = UiType.ACTION, label = "开始推理")
+     * // 用户点了 → 宿主调 onActionInvoked("go")
+     * override fun onActionInvoked(key: String) {
+     *     if (key == "go") notifyRequestSynthesis()
+     * }
+     * ```
+     *
+     * ## 它到底做了什么
+     *
+     * 宿主走的和用户点它自己那个「合成」按钮**完全同一条路径**：
+     * 读 `PreviewParams`（目标文本 / 模式 / 参考音频 / 逐字稿 / 种子）、
+     * 校验、开 FD、发 `synthesize`、收音频、落盘。
+     *
+     * 所以：
+     * · 参数不合法（文本空、缺参考音频）→ 宿主不发起，把拒绝理由显示出来
+     * · 已经在合成中 → 这一次被忽略（不排队）
+     * · 没有返回值 → 想知道开没开始，看 [onStage] 有没有来
+     *
+     * ## 一个前提
+     *
+     * 只有插件界面**正开着**时才有意义 —— 用户不在这一页，宿主没有
+     * "当前参数"可读（那是这一页上的填写内容），请求会被丢掉。
+     */
+    protected fun notifyRequestSynthesis() {
+        val cb = callback ?: return
+        try {
+            cb.requestSynthesis()
+        } catch (t: Throwable) {
+            Log.w(TAG, "requestSynthesis 回调失败", t)
+        }
+    }
+
+    /**
+     * 给某个 [UiType.AUDIO] 条目送一份**自己的**音频（v7）。
+     *
+     * v4 的播放条只能播"宿主最近一次产物"，所以历史记录里点第 3 条
+     * 也只能听到最新那条。送过文件之后，那一行播的就是这份。
+     *
+     * ```kotlin
+     * notifyAudioFile("hist-3", file)        // schema 里 key = "hist-3" 的 AUDIO 播它
+     * ```
+     *
+     * **同一个 key 再送一次 = 替换**，宿主会删掉上一份，磁盘不会越攒越多。
+     *
+     * ## FD 所有权
+     *
+     * 交给宿主后**不要自己 close** —— 宿主读完负责关（和 [notifyImage] 一样）。
+     */
+    protected fun notifyAudioFile(
+        key: String,
+        fd: android.os.ParcelFileDescriptor,
+        displayName: String?,
+    ) {
+        val cb = callback ?: run {
+            runCatching { fd.close() }
+            return
+        }
+        try {
+            cb.onAudioFile(key, fd, displayName)
+        } catch (t: Throwable) {
+            Log.w(TAG, "onAudioFile 回调失败", t)
+            runCatching { fd.close() }
+        }
+    }
+
+    /** 方便调用的重载：给文件路径，自己 open。[displayName] 默认用文件名。 */
+    protected fun notifyAudioFile(
+        key: String,
+        file: java.io.File,
+        displayName: String? = null,
+    ) {
+        val fd = try {
+            android.os.ParcelFileDescriptor.open(
+                file, android.os.ParcelFileDescriptor.MODE_READ_ONLY
+            )
+        } catch (t: Throwable) {
+            Log.w(TAG, "打开音频失败：$file", t)
+            return
+        }
+        notifyAudioFile(key, fd, displayName ?: file.name)
+    }
+
     override fun onBind(intent: Intent?): IBinder {
         // ⚠ Android 12+ 禁止后台启动前台服务。此刻宿主刚 bindService、还在前台，
         //   所以这里起一定能过；等到 synthesize 里再起就可能抛
