@@ -71,6 +71,57 @@ oneway interface IPonkoCallback {
      *
      * ⚠ 不要高频调（比如每 1% 下载进度调一次）—— 每次都会触发一次跨进程调用
      * 加整页重绘。节流到 500ms 以上，或者只在阶段变化时调。
+     *
+     * **v4 起：能用 [onUiPatch] 就别用它。** 这个是"整页重画"，
+     * 会清空所有控件再重建 —— 用户滚到一半被拉回顶部、输入框失焦、
+     * 正在编辑的 TEXTAREA 内容被覆盖。只想改一个字/一行日志的话，
+     * 用 onUiPatch 只动那一个控件。
      */
     void onSchemaChanged();
+
+    // ==================== v4：过程与产物 ====================
+
+    /**
+     * 送一张结果图。对应 [UiType.IMAGE]。
+     *
+     * ## 为什么单独开一个方法，而不是往 ResultBundle 加字段
+     *
+     * 加字段会改 Parcelable 的二进制结构：新宿主读老插件写的数据时字段数对不上，
+     * 轻则读到垃圾值、重则 `BadParcelableException`。而独立方法对两头都安全 ——
+     * 老插件不会调它（新宿主收不到就是收不到），新插件调老宿主时
+     * oneway 静默丢弃、不崩。
+     *
+     * ## FD 所有权
+     *
+     * **宿主读完负责 close**。插件把文件 open 后交出去，不要自己先关。
+     *
+     * @param fd     PNG/JPEG 等常见格式即可，宿主自己按魔数判断
+     * @param width  像素宽；不确定就传 0，宿主按实际解码结果
+     * @param height 像素高；同上
+     * @param mime   形如 `image/png`，可为 null（宿主按魔数判断）
+     */
+    void onImage(in ParcelFileDescriptor fd, int width, int height, in @nullable String mime);
+
+    /**
+     * **原地**改一个控件的内容，不重建整页。
+     *
+     * 这是 [onSchemaChanged] 的轻量版：[UiType.LOG] 追加日志、
+     * [UiType.PROGRESS] 推进度、[UiType.STATUS] 改一行值，都走这里。
+     *
+     * @param key    目标 [UiItem.key]。**必须和 schema 里那个 item 的 key 完全一致**，
+     *               对不上就静默忽略（找不到控件，宿主不会去猜）
+     * @param value  新内容。[UiType.LOG] 是**要追加的那一段**（append=true），
+     *               其它是**整段替换**
+     * @param append true = 追加到末尾；false = 替换
+     *
+     * ## 宿主不认识的情况一律忽略，不报错
+     *
+     * key 对不上、那个控件当前不在页面上（用户切走了）、文案和当前类型不匹配
+     * （比如给 [UiType.SWITCH] 补丁）—— 全都静默跳过。
+     * 插件不该依赖补丁"一定生效"，重要状态仍应体现在 `getSettingsSchema()` 里。
+     *
+     * ⚠ 和 [onSchemaChanged] 一样是 oneway、没有背压。
+     * 刷日志要节流（建议 ≥100ms 合并一次），别每读一行就发一次。
+     */
+    void onUiPatch(in String key, in @nullable String value, boolean append);
 }

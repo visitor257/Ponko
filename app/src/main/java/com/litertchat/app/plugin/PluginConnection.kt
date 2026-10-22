@@ -59,6 +59,19 @@ class PluginConnection(
 
         /** 插件自己改了界面数据（下载进度、模型就绪等）→ UI 应重新拉 schema 重画 */
         fun onSchemaChanged() {}
+
+        /**
+         * 插件送了一张结果图（v4）。[bytes] 已经**读进内存**，FD 在回调前就关了 ——
+         * 见 [callback] 里的说明，FD 不能跨线程传。
+         */
+        fun onImage(bytes: ByteArray, width: Int, height: Int, mime: String?) {}
+
+        /**
+         * 插件要求**原地**改一个控件（v4）。不走整页重画。
+         *
+         * @param append true = 追加（日志）；false = 替换（进度、状态）
+         */
+        fun onUiPatch(key: String, value: String?, append: Boolean) {}
     }
 
     companion object {
@@ -66,6 +79,15 @@ class PluginConnection(
 
         /** 绑定超时。超过这个时间没 `onServiceConnected`，基本可以判定插件进程起不来 */
         private const val BIND_TIMEOUT_MS = 5_000L
+
+        /**
+         * 结果图的大小上限（32MB）。
+         *
+         * 一张 4096×4096 的 PNG 大约 20MB 上下，留一倍余量。
+         * 超了直接丢 —— 结果图是给人看的，不是数据通道；
+         * 真有大图需求该走"存成文件、把路径还给用户"，不是塞进界面。
+         */
+        private const val MAX_IMAGE_BYTES = 32 * 1024 * 1024
     }
 
     private val main = Handler(Looper.getMainLooper())
@@ -181,6 +203,59 @@ class PluginConnection(
         override fun onSchemaChanged() {
             post { listener?.onSchemaChanged() }
         }
+
+        /**
+         * v4：结果图。
+         *
+         * ⚠ **必须在 Binder 线程就把字节读出来，不能把 FD 交给主线程**。
+         *
+         * 原因有两条：
+         * 1. 这个回调是 `oneway`，方法一返回，Parcel 就被回收了 ——
+         *    此时插件那边可能已经把自己的文件关掉，FD 变成失效句柄
+         * 2. `ParcelFileDescriptor` 跨线程持有还得自己管生命周期，
+         *    漏关就是 FD 泄漏（每个进程默认 1024 个）
+         *
+         * 读字节有大小上限：图片不像音频，超过 [MAX_IMAGE_BYTES] 的一律丢弃 ——
+         * 那已经不是"结果图"了，是插件在乱传数据。
+         */
+        override fun onImage(fd: android.os.ParcelFileDescriptor?, width: Int, height: Int, mime: String?) {
+            if (fd == null) {
+                Log.w(TAG, "onImage 收到空 fd，忽略")
+                return
+            }
+            val bytes: ByteArray? = try {
+                android.os.ParcelFileDescriptor.AutoCloseInputStream(fd).use { ins ->
+                    readLimited(ins, MAX_IMAGE_BYTES)
+                }
+            } catch (t: Throwable) {
+                Log.w(TAG, "读取结果图失败", t)
+                null
+            }
+            if (bytes == null) return
+            post { listener?.onImage(bytes, width, height, mime) }
+        }
+
+        override fun onUiPatch(key: String, value: String?, append: Boolean) {
+            post { listener?.onUiPatch(key, value, append) }
+        }
+    }
+
+    /** 读到 [limit] 字节就停。超了返回 null（宁可丢图，也不让宿主 OOM） */
+    private fun readLimited(ins: java.io.InputStream, limit: Int): ByteArray? {
+        val out = java.io.ByteArrayOutputStream()
+        val buf = ByteArray(64 * 1024)
+        var total = 0
+        while (true) {
+            val n = ins.read(buf)
+            if (n <= 0) break
+            total += n
+            if (total > limit) {
+                Log.w(TAG, "结果图超过 $limit 字节，丢弃")
+                return null
+            }
+            out.write(buf, 0, n)
+        }
+        return if (total == 0) null else out.toByteArray()
     }
 
     private fun matchesActive(id: String?): Boolean {

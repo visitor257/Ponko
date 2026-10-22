@@ -985,7 +985,11 @@ class MainActivity : Activity() {
         // Ponko-EX（插件页）：2.0.0 起是底部菜单第 4 项。
         // 复用同一个 PluginPage 实例（和 DrawPage 同样的道理）：换主题时重建的是视图，
         // 已绑定的插件连接与引擎状态都留在实例里，不会因为换一次主题就重新连接。
-        val ppg = pluginPage ?: com.litertchat.app.plugin.PluginPage(this, pal).also { pluginPage = it }
+        val ppg = pluginPage ?: com.litertchat.app.plugin.PluginPage(
+            this, pal,
+            // 插件送来的结果图点开全屏时，复用这里已有的缩放视图
+            onZoomImage = { bmp -> showImageFullscreen(bmp) },
+        ).also { pluginPage = it }
         ppg.setPalette(pal)
         tabPlugin = ppg.build()
         // 绘图模型就绪 → 进入绘图模式（对话页输入即正面提示词）

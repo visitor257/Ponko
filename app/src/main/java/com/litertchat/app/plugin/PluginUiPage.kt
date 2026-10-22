@@ -113,6 +113,9 @@ class PluginUiPage(
     /** 外层滚动容器（build 时创建） */
     private var self: View? = null
 
+    /** 日志框的固定高度。见 [logBlock] 的说明：不随内容长，页面结构才稳 */
+    private val LOG_HEIGHT_DP = 160
+
     /**
      * 拖动中的滑块不要被重画覆盖 —— 用户手还按在上面，值突然跳回去会很难受。
      *
@@ -127,6 +130,92 @@ class PluginUiPage(
      * 用户隔一天进来，多半想直接看到参数，而不是一堆折叠条。
      */
     private val groupOpen = HashMap<String, Boolean>()
+
+    // ==================== v4：过程与产物的状态 ====================
+
+    /**
+     * 日志框的正文控件，按 [UiItem.key] 索引。
+     *
+     * [patch] 靠它做原地追加 —— 不重建整页，用户滚到哪就停在哪。
+     * key 为空的 item 不进这里：它没法被定位，只能靠整页刷新。
+     */
+    private val logBodies = HashMap<String, TextView>()
+
+    /** 日志框的滚动容器，追加后要滚到底 */
+    private val logScrolls = HashMap<String, android.widget.ScrollView>()
+
+    /** 还没有 key 的日志按顺序堆在这里，[patch] 在找不到 key 时兜底用第一个 */
+    private var firstLogKey: String? = null
+
+    /**
+     * 结果图：key → ImageView + 占位文字。
+     *
+     * 图走 [setImage] 单独送，不经过 schema —— 和音频同一个理由（Binder 配额）。
+     */
+    private val imageViews = HashMap<String, android.widget.ImageView>()
+    private val imagePlaceholders = HashMap<String, TextView>()
+    private var firstImageKey: String? = null
+
+    /** 最近一张结果图。重建页面后要重新贴回去，否则切走再回来图就没了 */
+    private var lastBitmap: android.graphics.Bitmap? = null
+
+    /**
+     * 点结果图时全屏查看。由 [PluginPage] 注入（复用它已有的 ZoomImageView）。
+     *
+     * 不在这里自己写一套缩放逻辑：宿主已经有一份（全屏看图），
+     * 两份手势代码必然会走偏（一个支持双击、一个不支持，用户会觉得"有时候能用"）。
+     */
+    var zoomable: ((android.graphics.Bitmap) -> Unit)? = null
+
+    /**
+     * 播放器。宿主注入（[PluginPage] 里那个 MediaPlayer 的包装）。
+     *
+     * 为空说明宿主没提供播放能力 —— 那 [UiType.AUDIO] 会画成灰掉的假控件，
+     * 而不是崩溃。
+     */
+    var audioHost: AudioHost? = null
+        set(v) {
+            field = v
+            rebuildAudioBars()
+        }
+
+    /**
+     * 播放器控件。重建页面时按 key 收集，[AudioHost] 的状态变化会推到它们身上。
+     */
+    private val audioBars = LinkedHashMap<String, AudioBar>()
+
+    private var audioTicker: Runnable? = null
+
+    /**
+     * 宿主的音频播放能力。由 [PluginPage] 实现，包着它那个 MediaPlayer。
+     *
+     * ## 为什么不让插件自己播
+     *
+     * 插件在另一个进程里，宿主看不见也停不了它的播放器 ——
+     * 用户退出页面后声音还在响，找不到地方关。
+     */
+    interface AudioHost {
+        /** 有没有可播的音频（宿主最近一次合成的产物） */
+        fun hasAudio(): Boolean
+        fun isPlaying(): Boolean
+        /** 当前位置（毫秒） */
+        fun positionMs(): Int
+        /** 总长（毫秒）；没有音频返回 0 */
+        fun durationMs(): Int
+        fun play()
+        fun pause()
+        fun seekTo(ms: Int)
+    }
+
+    /** 一个播放条的所有控件。[AudioHost] 变化时刷它 */
+    private class AudioBar(
+        val btn: TextView,
+        val seek: SeekBar,
+        val time: TextView,
+        val empty: TextView,
+        /** 用户正按着滑块时不能被 tick 覆盖 */
+        var dragging: Boolean = false,
+    )
 
     fun build(): View {
         val root = LinearLayout(act).apply {
@@ -194,6 +283,19 @@ class PluginUiPage(
 
     private fun render() {
         val host = host ?: return
+        // 控件全要重建，这些索引指向的对象立刻作废。
+        // **不清的话 patch 会写进已经脱离视图树的老控件** ——
+        // 表现是"日志在涨，但屏幕上不动"，极难查。
+        logBodies.clear()
+        logScrolls.clear()
+        patchableViews.clear()
+        patchableBars.clear()
+        imageViews.clear()
+        imagePlaceholders.clear()
+        audioBars.clear()
+        firstLogKey = null
+        firstImageKey = null
+        stopAudioTicker()
         host.removeAllViews()
 
         val schema = try {
@@ -238,6 +340,9 @@ class PluginUiPage(
                 }
             }
         }
+        // 重画完了：播放条要立刻反映当前播放状态（否则切回页面时显示成「▶」却在响）
+        refreshAudioBars()
+        startAudioTicker()
     }
 
     // ==================== 功能区（宿主提供）====================
@@ -438,7 +543,12 @@ class PluginUiPage(
     }
 
     private fun renderItem(item: UiItem): View? = when (item.type) {
-        UiType.INFO -> hintText(item.label).also { applyHelp(it, item) }
+        UiType.INFO -> hintText(item.label).also { tv ->
+            applyHelp(tv, item)
+            // 也允许被补丁原地改。注意补丁走的是 `text = 原串`，
+            // **不解析** `**粗体**` / `` `代码` `` —— 需要格式就别用补丁
+            if (item.key.isNotBlank()) patchableViews[item.key] = tv
+        }
         UiType.SECTION -> sectionTitle(item.label)
         UiType.SWITCH -> switchRow(item)
         UiType.SLIDER -> sliderRow(item)
@@ -448,6 +558,10 @@ class PluginUiPage(
         UiType.ACTION -> actionRow(item)
         UiType.PROGRESS -> progressRow(item)
         UiType.STATUS -> statusRow(item)
+        // ---- v4：看得见的过程与产物 ----
+        UiType.LOG -> logBlock(item)
+        UiType.IMAGE -> imageBlock(item)
+        UiType.AUDIO -> audioBar(item)
         // 插件用了宿主还不认识的控件。
         //
         // **这是跨版本兼容的关键分支**：绝不能崩、也不能整页不显示 ——
@@ -484,6 +598,8 @@ class PluginUiPage(
             text = "${pct.toInt()}%"
             textSize = 12f
             setTextColor(pal.primary)
+            // 供 onUiPatch 原地改（进度是最高频的补丁，必须便宜）
+            if (item.key.isNotBlank()) patchableViews[item.key] = this
         }, wrapWrap())
         box.addView(labelRow, matchWrap())
 
@@ -499,6 +615,7 @@ class PluginUiPage(
             setPadding(0, dp(8), 0, 0)
         }
         box.addView(bar, matchWrap())
+        if (item.key.isNotBlank()) patchableBars[item.key] = bar
         if (item.help.isNotBlank()) box.addView(smallHint(item.help), matchWrap())
         return box
     }
@@ -521,6 +638,8 @@ class PluginUiPage(
             text = item.value
             textSize = 12f
             setTextColor(pal.text)
+            // 供 onUiPatch 原地改（「模型：已加载」这类状态会被插件频繁更新）
+            if (item.key.isNotBlank()) patchableViews[item.key] = this
         }, wrapWrap())
         // 状态行自带上下间距；help 放在外面会挤，所以拼进同一个容器
         if (item.help.isBlank()) return row
@@ -612,6 +731,386 @@ class PluginUiPage(
         box.addView(smallHint("这个控件需要更新 Ponko 才能显示（类型 ${item.type}）"), matchWrap())
         return box
     }
+
+    // ==================== v4：日志 / 结果图 / 播放条 ====================
+
+    /**
+     * 只读日志框。固定高度 + 内部独立滚动。
+     *
+     * ## 为什么高度固定、内部自己滚
+     *
+     * 日志会长到几百行。如果让它跟 [UiType.INFO] 一样"随内容撑高"，
+     * 整页会被顶得很长，下面的进度条、按钮全被推走 —— 用户得一直滚。
+     * 固定 160dp，日志自己滚，页面结构就稳定了。
+     *
+     * ## 为什么能长按复制
+     *
+     * 这东西的价值就在"出问题时能贴给别人看"。不可选中的话，
+     * 用户只能截图，而正文里的报错栈常比屏幕长。
+     */
+    private fun logBlock(item: UiItem): View {
+        val box = LinearLayout(act).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(10), 0, dp(6))
+        }
+        if (item.label.isNotBlank()) {
+            box.addView(TextView(act).apply {
+                text = item.label
+                textSize = 13f
+                setTextColor(pal.text)
+                setPadding(0, 0, 0, dp(5))
+            }, matchWrap())
+        }
+
+        val body = TextView(act).apply {
+            text = item.value
+            textSize = 11f
+            setTypeface(android.graphics.Typeface.MONOSPACE)
+            setTextColor(pal.subText)
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            setLineSpacing(dp(2).toFloat(), 1f)
+            setTextIsSelectable(true)
+            // 横向也能滚：原生库的报错行经常超宽，换行会把本来就难读的
+            // 十六进制/路径切得七零八落
+            setHorizontallyScrolling(false)
+        }
+        val scroll = android.widget.ScrollView(act).apply {
+            background = rounded(pal.fieldBg, 9)
+            addView(body, ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        box.addView(scroll, matchWrap().apply { height = dp(LOG_HEIGHT_DP) })
+
+        if (item.key.isNotBlank()) {
+            logBodies[item.key] = body
+            logScrolls[item.key] = scroll
+            if (firstLogKey == null) firstLogKey = item.key
+        }
+        if (item.help.isNotBlank()) box.addView(smallHint(item.help), matchWrap())
+        // 初始内容就已经很长时，先滚到底 —— 用户想看的通常是最后几行
+        scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
+        return box
+    }
+
+    /**
+     * 结果图。[UiItem.value] 是**还没有图时**的占位文字。
+     *
+     * 图从 [setImage] 进来（对应插件的 `onImage`）。已经有图的话直接贴上去 ——
+     * 否则用户切走再切回来，图就没了。
+     */
+    private fun imageBlock(item: UiItem): View {
+        val box = LinearLayout(act).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(10), 0, dp(6))
+        }
+        if (item.label.isNotBlank()) {
+            box.addView(TextView(act).apply {
+                text = item.label
+                textSize = 13f
+                setTextColor(pal.text)
+                setPadding(0, 0, 0, dp(5))
+            }, matchWrap())
+        }
+
+        val holder = android.widget.FrameLayout(act).apply {
+            background = rounded(pal.fieldBg, 9)
+        }
+        val iv = android.widget.ImageView(act).apply {
+            adjustViewBounds = true
+            scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+            setPadding(dp(6), dp(6), dp(6), dp(6))
+            visibility = View.GONE
+            isClickable = true
+            setOnClickListener {
+                val d = drawable as? android.graphics.drawable.BitmapDrawable
+                d?.bitmap?.let { bmp -> zoomable?.invoke(bmp) }
+            }
+        }
+        val ph = TextView(act).apply {
+            text = item.value.ifBlank { "还没有图片" }
+            textSize = 12f
+            setTextColor(pal.hint)
+            gravity = Gravity.CENTER
+            setPadding(dp(12), dp(28), dp(12), dp(28))
+        }
+        holder.addView(iv, android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT))
+        holder.addView(ph, android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT))
+        box.addView(holder, matchWrap())
+
+        if (item.key.isNotBlank()) {
+            imageViews[item.key] = iv
+            imagePlaceholders[item.key] = ph
+            if (firstImageKey == null) firstImageKey = item.key
+        }
+        // 已经有图（之前收到过 / 用户从别处切回来）→ 直接显示
+        lastBitmap?.let { bindImageTo(iv, ph, it) }
+        if (item.help.isNotBlank()) box.addView(smallHint(item.help), matchWrap())
+        return box
+    }
+
+    /**
+     * 音频播放条：播放/暂停 + 可拖进度 + 时间。
+     *
+     * 播的是**宿主**手里那份产物（最近一次合成结果），插件不传路径。
+     * 详见 [UiType.AUDIO] 的说明。
+     */
+    private fun audioBar(item: UiItem): View {
+        val box = LinearLayout(act).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(10), 0, dp(6))
+        }
+        if (item.label.isNotBlank()) {
+            box.addView(TextView(act).apply {
+                text = item.label
+                textSize = 13f
+                setTextColor(pal.text)
+                setPadding(0, 0, 0, dp(5))
+            }, matchWrap())
+        }
+
+        val row = LinearLayout(act).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(10), dp(4), dp(10), dp(4))
+            background = rounded(pal.fieldBg, 9)
+        }
+        val btn = TextView(act).apply {
+            text = "▶"
+            textSize = 16f
+            setTextColor(pal.primary)
+            setPadding(dp(6), dp(6), dp(12), dp(6))
+            isClickable = true
+        }
+        val seek = SeekBar(act).apply {
+            max = 1000
+            progress = 0
+            progressTintList = android.content.res.ColorStateList.valueOf(pal.primary)
+            thumbTintList = android.content.res.ColorStateList.valueOf(pal.primary)
+        }
+        val time = TextView(act).apply {
+            text = "0:00 / 0:00"
+            textSize = 11f
+            setTextColor(pal.hint)
+            setPadding(dp(10), 0, dp(4), 0)
+        }
+        val empty = TextView(act).apply {
+            text = "还没有可播放的音频"
+            textSize = 12f
+            setTextColor(pal.hint)
+            setPadding(dp(10), dp(12), dp(10), dp(12))
+            visibility = View.GONE
+        }
+
+        row.addView(btn, wrapWrap())
+        row.addView(seek, LinearLayout.LayoutParams(0, dp(32), 1f))
+        row.addView(time, wrapWrap())
+        box.addView(row, matchWrap())
+        box.addView(empty, matchWrap())
+
+        val bar = AudioBar(btn, seek, time, empty)
+        val key = item.key.ifBlank { "audio#${audioBars.size}" }
+        audioBars[key] = bar
+
+        btn.setOnClickListener {
+            val h = audioHost ?: return@setOnClickListener
+            if (!h.hasAudio()) return@setOnClickListener
+            if (h.isPlaying()) h.pause() else h.play()
+            refreshAudioBars()
+            startAudioTicker()
+        }
+        seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {}
+            override fun onStartTrackingTouch(sb: SeekBar?) {
+                bar.dragging = true
+            }
+            override fun onStopTrackingTouch(sb: SeekBar?) {
+                bar.dragging = false
+                val h = audioHost ?: return
+                val dur = h.durationMs()
+                if (dur > 0) h.seekTo(dur * (sb?.progress ?: 0) / 1000)
+                refreshAudioBars()
+            }
+        })
+
+        refreshAudioBars()
+        if (item.help.isNotBlank()) box.addView(smallHint(item.help), matchWrap())
+        return box
+    }
+
+    private fun bindImageTo(iv: android.widget.ImageView, ph: TextView, bmp: android.graphics.Bitmap) {
+        iv.setImageBitmap(bmp)
+        iv.visibility = View.VISIBLE
+        ph.visibility = View.GONE
+    }
+
+    /**
+     * 收到一张结果图（插件 `onImage`）→ 贴到 [UiType.IMAGE] 控件上。
+     *
+     * @param key 目标 item 的 key。空或对不上时贴到页面里**第一个**图片控件 ——
+     *            只有一个图片控件是最常见的情况，这样插件不写 key 也能用。
+     */
+    fun setImage(bmp: android.graphics.Bitmap, key: String? = null) {
+        lastBitmap = bmp
+        val target = imageViews[key ?: ""] ?: imageViews[firstImageKey] ?: run {
+            // 页面上没有图片控件：插件送了图但没声明 IMAGE 项，属于插件侧写错。
+            // 不弹错误（用户看不懂），只留日志
+            android.util.Log.w("PonkoPluginUi", "收到结果图，但当前页面没有 IMAGE 控件")
+            return
+        }
+        val ph = imagePlaceholders[key ?: ""] ?: imagePlaceholders[firstImageKey]
+        if (ph != null) bindImageTo(target, ph, bmp) else {
+            target.setImageBitmap(bmp)
+            target.visibility = View.VISIBLE
+        }
+    }
+
+    /**
+     * 原地更新一个控件（插件 `onUiPatch`）。**不重建整页。**
+     *
+     * 支持的类型：
+     * - [UiType.LOG]：`append=true` 往末尾追加，`false` 整段替换
+     * - [UiType.PROGRESS]：value 是 0–100，文字和进度条一起改
+     * - [UiType.STATUS] / [UiType.INFO]：整段替换文字（**不解析**行内格式）
+     * - [UiType.IMAGE]：忽略 —— 真图请走 [setImage]
+     *
+     * 其它类型（开关、滑块、输入框…）**忽略** —— 那些是用户输入的东西，
+     * 插件单方面改会和用户正在操作的状态打架。
+     */
+    fun patch(key: String, value: String?, append: Boolean) {
+        if (value == null) return
+
+        // 1) 日志：按 key 找正文
+        logBodies[key]?.let { body ->
+            appendLog(key, body, value, append)
+            return
+        }
+        // 2) 进度条：文字和 bar 一起改
+        patchableBars[key]?.let { bar ->
+            val pct = value.toDoubleOrNull()?.coerceIn(0.0, 100.0) ?: return
+            bar.progress = pct.toInt()
+            patchableViews[key]?.text = "${pct.toInt()}%"
+            return
+        }
+        // 3) 状态行 / 说明：整段替换
+        patchableViews[key]?.let { tv ->
+            tv.text = value
+            return
+        }
+        // 4) key 对不上 —— 插件常不写 key，而整页通常只有一个日志框。
+        //    只有这种情况下才兜底，绝不能"猜"到别的控件上去。
+        if (logBodies.size == 1) {
+            val k = firstLogKey ?: return
+            val body = logBodies[k] ?: return
+            appendLog(k, body, value, append)
+        }
+    }
+
+    private fun appendLog(key: String, body: TextView, value: String, append: Boolean) {
+        body.text = if (append) body.text.toString() + value else value
+        // 追加后滚到底：日志的用处就是看最后几行。用户手动往上翻过也别管 ——
+        // 新内容来了就是要看的，比"停在原处"更符合预期
+        logScrolls[key]?.post { logScrolls[key]?.fullScroll(View.FOCUS_DOWN) }
+    }
+
+    /** PROGRESS 的进度条，按 key 索引，供 [patch] 原地改 */
+    private val patchableBars = HashMap<String, android.widget.ProgressBar>()
+
+    // ==================== v4：播放条刷新 ====================
+
+    /**
+     * 把 [audioHost] 的当前状态推到所有播放条上。
+     *
+     * 为什么是"推"而不是每个播放条自己轮询：一页可能有多个音频项
+     * （比如"原声/合成"对比），各起一个 Runnable 会重复查同一个播放器。
+     */
+    private fun refreshAudioBars() {
+        val h = audioHost
+        // 宿主没提供播放能力时，所有播放条都显示成"没有可播放的音频"
+        val has = h?.hasAudio() == true
+        val dur = if (has) h?.durationMs() ?: 0 else 0
+        val pos = if (has) h?.positionMs() ?: 0 else 0
+        val playing = has && h?.isPlaying() == true
+
+        audioBars.values.forEach { bar ->
+            bar.btn.visibility = if (has) View.VISIBLE else View.GONE
+            bar.seek.visibility = if (has) View.VISIBLE else View.GONE
+            bar.time.visibility = if (has) View.VISIBLE else View.GONE
+            bar.empty.visibility = if (has) View.GONE else View.VISIBLE
+            if (!has) return@forEach
+
+            bar.btn.text = if (playing) "⏸" else "▶"
+            bar.time.text = "${fmtMs(pos)} / ${fmtMs(dur)}"
+            // 用户正按着滑块时不能改它的位置 —— 手指和控件会打架
+            if (!bar.dragging) {
+                bar.seek.progress = if (dur > 0) (pos.toLong() * 1000 / dur).toInt() else 0
+            }
+        }
+    }
+
+    /** 让某个播放条跟着播放器走。播放中每 200ms 刷一次，暂停就停 */
+    private fun startAudioTicker() {
+        val running = audioHost?.isPlaying() == true
+        if (!running) {
+            audioTicker?.let { handler.removeCallbacks(it) }
+            audioTicker = null
+            return
+        }
+        if (audioTicker != null) return
+        val r = object : Runnable {
+            override fun run() {
+                if (audioHost?.isPlaying() != true) {
+                    refreshAudioBars()
+                    audioTicker = null
+                    return
+                }
+                refreshAudioBars()
+                handler.postDelayed(this, 200)
+            }
+        }
+        audioTicker = r
+        handler.postDelayed(r, 200)
+    }
+
+    /** 页面销毁时必须停 —— 否则 handler 会一直持着已销毁的 view */
+    fun stopAudioTicker() {
+        audioTicker?.let { handler.removeCallbacks(it) }
+        audioTicker = null
+    }
+
+    /**
+     * 外部（宿主）换了音频 / 播放状态变了 → 刷一次播放条。
+     *
+     * 合成完成、点了「播放」按钮、新文件落盘，都要调它 ——
+     * 否则播放条还停在"还没有可播放的音频"。
+     */
+    fun refreshAudio() {
+        refreshAudioBars()
+        startAudioTicker()
+    }
+
+    /** 页面重建后重新绑定播放条（[host] 里的控件全换了） */
+    private fun rebuildAudioBars() {
+        stopAudioTicker()
+        refreshAudioBars()
+        startAudioTicker()
+    }
+
+    private fun fmtMs(ms: Int): String {
+        if (ms <= 0) return "0:00"
+        val total = ms / 1000
+        return "%d:%02d".format(total / 60, total % 60)
+    }
+
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+
+
+    /** PROGRESS / STATUS 的文字控件，按 key 索引，供 [patch] 原地改 */
+    private val patchableViews = HashMap<String, TextView>()
 
     /** 开关：整行可点，右侧显示 开 / 关 */
     private fun switchRow(item: UiItem): View {

@@ -56,6 +56,18 @@ class PluginSession(private val context: Context) {
 
         /** 插件自己改了界面数据 → 如果正打开着它的界面，就重画 */
         fun onPluginSchemaChanged(pkg: String) {}
+
+        /**
+         * 插件送了一张结果图（v4）。[bytes] 是图片原始字节（PNG/JPEG…）。
+         *
+         * 已经读进内存了 —— FD 在 [PluginConnection] 的 Binder 线程就关掉了。
+         */
+        fun onPluginImage(pkg: String, bytes: ByteArray, width: Int, height: Int, mime: String?) {}
+
+        /**
+         * 插件要求原地改一个控件（v4）。宿主只改那一个 view，不重画整页。
+         */
+        fun onPluginUiPatch(pkg: String, key: String, value: String?, append: Boolean) {}
     }
 
     /**
@@ -350,6 +362,17 @@ class PluginSession(private val context: Context) {
 
         override fun onSchemaChanged() {
             listener?.onPluginSchemaChanged(pkg)
+        }
+
+        override fun onImage(bytes: ByteArray, width: Int, height: Int, mime: String?) {
+            Log.i(TAG, "[$pkg] 收到结果图 ${bytes.size}B ${width}x$height $mime")
+            listener?.onPluginImage(pkg, bytes, width, height, mime)
+        }
+
+        override fun onUiPatch(key: String, value: String?, append: Boolean) {
+            // 补丁是高频的（刷日志），**不写日志** —— 否则 logcat 会被刷满，
+            // 真正要看的东西反而找不到
+            listener?.onPluginUiPatch(pkg, key, value, append)
         }
     }
 

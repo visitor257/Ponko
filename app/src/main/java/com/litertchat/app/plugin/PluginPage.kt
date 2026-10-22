@@ -41,6 +41,11 @@ import com.litertchat.plugin.Stage
 class PluginPage(
     private val act: Activity,
     pal: PonkoTheme,
+    /**
+     * 全屏看图。由 [MainActivity] 注入它已有的 `showImageFullscreen` ——
+     * 缩放/双击/关闭手势只该有一份，这里再写一套必然和别的页面手感不一致。
+     */
+    private val onZoomImage: ((android.graphics.Bitmap) -> Unit)? = null,
 ) {
     /** 配色表；换主题时先 setPalette 再 build() 重建视图（与本工程其他页一致） */
     var pal: PonkoTheme = pal
@@ -338,6 +343,34 @@ class PluginPage(
                 // 没开着就忽略：下次点进去自然会重新拉一遍
                 if (openUiPkg == pkg) currentUiPage?.refresh()
             }
+
+            override fun onPluginImage(pkg: String, bytes: ByteArray, width: Int, height: Int, mime: String?) {
+                if (openUiPkg != pkg) return
+                val bmp = try {
+                    android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                } catch (t: Throwable) {
+                    android.util.Log.w("PonkoPlugin", "结果图解码失败 ${bytes.size}B", t)
+                    null
+                } catch (o: OutOfMemoryError) {
+                    // OOM 是 Error 不是 Exception，上面的 catch 抓不到 ——
+                    // 解一张超大图完全可能触发，不能让它把进程带走
+                    android.util.Log.w("PonkoPlugin", "结果图太大，解码时内存不足")
+                    null
+                }
+                if (bmp == null) {
+                    setUiHint("插件送了图，但解码失败")
+                    return
+                }
+                // 声明里的宽高只是提示；以实际解码结果为准 ——
+                // 插件算错尺寸比不传更常见，信它反而会画出变形的图
+                currentUiPage?.setImage(bmp)
+                setUiHint("已收到结果图 ${bmp.width}×${bmp.height}")
+            }
+
+            override fun onPluginUiPatch(pkg: String, key: String, value: String?, append: Boolean) {
+                if (openUiPkg != pkg) return
+                currentUiPage?.patch(key, value, append)
+            }
         }
 
         refresh()
@@ -476,6 +509,10 @@ class PluginPage(
         ) {
             closePluginUi()
         }
+        // 播放条要能控制**宿主**的播放器（插件在别的进程，它管不到声音）
+        page.audioHost = audioHostFor(pkg)
+        // 点结果图全屏看 —— 复用宿主已有的缩放视图，别写第二套手势
+        page.zoomable = { bmp -> onZoomImage?.invoke(bmp) }
         val v = page.build()
         currentUiPage = page
         openUiPkg = pkg
@@ -505,6 +542,9 @@ class PluginPage(
 
     /** Activity 真正销毁时调，解绑所有插件。切换 tab 时**不要**调（切回来要保留状态） */
     fun release() {        // 先停播放：不停的话页面走了声音还在响
+        // 播放条的 200ms 轮询也要停 —— 它持着 handler 和 view，
+        // 不停的话每次 release 都漏一个 Runnable 和一堆视图
+        currentUiPage?.stopAudioTicker()
         runCatching { player?.release() }
         player = null
         runCatching { refFd?.close() }
@@ -1515,10 +1555,16 @@ class PluginPage(
         }
         try {
             val f = writeAudio(pkg, bytes)
+            // 换新文件了：旧的播放器还指着上一份，先放掉 ——
+            // 不放的话进度条的时长/位置会继续显示上一段音频的
+            runCatching { player?.release() }
+            player = null
             lastAudioFile = f
             lastAudioPkg = pkg
             currentUiPage?.setActionEnabled("save", true)
             currentUiPage?.setActionEnabled("play", true)
+            // 播放条要立刻从"还没有可播放的音频"变成可用，并把进度归零
+            currentUiPage?.refreshAudio()
             // 合成完了，但**不出声** —— 得明确告诉用户音频在哪、下一步点哪儿，
             // 否则他会以为没成功（这是"仅合成"唯一要付的代价）
             val playLabel = session.actionLabel(
@@ -1538,6 +1584,76 @@ class PluginPage(
     }
 
     /**
+     * 给插件界面用的播放器接口（[UiType.AUDIO] 的背后）。
+     *
+     * ## 为什么要包一层，不直接给 MediaPlayer
+     *
+     * `MediaPlayer` 的每个查询（`currentPosition`、`isPlaying`）都有状态前提，
+     * 在没 prepare / 已 release 时会抛 `IllegalStateException`。
+     * 插件界面的播放条每 200ms 就会问一次，用户还可能在手忙脚乱时连点 —
+     * 这里统一 catch 掉，把"播放器此刻不健康"表达成 `false` / `0`，
+     * 而不是让界面崩掉。
+     *
+     * 同时它把"播哪份文件"锁死成**宿主最近一次产物**：插件拿不到路径，
+     * 也就没法让宿主去播任意文件。
+     */
+    private fun audioHostFor(pkg: String): PluginUiPage.AudioHost =
+        object : PluginUiPage.AudioHost {
+            override fun hasAudio(): Boolean =
+                lastAudioPkg == pkg && lastAudioFile?.exists() == true
+
+            override fun isPlaying(): Boolean = try {
+                player?.isPlaying == true
+            } catch (t: Throwable) {
+                false
+            }
+
+            override fun positionMs(): Int = try {
+                player?.currentPosition ?: 0
+            } catch (t: Throwable) {
+                0
+            }
+
+            override fun durationMs(): Int = try {
+                val d = player?.duration ?: 0
+                if (d > 0) d else 0
+            } catch (t: Throwable) {
+                0
+            }
+
+            override fun play() {
+                val p = player
+                if (p != null) {
+                    // 已经有播放器：接着上次的位置播。这是"暂停后继续"，
+                    // 不是"从头再放"—— 用户按 ▶ 两次不该变成跳回开头
+                    try {
+                        p.start()
+                        return
+                    } catch (t: Throwable) {
+                        // 播不了（已完成/被释放）→ 落到下面重开一个
+                    }
+                }
+                lastAudioFile?.let { playFile(it) }
+            }
+
+            override fun pause() {
+                try {
+                    player?.pause()
+                } catch (t: Throwable) {
+                    // 已完成或未准备，忽略
+                }
+            }
+
+            override fun seekTo(ms: Int) {
+                try {
+                    player?.seekTo(ms)
+                } catch (t: Throwable) {
+                    // 同上
+                }
+            }
+        }
+
+    /**
      * 播放一个已存在的音频文件。
      *
      * 现在只有「播放」按钮会调它 —— 合成**不会**自动播放。
@@ -1554,7 +1670,11 @@ class PluginPage(
             player?.release()
             player = android.media.MediaPlayer().apply {
                 setDataSource(f.absolutePath)
-                setOnCompletionListener { setUiHint("播放完毕（点「$saveLabel」可存进音乐库）") }
+                setOnCompletionListener {
+                    setUiHint("播放完毕（点「$saveLabel」可存进音乐库）")
+                    // 播完了：播放条的 ▶ 要复原，进度停在末尾
+                    currentUiPage?.refreshAudio()
+                }
                 setOnErrorListener { _, what, extra ->
                     setUiHint("播放失败（$what/$extra）")
                     true
@@ -1562,6 +1682,8 @@ class PluginPage(
                 prepare()
                 start()
             }
+            // 开播了：播放条要从 ▶ 变 ⏸，并开始走
+            currentUiPage?.refreshAudio()
         } catch (t: Throwable) {
             setUiHint("播放失败：${t.javaClass.simpleName}")
         }
