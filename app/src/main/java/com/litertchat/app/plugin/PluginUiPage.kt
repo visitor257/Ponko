@@ -97,6 +97,54 @@ class PluginUiPage(
      */
     private class ActionBtn(val view: TextView, val compact: Boolean, val primary: Boolean)
 
+    /**
+     * 一个**共用槽位**：两个互斥的按钮占同一格，靠可见性交替（v9.1）。
+     *
+     * ## 为什么需要
+     *
+     * 「开始推理」和「停止」不会同时可用 —— 没在合成时只有前者有意义，
+     * 合成中只有后者。并排放着会让一行里永远有一个灰按钮，白占一格宽度。
+     *
+     * ## 为什么必须用 `INVISIBLE`，不能用 `GONE`
+     *
+     * `GONE` 会把后面的按钮往左拽、整行重排 —— 那不是"停止顶到开始的位置"，
+     * 而是"保存挤过来了"。`INVISIBLE` 保留占位，槽宽恒定，交替时整行纹丝不动。
+     *
+     * ## 结构
+     *
+     * `FrameLayout` 里两个按钮都 `MATCH_PARENT` 叠放。叠着的好处：
+     * 槽高取两者较大值，交替时**高度也不跳**（`GONE` 方案还会让行高抖一下）。
+     */
+    private class ActionSlot(
+        /** 槽位本身，由外部给 weight 决定宽度 */
+        val view: android.widget.FrameLayout,
+        /** 参与交替的按钮，按 `[默认显示, 备选]` 顺序 */
+        val members: List<Pair<String, TextView>>,
+    ) {
+        /** 当前显示哪个 id */
+        var shown: String = members.first().first
+
+        /**
+         * 刷新：**挑"可点"的那个显示**；都不可点就显示默认那个（灰着）。
+         *
+         * 为什么以"可点"而不是"外部显式设了可见"为依据：宿主只调
+         * `setActionEnabled`，没人会去设可见性。用可点状态推导，调用方不用
+         * 学第二套 API。
+         */
+        fun refresh(enabledOf: (String) -> Boolean) {
+            val pick = members.firstOrNull { enabledOf(it.first) }?.first ?: members.first().first
+            shown = pick
+            members.forEach { (id, v) ->
+                // INVISIBLE 而不是 GONE：见类注释
+                v.visibility = if (id == pick) View.VISIBLE else View.INVISIBLE
+            }
+        }
+    }
+
+    /** 所有共用槽位（目前只有「开始/停止」这一对） */
+    private val actionSlots = mutableListOf<ActionSlot>()
+
+
     /** 动作 id → 它在界面上的**所有**实例，用于运行期启用/禁用 */
     private val actionButtons = HashMap<String, MutableList<ActionBtn>>()
 
@@ -123,6 +171,43 @@ class PluginUiPage(
      * 插件声明了哪些动作。所以先建空容器，等 [render] 解析完再填。
      */
     private var actionRowHost: LinearLayout? = null
+
+    /**
+     * 「功能」区的**三段**（v9.1 拆分）。
+     *
+     * 以前是一整块，块内顺序写死：标题 → 按钮行 → 参数区 → 诊断。
+     * 插件想要「开始按钮在文本下面、进度条在按钮下面」这种顺序，做不到 ——
+     * 只能整块搬，搬过去还是那个固定顺序。
+     *
+     * 现在拆成三段，插件在自己的 schema 里各挖一个坑，宿主分别填进去：
+     *
+     * | `HOST_SLOT` 的 `value` | 填什么 |
+     * |---|---|
+     * | `actions` | 「功能」小标题 + 按钮行 + 动作说明 + 状态提示 |
+     * | `params` | 宿主的试听参数区（目标文本 / 模式 / 参考音频 / 逐字稿 / 种子 / 线程） |
+     * | `diag` | 诊断信息（默认折叠） |
+     * | 空（或不写） | 老行为：整块（三段 + 卡片背景） |
+     *
+     * ## 三段各自只建一次
+     *
+     * 参数区里是**输入框**，重建就等于清空用户正在打的字。所以三段跟
+     * [actionBlock] 一样是"建一次、之后只 re-parent"，绝不在 render 里重建。
+     *
+     * ## 一帧只用一种模式
+     *
+     * 整块模式要有卡片背景、把三段装进一个外壳；分段模式要把三段分别交给
+     * 三个不同的坑。同一个 View 不能挂两处，所以两者互斥 ——
+     * 只要这一版 schema 里出现任何一个分段坑，就整体走分段模式。
+     */
+    private var partActions: LinearLayout? = null
+    private var partParams: View? = null
+    private var partDiag: LinearLayout? = null
+
+    /** 整块模式的外壳（带卡片背景）。只在没有分段坑时用 */
+    private var wholeBlock: LinearLayout? = null
+
+    /** 动作说明那一行。分段/整块都在 actions 段里 */
+    private var actionHelpView: TextView? = null
 
     /** 「功能」小标题。所有动作都被插件接管后要藏掉它 */
     private var actionBlockTitle: TextView? = null
@@ -169,8 +254,29 @@ class PluginUiPage(
      */
     private var actionBlock: View? = null
 
-    /** 这一帧 schema 里有没有画过 [UiType.HOST_SLOT]。每次 [render] 开头复位 */
+    /** 这一帧 schema 里有没有画过 `HOST_SLOT`。每次 [render] 开头复位 */
     private var hostSlotConsumed = false
+
+    /**
+     * 这一帧已经被挖走的**分段名**（actions / params / diag）。
+     *
+     * 和 [hostSlotConsumed] 分开记：整块只认一个坑，分段是三个各自独立。
+     * 插件写了两个 `actions` 坑时，第二个拿到 null（不画）而不是把 View
+     * 从第一个坑里拽过来。
+     */
+    private val hostSlotTaken = HashSet<String>()
+
+    /**
+     * 这一帧是**分段模式**（有 `HOST_SLOT` 的 `value` 指向 actions/params/diag）。
+     *
+     * 为什么需要预扫：渲染是流式的，整块坑可能出现在分段坑**之前**，
+     * 那时 `hostSlotTaken` 还是空的，判断不出"这一帧其实是分段模式"，
+     * 于是会把整块搬走、后面分段坑再想搬某一段就冲突了。
+     *
+     * 在 [render] 开头扫一遍 `schema.items` 就没有这个问题。代价是一次
+     * List 遍历 —— 和"渲染出错要不要查半天"比，可以忽略。
+     */
+    private var segmentMode = false
 
     /** 「功能」区的状态提示（试听进度、完成、失败） */
     private var actionHint: TextView? = null
@@ -380,7 +486,10 @@ class PluginUiPage(
         val slot = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL }
         topSlot = slot
         root.addView(slot, matchWrap())
-        if (hostActions.isNotEmpty()) {
+        // 条件里带上 hostExtra：插件可以用 `ponko.actions=""` 把按钮全关掉，
+        // 但它照样需要参数区（填要合成的文本）。只看 hostActions 会让那种插件
+        // 连输入框都没有 —— 整个界面变成空白页
+        if (hostActions.isNotEmpty() || hostExtra != null) {
             actionBlock = buildActionBlock()
             actionBlock?.let { slot.addView(it, matchWrap().apply { topMargin = dp(10) }) }
         }
@@ -429,6 +538,7 @@ class PluginUiPage(
         firstLogKey = null
         firstImageKey = null
         hostSlotConsumed = false
+        hostSlotTaken.clear()
         // 视图全要换，按 key 索引的组实例必须一起丢 ——
         // 留着会让 selectTab 切到已经脱离视图树的旧页（屏幕上看不出变化）
         tabGroups.clear()
@@ -443,6 +553,12 @@ class PluginUiPage(
             session.schemaOf(pkg)
         } catch (t: Throwable) {
             UiSchema(intro = "读取界面失败：${t.javaClass.simpleName}")
+        }
+
+        // 预扫一遍：这一帧是分段模式吗？（见 segmentMode 的说明）
+        segmentMode = schema.items.any {
+            it.type == UiType.HOST_SLOT &&
+                it.value.trim().lowercase() in hostSlotSegments
         }
 
         if (schema.intro.isNotBlank()) {
@@ -523,10 +639,15 @@ class PluginUiPage(
                 }
                 UiType.HOST_SLOT -> {
                     // v7：插件挖的坑，把宿主功能块搬进来。
-                    // 已经有坑位用掉时 takeActionBlock 返回 null → 多写的坑位是空的，
-                    // 不会把同一块 View 挂两处（那会直接抛 IllegalStateException）
-                    val blk = takeActionBlock()
+                    // v9.1：value 可以指定分段（actions / params / diag），
+                    //       让插件把三段分散到不同位置（"开始按钮在文本下面、
+                    //       进度条在按钮下面"）。空 = 老行为，整块。
+                    //
+                    // 返回 null 的两种情况都**静默不画**：这一帧已经被别的坑占走了，
+                    // 或者这一段本就不存在（比如这个插件没有参数区）
+                    val blk = takeHostSlot(item.value)
                     if (blk != null) {
+                        (blk.parent as? ViewGroup)?.removeView(blk)
                         target.last().content()
                             .addView(blk, matchWrap().apply { topMargin = dp(10) })
                     }
@@ -538,8 +659,13 @@ class PluginUiPage(
             }
         }
 
-        // 插件没挖坑（或这一版 schema 把坑删了）→ 功能块回到标题下面。
-        // 少了这一步，上一帧搬进 tab 的块会跟着那个已脱离视图树的父容器一起消失
+        // 功能块的去向，三种情况：
+        //   · 整块坑被挖（hostSlotConsumed）→ 已经在插件指定的位置
+        //   · 分段坑被挖（hostSlotTaken 非空）→ 被挖走的段在插件位置，
+        //     **没被挖走的段仍要回到顶部**（否则参数区会凭空消失，用户填不了文本）
+        //   · 都没挖 → 整块回顶部
+        //
+        // 少了这一步，上一帧搬走的块会跟着那个已脱离视图树的父容器一起消失
         if (actionBlock != null && !hostSlotConsumed) ensureActionBlockAtTop()
 
         // 插件可能漏写 TABS_END —— 那些组在 TABS_END 分支里`finish`不到，
@@ -561,24 +687,44 @@ class PluginUiPage(
     // ==================== 功能区（宿主提供）====================
 
     /**
-     * 把功能块取出来准备挂到别处。
+     * 功能块回到标题下面（老位置）。已经在就不动，避免无谓的重排。
      *
-     * **只认第一个** `HOST_SLOT`：插件写两个坑位时，第二个什么都不画 ——
-     * 同一个 View 挂两处会抛 `IllegalStateException`，
-     * 而"两个坑位都想显示功能块"本身就是插件侧写错了。
+     * ## 分段模式下的"残余段"
+     *
+     * 插件可能只挖了 `actions` 和 `diag` 两个坑、没挖 `params` ——
+     * 那参数区没有任何地方可去，但**绝不能消失**（用户要靠它填文本）。
+     *
+     * 所以这里把「这一帧没被挖走的段」按固定顺序装回整块外壳放顶部；
+     * 全被挖走了就把外壳藏起来（否则顶部留一个空卡片）。
+     *
+     * `addView` 会自动把 View 从原父容器摘掉，所以不用手动 remove ——
+     * 但要按 `actions / params / diag` 的固定顺序装，不能沿用上一次的顺序
+     * （上一次可能是"被拿走又还回来"的状态，顺序已经乱了）。
      */
-    private fun takeActionBlock(): View? {
-        val blk = actionBlock ?: return null
-        if (hostSlotConsumed) return null
-        hostSlotConsumed = true
-        (blk.parent as? ViewGroup)?.removeView(blk)
-        return blk
-    }
-
-    /** 功能块回到标题下面（老位置）。已经在就不动，避免无谓的重排 */
     private fun ensureActionBlockAtTop() {
         val blk = actionBlock ?: return
         val slot = topSlot ?: return
+
+        if (blk is LinearLayout) {
+            val keep = listOfNotNull(
+                partActions?.takeIf { "actions" !in hostSlotTaken },
+                partParams?.takeIf { "params" !in hostSlotTaken },
+                partDiag?.takeIf { "diag" !in hostSlotTaken },
+            )
+            // 顺序已经对就什么都不做 —— 每次 render 都重装会丢输入框焦点
+            var same = blk.childCount == keep.size
+            if (same) {
+                keep.forEachIndexed { i, v -> if (blk.getChildAt(i) !== v) same = false }
+            }
+            if (!same) {
+                blk.removeAllViews()
+                keep.forEach { blk.addView(it, matchWrap()) }
+            }
+            // 全被挖走了：外壳留着只会是个空卡片
+            blk.visibility = if (keep.isEmpty()) View.GONE else View.VISIBLE
+            if (keep.isEmpty()) return
+        }
+
         if (blk.parent === slot) return
         (blk.parent as? ViewGroup)?.removeView(blk)
         slot.addView(blk, matchWrap().apply { topMargin = dp(10) })
@@ -602,36 +748,129 @@ class PluginUiPage(
      * 现在按等权重分，文案超长单行省略。四个以上折两行：
      * 5 个挤一行每个只剩 50dp，不如两行平均。
      */
+    /**
+     * 哪两个动作共用一格。见 [ActionSlot] 的说明。
+     *
+     * 只有「开始/停止」这一对：它们**互斥**（没在合成时只有开始有意义，
+     * 合成中只有停止有意义），并排放着必然有一个是废按钮。
+     *
+     * 不放进来的一对反例：`play` 和 `save` 可以同时可用
+     * （有产物时两个都能点），合并会让用户以为一次只能干一件事。
+     */
+    private val sharedSlots = listOf(
+        com.litertchat.plugin.HostActionId.REASONING to
+            com.litertchat.plugin.HostActionId.STOP,
+    )
+
+    /** 这一格能不能合并：两个动作都在、都还在顶部（没被插件搬走） */
+    private fun pairInRow(
+        first: String,
+        second: String,
+        visible: List<HostAction>,
+    ): Pair<HostAction, HostAction>? {
+        val a = visible.firstOrNull { it.id == first } ?: return null
+        val b = visible.firstOrNull { it.id == second } ?: return null
+        return a to b
+    }
+
     private fun rebuildTopActionRow() {
         val host = actionRowHost ?: return
         host.removeAllViews()
+        actionSlots.clear()
 
         val top = hostActions.filter { it.id !in schemaDeclaredActions }
         // 全被接管了就藏掉「功能」小标题，否则标题下面空着、紧跟一行提示，像坏了
         actionBlockTitle?.visibility = if (top.isEmpty()) View.GONE else View.VISIBLE
         if (top.isEmpty()) return
 
-        val perRow = if (top.size <= 3) top.size else (top.size + 1) / 2
+        // 先把能合并的成对动作挑出来，它们占**一格**而不是两格 ——
+        // 这会影响分行的数量，所以必须在算行数之前定下来
+        val paired = LinkedHashMap<String, Pair<HostAction, HostAction>>()
+        sharedSlots.forEach { (first, second) ->
+            pairInRow(first, second, top)?.let { paired[first] = it }
+        }
+        val consumed = paired.values.flatMap { listOf(it.first.id, it.second.id) }.toSet()
+
+        // 排版单元：要么单独一个动作，要么一个合并槽
+        val cells = buildList {
+            top.forEach { action ->
+                when {
+                    action.id in consumed -> {
+                        // 只在自己是这一对里的**第一个**时加入，避免加两次
+                        paired[action.id]?.let { add(Cell.Merged(it)) }
+                    }
+                    else -> add(Cell.Single(action))
+                }
+            }
+        }
+        if (cells.isEmpty()) return
+
+        val perRow = if (cells.size <= 3) cells.size else (cells.size + 1) / 2
         var row = newActionRow()
         var inRow = 0
-        top.forEachIndexed { i, action ->
+        cells.forEachIndexed { i, cell ->
             if (i > 0 && i % perRow == 0) {
                 host.addView(row, matchWrap().apply { topMargin = dp(8) })
                 row = newActionRow()
                 inRow = 0
             }
-            val btn = makeHostActionButton(
-                action = action,
-                label = action.label,
-                compact = true,
-                primary = true,          // 顶部那排本来就是主色按钮
-            )
-            row.addView(btn, LinearLayout.LayoutParams(
+            val cellView = when (cell) {
+                is Cell.Single -> makeHostActionButton(
+                    action = cell.action,
+                    label = cell.action.label,
+                    compact = true,
+                    primary = true,      // 顶部那排本来就是主色按钮
+                )
+                is Cell.Merged -> makeActionSlot(cell.a.first, cell.a.second)
+            }
+            row.addView(cellView, LinearLayout.LayoutParams(
                 0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
             ).apply { if (inRow > 0) leftMargin = dp(8) })
             inRow++
         }
         host.addView(row, matchWrap().apply { topMargin = dp(6) })
+    }
+
+    /**
+     * 按钮行里的一个排版单元。
+     *
+     * 第二个分支**不能叫 `Pair`** —— 那会遮蔽 `kotlin.Pair`，
+     * 里面再用 `Pair<HostAction, HostAction>` 就会解析成自己（无限递归的
+     * "No type arguments expected"）。叫 `Merged`。
+     */
+    private sealed class Cell {
+        class Single(val action: HostAction) : Cell()
+        class Merged(val a: Pair<HostAction, HostAction>) : Cell()
+    }
+
+    /**
+     * 造一个合并槽（「开始 ⇄ 停止」）。
+     *
+     * 两个按钮都 `MATCH_PARENT` 叠在 `FrameLayout` 里，靠可见性交替 ——
+     * 细节和"为什么不用 GONE"见 [ActionSlot]。
+     */
+    private fun makeActionSlot(first: HostAction, second: HostAction): View {
+        val slot = android.widget.FrameLayout(act)
+        val views = listOf(first, second).map { a ->
+            // compact=true：和同一行里其它按钮一个样式。
+            // 叠放时两个按钮都要 MATCH_PARENT，宽度由槽位 weight 决定
+            a.id to makeHostActionButton(
+                action = a,
+                label = a.label,
+                compact = true,
+                primary = true,
+            )
+        }
+        views.forEach { (_, v) ->
+            slot.addView(v, android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT
+            ))
+        }
+        val s = ActionSlot(slot, views)
+        actionSlots.add(s)
+        s.refresh { id -> actionEnabled[id] ?: (id == first.id) }
+        return slot
     }
 
     /**
@@ -733,11 +972,35 @@ class PluginUiPage(
      * 才知道哪些被插件接管了。
      */
     private fun buildActionBlock(): View {
+        ensureActionParts()
+
+        // 整块模式：三段装进一个带卡片背景的外壳。
+        // 分段模式不用它 —— 那种情况下三段会被插件分别搬到自己的坑里
         val block = LinearLayout(act).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(14), dp(4), dp(14), dp(12))
             background = rounded(pal.surface, 12)
         }
+        partActions?.let { block.addView(it, matchWrap()) }
+        partParams?.let { block.addView(it, matchWrap().apply { topMargin = dp(10) }) }
+        partDiag?.let { block.addView(it, matchWrap()) }
+        wholeBlock = block
+        return block
+    }
+
+    /**
+     * 建三段（**只建一次**）。
+     *
+     * 参数区里有输入框，重建就等于清空用户正在打的字 —— 这是这个文件里
+     * 反复出现的同一个坑（actionBlock、tabGroups、日志框都是）。
+     * 所以这里用 `if (partActions != null) return` 一次性守住。
+     */
+    private fun ensureActionParts() {
+        if (partActions != null) return
+
+        // ---- 1) actions 段：标题 + 按钮行 + 说明 + 状态提示 ----
+        val actions = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL }
+
         val titleView = TextView(act).apply {
             text = "功能"
             textSize = 13f
@@ -746,35 +1009,27 @@ class PluginUiPage(
             setPadding(0, dp(8), 0, dp(2))
         }
         actionBlockTitle = titleView
-        block.addView(titleView, matchWrap())
+        actions.addView(titleView, matchWrap())
 
         // 按钮行：先建空容器，内容在 render 里填（那时才知道哪些动作被插件接管）
         actionRowHost = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL }
-        block.addView(actionRowHost, matchWrap())
-
-        // ---- 宿主自己的参数区（试听文本 / 模式 / 参考音频 …）----
-        hostExtra?.let { builder ->
-            val v = try {
-                builder()
-            } catch (t: Throwable) {
-                // 参数区画不出来不该让整页空白 —— 页面本身还得能用
-                android.util.Log.e("PonkoPluginUi", "参数区构建失败", t)
-                null
-            }
-            if (v != null) block.addView(v, matchWrap().apply { topMargin = dp(10) })
-        }
+        actions.addView(actionRowHost, matchWrap())
 
         val helpText = hostActions.firstOrNull { it.help.isNotBlank() }?.help
         if (!helpText.isNullOrBlank()) {
-            block.addView(TextView(act).apply {
+            val help = TextView(act).apply {
                 text = helpText
                 textSize = 11f
                 setTextColor(pal.hint)
                 setPadding(0, dp(6), 0, 0)
                 setLineSpacing(dp(2).toFloat(), 1f)
-            }, matchWrap())
+            }
+            actionHelpView = help
+            actions.addView(help, matchWrap())
         }
 
+        // 状态提示（"正在合成…"）。**必须常驻**：setActionHint 持有它的引用，
+        // 每次 render 换一个新的会让提示永远显示不出来
         val hint = TextView(act).apply {
             text = actionHintText
             textSize = 12f
@@ -784,16 +1039,29 @@ class PluginUiPage(
             visibility = if (actionHintText.isEmpty()) View.GONE else View.VISIBLE
         }
         actionHint = hint
-        block.addView(hint, matchWrap())
+        actions.addView(hint, matchWrap())
+        partActions = actions
 
-        // ---- 诊断（默认折叠）----
+        // ---- 2) params 段：宿主的试听参数区 ----
+        partParams = hostExtra?.let { builder ->
+            try {
+                builder()
+            } catch (t: Throwable) {
+                // 参数区画不出来不该让整页空白 —— 页面本身还得能用
+                android.util.Log.e("PonkoPluginUi", "参数区构建失败", t)
+                null
+            }
+        }
+
+        // ---- 3) diag 段：诊断（默认折叠）----
         //
         // 内容来自 ResultBundle.debugInfo 和最后一条 PluginError.detail。
-        // 默认收起、且**先建成 GONE** —— 结果回来的时候要用 [setDiagnostics]
+        // 默认收起、且**先建成 GONE** —— 结果回来的时候要用 setDiagnostics
         // 直接把它显示出来，不能等下次进页面才出现（那时候用户已经拿不到上下文了）。
         // 这些信息以前只进 logcat，而普通用户装不了 adb。
+        val diag = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL }
         val diagHead = TextView(act).apply {
-            text = if (diagOpen) "诊断信息 ▾" else "诊断信息 ▸"
+            text = if (diagOpen) "诊断信息 \u25be" else "诊断信息 \u25b8"
             textSize = 11f
             setTextColor(pal.subText)
             setPadding(0, dp(10), 0, 0)
@@ -812,14 +1080,71 @@ class PluginUiPage(
         }
         diagHead.setOnClickListener {
             diagOpen = !diagOpen
-            diagHead.text = if (diagOpen) "诊断信息 ▾" else "诊断信息 ▸"
+            diagHead.text = if (diagOpen) "诊断信息 \u25be" else "诊断信息 \u25b8"
             diagBody.visibility = if (diagOpen) View.VISIBLE else View.GONE
         }
         diagHeadView = diagHead
         diagBodyView = diagBody
-        block.addView(diagHead, matchWrap())
-        block.addView(diagBody, matchWrap().apply { topMargin = dp(4) })
-        return block
+        diag.addView(diagHead, matchWrap())
+        diag.addView(diagBody, matchWrap().apply { topMargin = dp(4) })
+        partDiag = diag
+    }
+
+    /** `HOST_SLOT` 的合法分段名 */
+    private val hostSlotSegments = setOf("actions", "params", "diag")
+
+    /**
+     * 取一段给 `HOST_SLOT` 挂。`value` 空 = 整块。
+     *
+     * **只认第一个**（和整块模式一致）：同一段搬两处会把 View 从上一个坑里
+     * 拽走，表现为"上面那个坑空了"。
+     */
+    /**
+     * 取一段给 `HOST_SLOT` 挂。`value` 空 = 整块。
+     *
+     * **只认第一个**（和整块模式一致）：同一段搬两处会把 View 从上一个坑里
+     * 拽走，表现为"上面那个坑空了"。
+     *
+     * ## 整块和分段互斥
+     *
+     * 这一帧只要有**任何**分段坑，整块坑就返回 null（见 [segmentMode]）。
+     * 渲染是流式的，整块坑可能出现在分段坑之前 —— 靠"已经取过"判断不出来，
+     * 所以必须在 [render] 开头预扫一遍。
+     */
+    private fun takeHostSlot(segment: String): View? {
+        val seg = segment.trim().lowercase()
+
+        if (seg.isEmpty()) {
+            if (segmentMode) {
+                android.util.Log.w(
+                    "PonkoPluginUi",
+                    "这一版 schema 同时有整块和分段 HOST_SLOT，只保留分段（整块已忽略）"
+                )
+                return null
+            }
+            if (hostSlotConsumed) return null
+            hostSlotConsumed = true
+            return wholeBlock
+        }
+
+        if (seg !in hostSlotSegments) {
+            // 写错的分段名：**按整块处理**比什么都不画好 ——
+            // 用户至少还能看到按钮，而"点了没反应的空洞"最难查
+            android.util.Log.w(
+                "PonkoPluginUi",
+                "HOST_SLOT 的分段名 '" + seg + "' 不认识（可用：" + hostSlotSegments + "），按整块处理"
+            )
+            if (segmentMode || hostSlotConsumed) return null
+            hostSlotConsumed = true
+            return wholeBlock
+        }
+
+        if (!hostSlotTaken.add(seg)) return null
+        return when (seg) {
+            "actions" -> partActions
+            "params" -> partParams
+            else -> partDiag
+        }
     }
 
     /** 功能按钮的一行。按钮按 `weight = 1` 均分宽度，见 [rebuildTopActionRow] 里的说明 */
@@ -843,6 +1168,13 @@ class PluginUiPage(
         // 只改第一个的话会出现"顶部灰了、插件页里还能点"这种分裂状态
         actionButtons[id]?.forEach {
             styleHostAction(it.view, enabled, it.compact, it.primary)
+        }
+        // 合并槽（开始 ⇄ 停止）要跟着换显隐：宿主改 enabled 时没人会显式设可见性，
+        // 所以必须在这里推导。见 [ActionSlot.refresh]
+        actionSlots.forEach { slot ->
+            if (slot.members.any { it.first == id }) {
+                slot.refresh { k -> actionEnabled[k] ?: false }
+            }
         }
     }
 

@@ -496,6 +496,63 @@ class PluginPage(
     fun backToList() = closePluginUi()
 
     /**
+     * 按插件 manifest 里的 `ponko.actions` 白名单过滤功能按钮。
+     *
+     * ## 为什么要有这个
+     *
+     * 宿主固定画五个按钮，插件没有否决权。插件唯一能动的开关是
+     * `AUTOLOAD_ENGINE`（让「加载模型」消失），但代价是一连接就加载 3.3 GB 权重 ——
+     * 完全不能用。于是"我只想要合成和停止"这种合理诉求没有出口。
+     *
+     * ## 三种情况
+     *
+     * | 白名单 | 结果 |
+     * |---|---|
+     * | `null`（没声明） | **原样返回**，老插件显示完全不变 |
+     * | 空列表 | 一个按钮都不给（插件明确要求） |
+     * | 非空 | 只保留列表里的；列表写错/写了不存在的 id 会打日志 |
+     *
+     * ## 为什么不过滤成"插件说啥就是啥"
+     *
+     * 白名单只能**减少**按钮，不能凭空造出插件本来没有的动作。
+     * 比如插件没有 `canPreviewAudio`（纯配置型插件），`actions` 里本来就没有
+     * 合成/播放/保存 —— 这时白名单写 `"reasoning"` 也不会变出一个来。
+     * 过滤是在"宿主已经决定要给的按钮"之上做减法，这是安全的。
+     */
+    private fun applyActionWhitelist(
+        pkg: String,
+        actions: List<PluginUiPage.HostAction>,
+        whitelist: List<String>?,
+    ): List<PluginUiPage.HostAction> {
+        if (whitelist == null) return actions
+
+        if (whitelist.isEmpty()) {
+            android.util.Log.i("PonkoPluginPage", "[$pkg] ponko.actions 为空，不显示任何功能按钮")
+            return emptyList()
+        }
+
+        val known = actions.map { it.id }.toSet()
+        val unknown = whitelist.filter { it !in known }
+        if (unknown.isNotEmpty()) {
+            // 两种情况都常见：id 拼错，或者要了一个这个插件本来没有的动作
+            // （比如纯配置型插件要 reasoning）。都只打日志，不报错 ——
+            // 界面上少一个按钮比弹一个看不懂的错误好
+            android.util.Log.w(
+                "PonkoPluginPage",
+                "[$pkg] ponko.actions 里这些动作不存在，已忽略：$unknown" +
+                    "（该插件可用：$known）"
+            )
+        }
+
+        val kept = actions.filter { it.id in whitelist }
+        android.util.Log.i(
+            "PonkoPluginPage",
+            "[$pkg] ponko.actions 过滤功能按钮：$known → ${kept.map { it.id }}"
+        )
+        return kept
+    }
+
+    /**
      * 打开某个插件的界面。
      *
      * 内容由插件给（[com.litertchat.plugin.UiSchema]），样式由 [PluginUiPage] 渲染。
@@ -596,7 +653,10 @@ class PluginPage(
         }
 
         val page = PluginUiPage(
-            act, pal, pkg, name, session, actions,
+            act, pal, pkg, name, session,
+            // 白名单在这里过滤：插件 manifest 的 `ponko.actions` 决定顶部那排
+            // 显示哪几个。没声明（null）时原样返回，老插件不受影响
+            applyActionWhitelist(pkg, actions, item.found.actionWhitelist),
             hostExtra = { buildPreviewParams(pkg, isTts) },
         ) {
             closePluginUi()
