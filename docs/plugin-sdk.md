@@ -1171,21 +1171,24 @@ class MyPluginService : PonkoPluginService() {
   以及给插件用的 `notifySchemaChanged()`
 
 **v4 追加（2026-10-22）**：
-- `UiType` 补 `LOG` / `IMAGE` / `AUDIO`（`MAX_KNOWN = 14`）
-
-**v5 追加（2026-10-22）**：
-- `UiType` 补 `TABS_START` / `TAB` / `TABS_END`（`MAX_KNOWN = 17`），
-  宿主用栈渲染，嵌套层数不限
+- `UiType` 补 `LOG` / `IMAGE` / `AUDIO`（当版本 `MAX_KNOWN` 由 11 → 14）
 - `IPonkoCallback.aidl` 末尾追加 `onImage(...)` / `onUiPatch(...)`
 - `PonkoPluginService` 追加两个 protected 方法 `notifyUiPatch(key,value,append)` /
   `notifyImage(fd|file, w, h, mime)` —— **不给这两个方法，插件根本调不到新回调**
-  （`callback` 字段是 private，之前只有 `notifySchemaChanged()` 一个出口）
+  （`callback` 字段是 private，此前只有 `notifySchemaChanged()` 一个出口）
+
+**v5 追加（2026-10-22）**：
+- `UiType` 补 `TABS_START` / `TAB` / `TABS_END`（`MAX_KNOWN` 14 → 17），
+  宿主用渲染栈实现，嵌套层数不限
+- 无新增回调 —— 标签页是纯 schema 结构，不涉及跨进程通信
 
 **宿主侧**（`app`）：
-- `PluginUiPage.kt`：schema → 控件的渲染器，v1 的 7 种 + v2 的 5 种 + v4 的 3 种全部实现
+- `PluginUiPage.kt`：schema → 控件的渲染器，
+  v1 的 7 种 + v2 的 5 种 + v4 的 3 种 + v5 的 3 种全部实现（共 18 种）
 - `PluginConnection`：`settingsSchema()` / `setSetting()` / `invokeAction()`
 - `PluginSession`：`schemaOf(pkg)` / `setSetting(pkg,…)` / `invokeAction(pkg,…)`
   + `Listener.onPluginSchemaChanged(pkg)`
+  + v4 的 `Listener.onPluginImage` / `Listener.onPluginUiPatch`
 - 卡片上加了「插件界面」按钮（**已连接才显示**）
 - 插件界面**叠在列表上**，用 `visibility` 切换而不是新 Activity：
   主题/配色/标题栏自动一致，也不用在 Manifest 里多声明 Activity。
