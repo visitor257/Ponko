@@ -964,7 +964,7 @@ object UiType {
     const val SLIDER  = 3  // 数值（min/max/step），宿主显示当前值
     const val CHOICE  = 4  // 单选（宿主画成下拉或分段）
     const val TEXT    = 5  // 单行文本输入
-    const val ACTION  = 6  // 按钮，点了走 invokeAction(key)
+    const val ACTION  = 6  // 按钮。value 空 = 回调插件；value 写 HostActionId = 宿主动作
     // ---- v2 ----
     const val PROGRESS   = 7   // 只读进度条（value = 0–100）
     const val STATUS     = 8   // 只读键值行（左 label 右 value）
@@ -1393,6 +1393,78 @@ selectTab 组 'main' 里没有 tab 'reslt'（已记账）
 滥用会让标签页像自己会乱动 —— 那也是这类"自动跳转"最招人烦的地方。
 建议只在两种时机用：产物就绪、或者明确的长任务阶段切换。
 
+### v9 补充：宿主动作按钮由插件决定位置（`HostActionId`）
+
+**问题**：宿主那 5 个功能按钮（加载引擎 / 合成 / 播放 / 停止 / 保存）
+以前**固定画在标题下面**。插件想把「开始推理」放进自己的「参数」页里，做不到 ——
+用户只能滚回顶部，这和「参数页」这个词给人的预期完全不符。
+
+**用法**：把 `ACTION` 的 `value` 写成 `HostActionId` 的常量。
+
+```kotlin
+TABS_START(key = "main")
+  TAB(key = "param", label = "参数")
+    UiItem(key = "txt", type = UiType.TEXTAREA, label = "目标文本")
+    // 宿主执行，但文案、位置、所在页都由你决定
+    UiItem(key = "go", type = UiType.ACTION, label = "开始推理",
+           value = HostActionId.REASONING, primary = true)
+  TAB(key = "result", label = "结果")
+    UiItem(key = "play", type = UiType.ACTION, label = "试听",
+           value = HostActionId.PLAY)
+    UiItem(key = "save", type = UiType.ACTION, label = "存到音乐库",
+           value = HostActionId.SAVE)
+TABS_END
+```
+
+| 常量 | 动作 |
+|---|---|
+| `HostActionId.ENGINE` | 加载 / 卸载引擎 |
+| `HostActionId.REASONING` | 用当前参数合成一段 |
+| `HostActionId.PLAY` | 播放上一次结果（不重新推理） |
+| `HostActionId.STOP` | 停止当前合成 |
+| `HostActionId.SAVE` | 存进系统音乐库（`音乐/Ponko`） |
+
+#### 逐个覆盖，不是全有全无
+
+被点名的动作会**从顶部那排移走**，只出现在你放的位置。没点名的照旧留顶部。
+
+所以你可以只接管「合成」，把它放进参数页，其余四个不动 ——
+顶部就变成 4 个按钮，参数页里多一个「开始推理」。**两者不会重复出现。**
+
+如果你把 5 个全点名了，顶部那排连同「功能」小标题一起消失。
+
+#### 三个字段谁说了算
+
+| 字段 | 谁说了算 | 说明 |
+|---|---|---|
+| `label` | **插件** | 写了就用你的；不写用宿主默认 |
+| `primary` | **插件** | 实心主色 / 浅底 |
+| `enabled` | **宿主** | ⚠ `UiItem.enabled` 对宿主动作按钮**无效** |
+
+`enabled` 归宿主是刻意的：插件不知道引擎加载到几成、是不是正在合成、
+有没有可播的音频。让它说了算会出现"插件说能点、宿主拒绝"的死路 ——
+那种按钮比灰掉的更让人困惑。
+
+同理，`engine` 的文案会被宿主按状态改写（「加载引擎」↔「卸载引擎」），
+你写的会被覆盖。那是状态语义，不是排版，不归插件管。
+
+#### 老宿主 / 写错 id 会怎样
+
+- 老宿主不认识这个约定 → 把它当普通 ACTION，点下去回调 `onActionInvoked(key)`，
+  不崩但也不会合成。要在老宿主上也正常，先判 `apiVersion >= 9`（`HostActionId` 随新 SDK 发布）
+- `value` 拼错（`"reasning"`）→ 同样降级成插件自己的按钮，**并留一条 logcat**：
+  `ACTION 的 value='reasning' 不是已知宿主动作...（已知：[engine, reasoning, play, stop, save]）`
+- 同一个动作被声明多次 → 每一处都渲染、都能点；启用态**同步**（不会一处灰一处亮）
+
+#### 它和 `HOST_SLOT`（v7）的区别
+
+| | 粒度 | 用在哪 |
+|---|---|---|
+| `HOST_SLOT` | **整块**（按钮行 + 试听参数区 + 状态提示 + 诊断）搬到你的页面里 | 你不想自己排参数区 |
+| `HostActionId` | **单个按钮**，参数区仍在顶部 | 你只想改按钮的位置/文案，参数区放顶部可以接受 |
+
+两者可以混用：`HOST_SLOT` 搬整块、再单独点名某个动作放别处。
+
 
 
 
@@ -1708,7 +1780,7 @@ AIDL 调用遇到对方不认识的方法时，行为**不保证抛异常**：
 `API_VERSION` 是编译期写死进插件二进制的。所以"旧插件报 1、新插件报 2"这件事
 自动成立，不需要插件作者做任何事。
 
-### 现状（v8 = 2026-10-22）
+### 现状（v9 = 2026-10-23）
 
 | 版本 | 引入 | 宿主能否连接 |
 |---|---|---|
@@ -1720,6 +1792,7 @@ AIDL 调用遇到对方不认识的方法时，行为**不保证抛异常**：
 | v6 | 模型槽位（`MODEL_SLOT`）+ `importModel` / `deleteModel` | ✅ 支持 |
 | v7 | `requestSynthesis` / `onAudioFile` / `HOST_SLOT`，以及分组的默认收起 | ✅ 支持 |
 | v8 | `selectTab` —— 插件让宿主切换到指定标签页 | ✅ 支持 |
+| v9 | `HostActionId` —— `ACTION` 的 `value` 可点名宿主动作，按钮位置由插件定 | ✅ 支持 |
 
 **「能否连接」和「能力是否齐」是两件事。** 上表问的是前者，答案永远是"能"——
 只要 `apiVersion >= API_MIN_SUPPORTED`（现在是 1）就会绑定。
@@ -1733,15 +1806,18 @@ AIDL 调用遇到对方不认识的方法时，行为**不保证抛异常**：
 | v5 | 缺模型槽位、反向指挥 |
 | v6 | 缺 `requestSynthesis` / `onAudioFile` / `HOST_SLOT` |
 | v7 | 缺"插件主动切页"（标签页只能用户点） |
-| v8 | 全部功能 |
-| v9+（未来） | 老功能照常，新控件降级成文字块，新回调被丢弃 |
+| v8 | 缺「按钮位置自由」（5 个功能按钮只能在顶部） |
+| v9 | 全部功能 |
+| v10+（未来） | 老功能照常，新控件降级成文字块，新回调被丢弃 |
 
 宿主自己的 `API_MAX_SUPPORTED` 只影响最后一行的**提示文案**，不影响能否连接。
 
-- `API_VERSION = 8`，`API_WITH_SCHEMA = 2`，`API_WITH_ACTION_LABELS = 3`，
+- `API_VERSION = 9`，`API_WITH_SCHEMA = 2`，`API_WITH_ACTION_LABELS = 3`，
   `API_WITH_RICH_UI = 4`，`API_WITH_TABS = 5`，`API_WITH_MODEL_IMPORT = 6`，
   `API_WITH_SYNTH_REQUEST = 7`（v7 的三项共用这一个版本号 —— 常量名沿用最先落地的那个，
-  判断写 `api >= API_WITH_SYNTH_REQUEST` 即可），`API_WITH_TAB_SELECT = 8`
+  判断写 `api >= API_WITH_SYNTH_REQUEST` 即可），`API_WITH_TAB_SELECT = 8`，
+  `API_WITH_HOST_ACTION_ITEMS = 9`（v9 只加了 `HostActionId` 常量 + 宿主渲染，
+  AIDL 一行没加 —— 但它是个「能和不能」的区分，所以照样升版本）
 - 宿主兼容下限 `API_MIN_SUPPORTED = 1` → **v1–v7 老插件照常连接、照常合成**，
   只是拿不到对应版本才有的能力：
   · v1 插件没有插件界面，卡片上不显示「进入」，并提示"插件 SDK v1（当前 v7）"
@@ -1752,8 +1828,9 @@ AIDL 调用遇到对方不认识的方法时，行为**不保证抛异常**：
   · v1–v6 插件不能反向指挥宿主（`requestSynthesis` / `onAudioFile` / `HOST_SLOT`），
     每条历史记录也只能播"最近一次产物"
   · v1–v7 插件不能自己切页（`selectTab`），标签页只能由用户点
-- `API_MAX_SUPPORTED = 8` 是**认识上限**，不是拒绝阈值。
-  `api > 8` 的插件仍会连接，只是新控件降级、新回调被丢弃
+  · v1–v8 插件不能点名宿主动作（`HostActionId`），5 个功能按钮只能固定在顶部
+- `API_MAX_SUPPORTED = 9` 是**认识上限**，不是拒绝阈值。
+  `api > 9` 的插件仍会连接，只是新控件降级、新回调被丢弃
 - `API_MIN_SUPPORTED` **一直是 1** —— 至今所有改动都是扩展，没有破坏性改动
 
 ### v3 的 `getActionLabels()`：为什么是一个方法，不是 manifest 的字段

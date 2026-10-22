@@ -369,7 +369,7 @@ class PluginPage(
                 // 「加载引擎」按钮 → 「卸载引擎」，并说一句加载完了
                 if (openUiPkg == pkg) {
                     refreshEngineLabel(pkg)
-                    currentUiPage?.setActionEnabled("engine", !speaking)
+                    currentUiPage?.setActionEnabled(com.litertchat.plugin.HostActionId.ENGINE, !speaking)
                     if (!speaking) {
                         setUiHint(
                             "引擎已加载：${info.sampleRate} Hz" +
@@ -540,7 +540,7 @@ class PluginPage(
                 if (!autoLoaded) {
                     add(
                         PluginUiPage.HostAction(
-                            id = "engine",
+                            id = com.litertchat.plugin.HostActionId.ENGINE,
                             label = lEngine,
                             enabled = !speaking,
                             run = { toggleEngine(pkg) },
@@ -549,7 +549,7 @@ class PluginPage(
                 }
                 add(
                     PluginUiPage.HostAction(
-                        id = "reasoning",
+                        id = com.litertchat.plugin.HostActionId.REASONING,
                         // 名字固定，**不随状态变**。
                         // 曾经有过「试听 → 重新合成」的改名：那时合成完会自动播，
                         // 同一个按钮在"还没听过"和"听过了"两种状态下含义不同。
@@ -570,7 +570,7 @@ class PluginPage(
                 // 现在合成和播放是两个独立动作 —— 合成只管产出文件，听它点这里。
                 add(
                     PluginUiPage.HostAction(
-                        id = "play",
+                        id = com.litertchat.plugin.HostActionId.PLAY,
                         label = session.actionLabel(pkg, actionLabels.PLAY),
                         enabled = lastAudioPkg == pkg && lastAudioFile?.exists() == true,
                         run = { lastAudioFile?.let { playFile(it) } },
@@ -578,7 +578,7 @@ class PluginPage(
                 )
                 add(
                     PluginUiPage.HostAction(
-                        id = "stop",
+                        id = com.litertchat.plugin.HostActionId.STOP,
                         label = session.actionLabel(pkg, actionLabels.STOP),
                         enabled = speaking,
                         run = { stopPreview() },
@@ -586,7 +586,7 @@ class PluginPage(
                 )
                 add(
                     PluginUiPage.HostAction(
-                        id = "save",
+                        id = com.litertchat.plugin.HostActionId.SAVE,
                         label = session.actionLabel(pkg, actionLabels.SAVE),
                         enabled = lastAudioPkg == pkg && lastAudioFile?.exists() == true,
                         run = { saveAudio() },
@@ -1083,7 +1083,7 @@ class PluginPage(
                 "正在${session.actionLabel(pkg, com.litertchat.plugin.ActionLabel.ENGINE_UNLOAD)}，释放内存…"
             )
             // 卸载期间先禁掉按钮：避免用户连点出「卸载 → 又加载」
-            currentUiPage?.setActionEnabled("engine", false)
+            currentUiPage?.setActionEnabled(com.litertchat.plugin.HostActionId.ENGINE, false)
             session.toggleEngine(pkg, load = false)
             awaitEngineUnloaded(pkg)
         } else {
@@ -1134,7 +1134,7 @@ class PluginPage(
                     act.window.decorView.postDelayed(this, ENGINE_POLL_MS)
                     return
                 }
-                currentUiPage?.setActionEnabled("engine", !speaking)
+                currentUiPage?.setActionEnabled(com.litertchat.plugin.HostActionId.ENGINE, !speaking)
                 refreshEngineLabel(pkg)
                 setUiHint(
                     if (done) "引擎已卸载，内存已释放"
@@ -1210,8 +1210,8 @@ class PluginPage(
         closeRefFd()
         refFd = fd
         speaking = true
-        currentUiPage?.setActionEnabled("reasoning", false)
-        currentUiPage?.setActionEnabled("stop", true)
+        currentUiPage?.setActionEnabled(com.litertchat.plugin.HostActionId.REASONING, false)
+        currentUiPage?.setActionEnabled(com.litertchat.plugin.HostActionId.STOP, true)
 
         setUiHint(
             "正在合成…（手机上 5 秒语音约需 1~2 分钟，可随时点" +
@@ -1229,8 +1229,8 @@ class PluginPage(
         if (id == null) {
             speaking = false
             closeRefFd()
-            currentUiPage?.setActionEnabled("reasoning", true)
-            currentUiPage?.setActionEnabled("stop", false)
+            currentUiPage?.setActionEnabled(com.litertchat.plugin.HostActionId.REASONING, true)
+            currentUiPage?.setActionEnabled(com.litertchat.plugin.HostActionId.STOP, false)
             setUiHint("发起失败")
         }
     }
@@ -1251,8 +1251,8 @@ class PluginPage(
     private fun finishRequest() {
         speaking = false
         closeRefFd()
-        currentUiPage?.setActionEnabled("reasoning", true)
-        currentUiPage?.setActionEnabled("stop", false)
+        currentUiPage?.setActionEnabled(com.litertchat.plugin.HostActionId.REASONING, true)
+        currentUiPage?.setActionEnabled(com.litertchat.plugin.HostActionId.STOP, false)
     }
 
     private fun closeRefFd() {
@@ -1853,8 +1853,8 @@ class PluginPage(
             player = null
             lastAudioFile = f
             lastAudioPkg = pkg
-            currentUiPage?.setActionEnabled("save", true)
-            currentUiPage?.setActionEnabled("play", true)
+            currentUiPage?.setActionEnabled(com.litertchat.plugin.HostActionId.SAVE, true)
+            currentUiPage?.setActionEnabled(com.litertchat.plugin.HostActionId.PLAY, true)
             // 播放条要立刻从"还没有可播放的音频"变成可用，并把进度归零
             currentUiPage?.refreshAudio()
             // 合成完了，但**不出声** —— 得明确告诉用户音频在哪、下一步点哪儿，
