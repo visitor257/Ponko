@@ -84,6 +84,14 @@ class PluginSession(private val context: Context) {
         val detail: String?,
         /** 插件编译时的 SDK 版本；未连接时 0 */
         val apiVersion: Int = 0,
+        /**
+         * 插件比宿主认识的版本新。**照常可用**，只是新控件/新回调用不了。
+         *
+         * 和 [isOlderSdk] 是同一件事的两个方向，UI 提示的话术不同：
+         * 旧插件 → "更新插件可获得更多功能"；
+         * 新插件 → "更新 Ponko 可获得完整功能"（**不能说成不兼容**）
+         */
+        val newerThanHost: Boolean = false,
     ) {
         /** 是否可以作为 TTS 使用（**正式路由**用这个） */
         val canSpeak: Boolean
@@ -391,6 +399,7 @@ class PluginSession(private val context: Context) {
             // 刚才为什么连不上了
             detail = c?.lastDetail,
             apiVersion = c?.pluginApi ?: 0,
+            newerThanHost = c?.pluginNewerThanHost ?: false,
         )
     }
 

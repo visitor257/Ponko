@@ -732,6 +732,19 @@ class PluginPage(
                 setLineSpacing(dp(2).toFloat(), 1f)
             })
         }
+        // 插件比宿主新：同样「不影响用」，但**方向相反** —— 要更新的是 Ponko。
+        // 话术必须和上面那条区分开：写成"不兼容"会让用户去重装一个
+        // 已经是最新的插件，然后发现怎么都没用。
+        if (item.newerThanHost) {
+            detail.addView(TextView(act).apply {
+                text = "插件 SDK v${item.apiVersion}，比当前 Ponko（v${com.litertchat.plugin.PluginConst.API_VERSION}）新" +
+                    " · 功能可用，新增的界面元素可能显示不出来。更新 Ponko 可获得完整功能"
+                textSize = 11f
+                setTextColor(pal.warn)
+                setPadding(0, dp(4), 0, 0)
+                setLineSpacing(dp(2).toFloat(), 1f)
+            })
+        }
 
         // ---- 按钮行：启用|停用 · 激活 · 进入 · 卸载 ----
         //
