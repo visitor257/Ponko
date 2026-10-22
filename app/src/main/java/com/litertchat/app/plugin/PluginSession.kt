@@ -315,12 +315,11 @@ class PluginSession(private val context: Context) {
                     caps?.contains(Capability.TEST) == true
                 val autoLoad = caps?.contains(Capability.AUTOLOAD_ENGINE) == true
                 if (canAudio && autoLoad) {
-                    // 线程数从宿主偏好里取（用户可在插件页的试听参数里改）。
+                    // 线程数与后端从宿主偏好里取（用户可在插件页的试听参数里改）。
                     // 传 0 会让插件退回 min(4, 核数) —— 在 8 核机上明显跑不满
-                    val threads = runCatching {
-                        PreviewParams.load(context, pkg).threads
-                    }.getOrDefault(0)
-                    conn?.loadEngine(threads = threads)
+                    val p = runCatching { PreviewParams.load(context, pkg) }
+                        .getOrDefault(PreviewParams())
+                    conn?.loadEngine(threads = p.threads, useGpu = p.useGpu)
                 } else if (canAudio) {
                     Log.i(TAG, "[$pkg] 未声明 AUTOLOAD_ENGINE，等用户手动加载引擎")
                 }
@@ -445,6 +444,9 @@ class PluginSession(private val context: Context) {
      */
     fun connectionOf(pkg: String): PluginConnection? =
         connections.firstOrNull { it.packageName == pkg }
+
+    /** 插件自述（能力、模型家族）。未连接时为 null */
+    fun manifestOf(pkg: String): PluginManifest? = connectionOf(pkg)?.currentManifest
 
     /**
      * 把一段文字念出来。
@@ -595,10 +597,10 @@ class PluginSession(private val context: Context) {
      *
      * @param load true = 加载，false = 卸载（释放模型内存）
      */
-    fun toggleEngine(pkg: String, load: Boolean, threads: Int = 0) {
+    fun toggleEngine(pkg: String, load: Boolean, threads: Int = 0, useGpu: Boolean = false) {
         val conn = connections.firstOrNull { it.packageName == pkg } ?: return
         if (load) {
-            conn.loadEngine(threads = threads)
+            conn.loadEngine(threads = threads, useGpu = useGpu)
         } else {
             conn.closeEngine()
             notifyChanged()

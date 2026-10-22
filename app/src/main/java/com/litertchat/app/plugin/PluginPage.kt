@@ -993,11 +993,12 @@ class PluginPage(
             session.toggleEngine(pkg, load = false)
             awaitEngineUnloaded(pkg)
         } else {
-            val threads = params(pkg).threads
+            val p = params(pkg)
             setUiHint(
-                "正在${session.actionLabel(pkg, com.litertchat.plugin.ActionLabel.ENGINE_LOAD)}…"
+                "正在${session.actionLabel(pkg, com.litertchat.plugin.ActionLabel.ENGINE_LOAD)}" +
+                    "（${if (p.useGpu) "GPU" else "CPU"}，${if (p.threads == 0) "自动线程" else "${p.threads} 线程"}）…"
             )
-            session.toggleEngine(pkg, load = true, threads = threads)
+            session.toggleEngine(pkg, load = true, threads = p.threads, useGpu = p.useGpu)
         }
         // 加载成功走 onEngineReady 回调（那里会刷新文案与诊断区）
     }
@@ -1364,6 +1365,41 @@ class PluginPage(
             hintText("自动 = 核数-1（最多 6）。占满全部核心会让系统 UI 卡顿"),
             wrapWrap()
         )
+
+        // ---- 推理后端（CPU / GPU）----
+        //
+        // 只有插件在 manifest 的 capabilities 里声明了 Capability.GPU
+        // （"gpu.inference"）才显示。
+        //
+        // 为什么不无条件显示：插件没声明就说明它不打算用 GPU。用户在这里切到
+        // GPU、插件照样跑 CPU，那个开关就是在撒谎 —— 比不显示更糟。
+        // 也不做成灰掉的选项：灰掉一个用户永远用不上的东西只会引出
+        // "为什么我不能选"的疑问，那还得再解释一遍。
+        val supportsGpu = session.manifestOf(pkg)?.capabilities
+            ?.contains(com.litertchat.plugin.Capability.GPU) == true
+        if (supportsGpu) {
+            box.addView(
+                fieldLabel("推理后端（下次加载引擎生效）"),
+                wrapWrap().apply { topMargin = dp(10) }
+            )
+            box.addView(
+                chipRow(
+                    listOf(0 to "CPU", 1 to "GPU"),
+                    if (cur.useGpu) 1 else 0,
+                ) { v ->
+                    remember(cur.copy(useGpu = v == 1), persist = true)
+                    setUiHint(
+                        if (session.isSpeaking()) "已记下：等这次生成结束、插件重新加载引擎后生效"
+                        else "已记下：插件下次加载引擎时生效"
+                    )
+                },
+                matchWrap()
+            )
+            box.addView(
+                hintText("GPU 后端在部分机型/驱动上不可用，插件会回退 CPU 并在状态里说明"),
+                wrapWrap()
+            )
+        }
 
         syncMode = {
             val needRef = cur.needsReference
