@@ -104,6 +104,16 @@ class PluginPage(
      */
     private var pendingRefPkg: String? = null
 
+    /**
+     * 正在等用户给某个模型槽位挑文件（v6）。
+     *
+     * 和 [pendingRefPkg] 同样的道理：`onActivityResult` 回来时只有 requestCode，
+     * 没有"哪个插件、哪个槽位"的信息。用户可能在等选择器的时候切走了，
+     * 所以两个都记下来，回来再对。
+     */
+    private var pendingModelPkg: String? = null
+    private var pendingModelRole: String? = null
+
     /** 参考音频那一行文字（选完之后要就地更新，不重建整页） */
     private var refLabel: android.widget.TextView? = null
 
@@ -513,6 +523,11 @@ class PluginPage(
         page.audioHost = audioHostFor(pkg)
         // 点结果图全屏看 —— 复用宿主已有的缩放视图，别写第二套手势
         page.zoomable = { bmp -> onZoomImage?.invoke(bmp) }
+        // v6：模型槽位的两个动作。选择器必须由**宿主 Activity** 弹 ——
+        // 插件是 bound Service，自己没有 startActivityForResult，
+        // 而且 Android 10+ 禁止后台启动 Activity
+        page.modelPicker = { role -> pickModelForPlugin(pkg, role) }
+        page.modelDeleter = { role -> deleteModelOf(pkg, role) }
         val v = page.build()
         currentUiPage = page
         openUiPkg = pkg
@@ -1428,6 +1443,20 @@ class PluginPage(
      * @return true = 这个请求码是我们的，已经处理完（调用方不要再往下走）
      */
     fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?): Boolean {
+        // v6：给插件挑模型文件
+        if (requestCode == REQ_PICK_PLUGIN_MODEL) {
+            val pkg = pendingModelPkg
+            val role = pendingModelRole
+            pendingModelPkg = null
+            pendingModelRole = null
+            if (pkg == null || role == null) return true
+            // 用户按了返回：不算错误，也别说"失败"，就是取消了
+            if (resultCode != Activity.RESULT_OK) return true
+            val uri = data?.data ?: return true
+            handModelToPlugin(pkg, role, uri)
+            return true
+        }
+
         if (requestCode != REQ_REF_AUDIO) return false
         val pkg = pendingRefPkg
         pendingRefPkg = null
@@ -1455,14 +1484,115 @@ class PluginPage(
         return true
     }
 
+    // ==================== v6：模型文件导入 ====================
+
+    /**
+     * 弹系统文件选择器，给某个模型槽位挑文件。
+     *
+     * ## 为什么由宿主弹，而不是插件
+     *
+     * 插件是 bound **Service**（另一个进程）：
+     * · `startActivityForResult` 是 Activity 的 API，Service 没有
+     * · Android 10+ 禁止后台启动 Activity —— 用户点「导入」那一刻插件不在前台
+     *
+     * 所以宿主代弹、代拿 FD、再转给插件。用户看到的和"宿主模型页导入"
+     * 是同一个系统选择器，操作感受完全一致。
+     *
+     * ## 为什么类型选「任意」
+     *
+     * 模型文件没有统一的 MIME：`.gguf` / `.litertlm` / `.safetensors` / `.bin`
+     * 在系统里多半被识别成 `application/octet-stream`。限定类型反而会把
+     * 用户真正想选的文件灰掉 —— 那种"文件明明在那儿却选不了"的体验很差。
+     *
+     * （这里不写那个通配类型字面量：它的后两个字符是块注释的结束符，
+     * 写进 KDoc 会把注释提前截断。）
+     */
+    private fun pickModelForPlugin(pkg: String, role: String) {
+        pendingModelPkg = pkg
+        pendingModelRole = role
+        val i = android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(android.content.Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+        }
+        val ok = try {
+            act.startActivityForResult(i, REQ_PICK_PLUGIN_MODEL)
+            true
+        } catch (t: Throwable) {
+            android.util.Log.w("PonkoPluginPage", "打开文件选择器失败", t)
+            false
+        }
+        if (!ok) {
+            pendingModelPkg = null
+            pendingModelRole = null
+            toast("打不开文件选择器")
+        }
+    }
+
+    /**
+     * 拿到用户选的文件 → 开 FD → 转给插件。
+     *
+     * ## 宿主不落盘
+     *
+     * 这里只 `openFileDescriptor` 拿一个只读 FD，**不复制、不缓存路径**。
+     * 插件的活是把这个 FD 读进它自己的私有目录。所以磁盘上最终只有
+     * 一份文件 —— 和"用户在宿主模型页导入"的代价相同。
+     *
+     * ## 为什么不留持久化授权
+     *
+     * 导入是一次性的：插件读完之后，那个 SAF Uri 对双方都没用了
+     * （插件存的是自己目录里的副本）。参考音频那条路要留授权，是因为
+     * 每次合成都要重新读原始文件；这里不是。
+     */
+    private fun handModelToPlugin(pkg: String, role: String, uri: android.net.Uri) {
+        val name = displayNameOf(uri) ?: uri.lastPathSegment ?: "model.bin"
+        val res = act.contentResolver
+
+        // 大小只用来给插件显示/校验；拿不到就 -1，别让它变成错误
+        val size = try {
+            res.openAssetFileDescriptor(uri, "r")?.use { it.length } ?: -1L
+        } catch (t: Throwable) {
+            -1L
+        }
+
+        toast("正在把「$name」交给插件…")
+        // 开 FD 和转发都要快，但 openFileDescriptor 可能碰网络盘，放后台
+        Thread {
+            var fd: android.os.ParcelFileDescriptor? = null
+            try {
+                fd = res.openFileDescriptor(uri, "r")
+                if (fd == null) {
+                    act.runOnUiThread { toast("读不到这个文件") }
+                    return@Thread
+                }
+                val ready = fd
+                act.runOnUiThread {
+                    // importModel 内部会关掉这份 FD（Binder 已 dup 一份给插件）
+                    session.importModel(pkg, role, ready, name, size)
+                    toast("已交给插件：$name")
+                }
+            } catch (t: Throwable) {
+                android.util.Log.w("PonkoPluginPage", "转发模型文件失败：$name", t)
+                runCatching { fd?.close() }
+                act.runOnUiThread {
+                    toast("转发失败：${t.message ?: t.javaClass.simpleName}")
+                }
+            }
+        }.start()
+    }
+
+    private fun deleteModelOf(pkg: String, role: String) {
+        session.deleteModel(pkg, role)
+        toast("已请求插件清除")
+    }
+
+
     private fun displayNameOf(uri: android.net.Uri): String? = try {
         act.contentResolver.query(uri, null, null, null, null)?.use { c ->
             val i = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
             if (i >= 0 && c.moveToFirst()) c.getString(i) else null
         }
     } catch (t: Throwable) {
-        null
-    }
+        null    }
 
     private fun smallSection(t: String): TextView = TextView(act).apply {
         text = t
@@ -2004,6 +2134,14 @@ class PluginPage(
          * 聊天里多出一张图"，很难查。
          */
         const val REQ_REF_AUDIO = 0x9E01
+
+        /**
+         * 给插件的模型槽位挑文件的请求码（v6）。
+         *
+         * 同样避开 MainActivity 的 1001–1020，也和 [REQ_REF_AUDIO] 分开 ——
+         * 两者走同一个 `onActivityResult`，共用一个码会把"选模型"当成"选音频"处理。
+         */
+        const val REQ_PICK_PLUGIN_MODEL = 0x9E02
 
         /** 等引擎卸载完成的轮询间隔。200ms ≈ 5 次/秒，对一次几百毫秒的操作够细 */
         private const val ENGINE_POLL_MS = 200L

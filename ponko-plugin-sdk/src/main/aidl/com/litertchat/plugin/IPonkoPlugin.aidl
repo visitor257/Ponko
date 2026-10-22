@@ -18,6 +18,8 @@ import com.litertchat.plugin.ModelBundle;
 import com.litertchat.plugin.EngineConfig;
 import com.litertchat.plugin.SynthesisRequest;
 import com.litertchat.plugin.EngineStatus;
+// v6：importModel 要传文件描述符
+import android.os.ParcelFileDescriptor;
 import com.litertchat.plugin.PluginError;
 import com.litertchat.plugin.UiSchema;
 
@@ -136,4 +138,59 @@ interface IPonkoPlugin {
      * `getApiVersion() < PluginConst.API_WITH_ACTION_LABELS` 跳过调用。
      */
     List<String> getActionLabels();
+
+    // ==================== 模型文件导入（v6）====================
+
+    /**
+     * 宿主替用户选好了一个模型文件，把只读 FD 交给插件。
+     *
+     * 对应 [UiType.MODEL_SLOT] 那个槽位的「导入」按钮。
+     *
+     * ## 为什么是宿主 → 插件，而不是插件自己弹选择器
+     *
+     * 插件是 bound Service，在另一个进程：`startActivityForResult` 是 Activity
+     * 的 API，Service 没有；而且 Android 10+ 禁止后台启动 Activity ——
+     * 用户点「导入」那一刻插件不在前台，真发起了也会被拦。
+     * 所以选择器只能宿主弹，插件只负责"收下这个 FD"。
+     *
+     * ## 插件必须做到的几件事
+     *
+     * 1. **在 worker 线程读**。这是 `oneway` 但读 2.8GB 会占死 Binder 线程池，
+     *    之后所有回调都进不来（包括 `cancel`）
+     * 2. **读完 close 掉 [fd]**。它是 Binder dup 过的一份，关它不影响宿主；
+     *    不关就是 FD 泄漏（每进程默认 1024 个）
+     * 3. 落盘到**自己的私有目录**（`filesDir` / `getExternalFilesDir`）。
+     *    宿主目录你读不到，给了路径也没用
+     * 4. 完事调 `notifySchemaChanged()`，新状态从 `buildSettingsSchema()` 的
+     *    `UiItem.value` 里报出来
+     *
+     * ## 宿主那边落盘了吗
+     *
+     * **没有。** 宿主只是把 SAF 给出的 FD 转发过来，自己不留副本。
+     * 所以磁盘上最终只有你这一份 —— 和用户在宿主模型页导入的代价相同。
+     *
+     * @param role        [UiType.MODEL_SLOT] 的 key，插件用它决定放哪、算什么角色
+     * @param fd          只读 FD。**所有权归插件**，读完自己 close
+     * @param displayName 用户看到的原始文件名，仅用于日志/显示，**不要拿它拼路径**
+     * @param sizeBytes   文件大小；SAF 给不出时是 -1
+     *
+     * 旧插件（SDK v5 及更早）没有这个方法，宿主按
+     * `getApiVersion() < PluginConst.API_WITH_MODEL_IMPORT` 跳过调用。
+     */
+    oneway void importModel(in String role, in ParcelFileDescriptor fd,
+                            in String displayName, long sizeBytes);
+
+    /**
+     * 删除某个槽位已经导入的模型文件。
+     *
+     * 对应 [UiType.MODEL_SLOT] 那行的「清除」按钮。插件自己删自己私有目录里的文件
+     * —— 宿主删不了（那是别的包的目录）。
+     *
+     * 删完同样调 `notifySchemaChanged()` 刷新状态。
+     *
+     * 引擎正在用这个模型时该不该允许删，由插件自己判断：
+     * 合理的做法是先把 `UiItem.enabled` 设成 `false` 灰掉按钮，
+     * 而不是等宿主点了再报错。
+     */
+    oneway void deleteModel(in String role);
 }

@@ -628,6 +628,27 @@ class PluginSession(private val context: Context) {
         connections.firstOrNull { it.packageName == pkg }?.invokeAction(key)
     }
 
+    /** v6：插件支不支持导入模型（决定槽位上那两按钮画不画） */
+    fun supportsModelImport(pkg: String): Boolean =
+        connections.firstOrNull { it.packageName == pkg }?.supportsModelImport == true
+
+    /** v6：把用户选好的模型文件转给插件（FD 由 [PluginConnection] 负责关） */
+    fun importModel(pkg: String, role: String, fd: android.os.ParcelFileDescriptor,
+                    displayName: String, sizeBytes: Long) {
+        val c = connections.firstOrNull { it.packageName == pkg }
+        if (c == null) {
+            // 没连上就别泄漏 FD
+            runCatching { fd.close() }
+            return
+        }
+        c.importModel(role, fd, displayName, sizeBytes)
+    }
+
+    /** v6：让插件删掉某个槽位的文件 */
+    fun deleteModel(pkg: String, role: String) {
+        connections.firstOrNull { it.packageName == pkg }?.deleteModel(role)
+    }
+
     // ==================== 释放 ====================
 
     /** 页面销毁时调。解绑全部连接（插件进程会自己降级） */
