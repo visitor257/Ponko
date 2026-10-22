@@ -127,7 +127,7 @@ interface IPonkoPlugin {
      * 认不出的 key、空值、过长的值都会被宿主忽略（逐项跳过，不影响其它项）。
      *
      * 可用的 key 见 [ActionLabel]：`engine.load` / `engine.unload` /
-     * `preview` / `preview.again` / `play` / `stop` / `save`。
+     * `reasoning` / `play` / `stop` / `save`。
      *
      * ⚠ 只改**文字**，改不了按钮的位置、个数、颜色和行为 ——
      * 按钮是宿主的界面，插件只借它的名字。

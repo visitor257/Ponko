@@ -153,7 +153,7 @@ abstract class PonkoPluginService : Service() {
      * )
      * ```
      *
-     * **不覆写就用宿主默认**（加载引擎 / 卸载引擎 / 试听 / 重新合成 / 播放 / 停止 / 保存）。
+     * **不覆写就用宿主默认**（加载引擎 / 卸载引擎 / 合成 / 播放 / 停止 / 保存）。
      *
      * ## 什么时候值得改
      *
@@ -189,7 +189,7 @@ abstract class PonkoPluginService : Service() {
      * ⚠ **绝不能用 `modelBytes > 0` 当"加载过"的标志**。
      * 没有模型文件的插件（Echo 测试插件、纯算法插件）加载成功后 `modelBytes` 依然是 0，
      * 拿体积判断会让它在**第一次合成结束**时被重置成 `UNLOADED` ——
-     * 用户第二次点试听就收到「引擎尚未加载」，而插件自己明明还持有引擎。
+     * 用户第二次点合成就收到「引擎尚未加载」，而插件自己明明还持有引擎。
      * 这是实际踩过的坑（2026-10-21）。
      */
     @Volatile private var engineLoaded = false

@@ -268,10 +268,8 @@ class PluginPage(
 
             override fun onSpeakDone(pkg: String, result: com.litertchat.plugin.ResultBundle) {
                 finishRequest()
-                setUiHint(
-                    "完成：${"%.1f".format(result.durationMs / 1000.0)} 秒音频，" +
-                        "耗时 ${"%.1f".format(result.elapsedMs / 1000.0)} 秒"
-                )
+                // 状态提示统一由 storeAudio 出（它知道文件到底写没写成），
+                // 这里只留诊断信息
                 setDiag(pkg, buildString {
                     append("model/采样率：").append(result.sampleRate).append(" Hz / ")
                     append(result.channelCount).append(" ch\n")
@@ -281,7 +279,7 @@ class PluginPage(
                         append("\n— debugInfo —\n").append(result.debugInfo)
                     }
                 })
-                playResult(pkg, result)
+                storeAudio(pkg, result)
             }
 
             override fun onSpeakError(pkg: String, err: PluginError) {
@@ -389,9 +387,10 @@ class PluginPage(
         // 功能按钮由**宿主**提供：插件只声明"能做什么"（能力），
         // 怎么触发（按钮文字、放哪儿、状态显示在哪儿）是宿主的职责。
         //
-        // 按钮分工：
+        // 按钮分工（**一个动作一个按钮**）：
         //   · 加载 / 卸载 —— 引擎生命周期（和 Ponko 模型页的 toggleLoad 一个思路）
-        //   · 试听 —— 发起一次合成再播放
+        //   · 合成 —— 只跑推理、产出文件，不播放
+        //   · 播放 —— 只重放那个文件，不碰推理
         //   · 停止 —— 调 session.stopSpeaking()，插件那边是真打断（每块都查取消标志）
         //   · 保存 —— 把刚生成的音频复制到「音乐/Ponko」，否则它只能听一次
         val isTts = item.canSpeak
@@ -425,28 +424,25 @@ class PluginPage(
                 }
                 add(
                     PluginUiPage.HostAction(
-                        id = "preview",
-                        // 这次进来如果已经有产物，直接就叫「重新合成」——
-                        // 否则要等下一次合成完才改名，用户第一次看到的还是「试听」，
-                        // 仍然会以为它只是重放
-                        label = if (lastAudioPkg == pkg && lastAudioFile?.exists() == true) {
-                            session.actionLabel(pkg, actionLabels.PREVIEW_AGAIN)
-                        } else {
-                            session.actionLabel(pkg, actionLabels.PREVIEW)
-                        },
+                        id = "reasoning",
+                        // 名字固定，**不随状态变**。
+                        // 曾经有过「试听 → 重新合成」的改名：那时合成完会自动播，
+                        // 同一个按钮在"还没听过"和"听过了"两种状态下含义不同。
+                        // 现在只合成不播放，点几次都是同一个动作，改名就没有理由了。
+                        label = session.actionLabel(pkg, actionLabels.REASONING),
                         help = if (item.isTest)
-                            "这是测试插件：试听会播放一段琶音，用来验证音频链路是否通畅"
+                            "这是测试插件：会生成一段琶音，用来验证音频链路是否通畅（不自动播放）"
                         else
-                            "用上面填的参数合成一段音频。手机上 5 秒语音约需 1~2 分钟",
+                            "用上面填的参数合成一段音频，生成完点「播放」试听。" +
+                                "手机上 5 秒语音约需 1~2 分钟",
                         enabled = !speaking,
                         run = { testSpeak(pkg, isTts) },
                     )
                 )
                 // 「播放」只重放上一次的结果，不重新推理。
                 //
-                // 为什么必须有：以前只有「试听」，而它每次都重新合成 ——
-                // 想再听一遍就只能再等 1~2 分钟。宿主其实已经留着上一次的文件了
-                // （见 lastAudioFile），只是之前只拿去给「保存」判可点。
+                // 为什么必须有：以前合成完就自动播，想再听一遍只能再等 1~2 分钟。
+                // 现在合成和播放是两个独立动作 —— 合成只管产出文件，听它点这里。
                 add(
                     PluginUiPage.HostAction(
                         id = "play",
@@ -1001,10 +997,10 @@ class PluginPage(
     }
 
     /**
-     * 试听（**指定插件**，不再是"谁有 TTS 就用谁"）。
+     * 跑一次合成（**指定插件**，不再是"谁有 TTS 就用谁"）。
      *
-     * 用户站在某个插件的界面里点试听，就该用那个插件。
-     * 测试插件也允许 —— 试听对它是诊断整条音频链路。
+     * 用户站在某个插件的界面里点「合成」，就该用那个插件。
+     * 测试插件也允许 —— 对它这是诊断整条音频链路的动作。
      */
     private fun testSpeak(pkg: String, isTts: Boolean) {
         // 每次用户主动点，都重新给一次补救机会（但也只给一次）
@@ -1015,7 +1011,7 @@ class PluginPage(
     }
 
     /**
-     * 真正发起一次试听。用户点击、以及"引擎重载完自动补发"都走这里。
+     * 真正发起一次合成。用户点击、以及"引擎重载完自动补发"都走这里。
      *
      * 参数从 [PreviewParams] 取（界面上填的那份），不再是写死的一句话。
      */
@@ -1047,11 +1043,11 @@ class PluginPage(
         closeRefFd()
         refFd = fd
         speaking = true
-        currentUiPage?.setActionEnabled("preview", false)
+        currentUiPage?.setActionEnabled("reasoning", false)
         currentUiPage?.setActionEnabled("stop", true)
 
         setUiHint(
-            "正在生成…（手机上 5 秒语音约需 1~2 分钟，可随时点" +
+            "正在合成…（手机上 5 秒语音约需 1~2 分钟，可随时点" +
                 "「${session.actionLabel(pkg, com.litertchat.plugin.ActionLabel.STOP)}」）"
         )
         val id = session.speakTo(
@@ -1066,7 +1062,7 @@ class PluginPage(
         if (id == null) {
             speaking = false
             closeRefFd()
-            currentUiPage?.setActionEnabled("preview", true)
+            currentUiPage?.setActionEnabled("reasoning", true)
             currentUiPage?.setActionEnabled("stop", false)
             setUiHint("发起失败")
         }
@@ -1088,7 +1084,7 @@ class PluginPage(
     private fun finishRequest() {
         speaking = false
         closeRefFd()
-        currentUiPage?.setActionEnabled("preview", true)
+        currentUiPage?.setActionEnabled("reasoning", true)
         currentUiPage?.setActionEnabled("stop", false)
     }
 
@@ -1143,7 +1139,7 @@ class PluginPage(
             if (persist) PreviewParams.save(act, pkg, next)
         }
 
-        box.addView(smallSection("试听参数"), matchWrap())
+        box.addView(smallSection("合成参数"), matchWrap())
 
         // ---- 文本 ----
         //
@@ -1361,7 +1357,7 @@ class PluginPage(
             type = "audio/*"
         }
         val ok = try {
-            act.startActivityForResult(i, REQ_PREVIEW_REF)
+            act.startActivityForResult(i, REQ_REF_AUDIO)
             true
         } catch (t: Throwable) {
             android.util.Log.w("PonkoPluginPage", "打开音频选择器失败", t)
@@ -1379,7 +1375,7 @@ class PluginPage(
      * @return true = 这个请求码是我们的，已经处理完（调用方不要再往下走）
      */
     fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?): Boolean {
-        if (requestCode != REQ_PREVIEW_REF) return false
+        if (requestCode != REQ_REF_AUDIO) return false
         val pkg = pendingRefPkg
         pendingRefPkg = null
         if (pkg == null) return true
@@ -1478,20 +1474,32 @@ class PluginPage(
         paramsCache.getOrPut(pkg) { PreviewParams.load(act, pkg) }
 
     /**
-     * 播放插件回传的音频。
+     * 收下插件回传的音频：落盘，并让「播放 / 保存」变成可点。
      *
-     * 做法是**先把 FD 内容落到文件再播**，而不是 `MediaPlayer.setDataSource(fd)` ——
-     * 后者对 WAV 需要精确的 offset/length，而 FD 在跨进程传递后长度信息不一定可靠，
+     * ## 这里**不播放**（2026-10-22 改）
+     *
+     * 之前合成完会直接 `playFile(f)` 自动播。那样做有两个后果：
+     *
+     * 1. **一个按钮干了两件事**。用户想要的是"生成一段话"，却被迫听完；
+     *    想在安静场合用就只能马上点停止。
+     * 2. **逼出了一个多余的 key**。合成即播放之后，同一个按钮在"还没听过"和
+     *    "听过了"两种状态下含义不同（一个是听，一个是再算一遍），只好加
+     *    `preview.again` 给它改名。改成仅合成之后，点几次都是同一个动作，
+     *    那个 key 就没有存在理由了 —— 它是自动播放的补丁，不是需求。
+     *
+     * 现在：合成 → 出文件 → 点「播放」才出声。两件事各有一个按钮。
+     *
+     * ## 做法是先把 FD 内容落到文件，而不是 `setDataSource(fd)`
+     *
+     * 后者对 WAV 需要精确的 offset/length，而 FD 跨进程传递后长度信息不一定可靠，
      * 容易出现「播不动但不报错」。
      *
-     * ## 落盘位置变了（2026-10-21）
+     * ## 落盘位置（2026-10-21）
      *
-     * 以前固定写 `cache/plugin_preview.wav`，**每次覆盖** ——
-     * 生成的音频只能听一次，用户想留也留不住。
-     * 现在带时间戳写进 `getExternalFilesDir("tts")`，并把它记成
-     * 「保存」的目标（真正保存到音乐库由 [saveAudio] 做）。
+     * 不再固定写 `cache/plugin_preview.wav` 每次覆盖 —— 那样生成的音频只能听一次。
+     * 现在带时间戳写进 `getExternalFilesDir("tts")`，并记成「保存」的目标。
      */
-    private fun playResult(pkg: String, result: com.litertchat.plugin.ResultBundle) {
+    private fun storeAudio(pkg: String, result: com.litertchat.plugin.ResultBundle) {
         // 小结果直接内联，省掉 FD
         val bytes = result.inlineAudio ?: result.audio?.let { pfd ->
             try {
@@ -1511,24 +1519,30 @@ class PluginPage(
             lastAudioPkg = pkg
             currentUiPage?.setActionEnabled("save", true)
             currentUiPage?.setActionEnabled("play", true)
-            // 有结果了，「试听」的含义就不再是"试听"而是"再来一次推理" ——
-            // 名字不改的话，用户会以为点它只是重放，白等一分钟后才发现不是。
-            currentUiPage?.setActionLabel(
-                "preview",
-                session.actionLabel(pkg, com.litertchat.plugin.ActionLabel.PREVIEW_AGAIN)
+            // 合成完了，但**不出声** —— 得明确告诉用户音频在哪、下一步点哪儿，
+            // 否则他会以为没成功（这是"仅合成"唯一要付的代价）
+            val playLabel = session.actionLabel(
+                pkg, com.litertchat.plugin.ActionLabel.PLAY
             )
-            playFile(f)
+            setUiHint(
+                "已生成 %.1f 秒音频（耗时 %.1f 秒），点「%s」试听".format(
+                    result.durationMs / 1000.0,
+                    result.elapsedMs / 1000.0,
+                    playLabel,
+                )
+            )
         } catch (t: Throwable) {
-            setUiHint("播放失败：${t.javaClass.simpleName}")
+            // 这里失败的是**写文件**，不是播放 —— 报"播放失败"会把人引向错误方向
+            setUiHint("音频保存失败：${t.javaClass.simpleName}")
         }
     }
 
     /**
      * 播放一个已存在的音频文件。
      *
-     * 抽出来是为了让**「播放」和「重新合成后的自动播放」用同一段代码** ——
-     * 之前这段逻辑内嵌在 playResult 里，想加"重放"就只能复制一遍，
-     * 而复制出来的两份迟早会不一致（比如一处加了对播放失败的提示、另一处忘了）。
+     * 现在只有「播放」按钮会调它 —— 合成**不会**自动播放。
+     * 抽成独立函数的理由：播放这件事只该有一份实现，
+     * 万一以后又要在别处出声（比如朗读路由），不能再抄一遍。
      */
     private fun playFile(f: java.io.File) {
         // 提示里会引用「保存」按钮的名字，所以得知道是哪个插件 ——
@@ -1579,7 +1593,7 @@ class PluginPage(
     private fun saveAudio() {
         val f = lastAudioFile
         if (f == null || !f.exists()) {
-            setUiHint("没有可保存的音频（先生成一次试听）")
+            setUiHint("没有可保存的音频（先合成一次）")
             return
         }
         if (android.os.Build.VERSION.SDK_INT < 29) {
@@ -1854,7 +1868,7 @@ class PluginPage(
          * 否则会串到宿主的其它回调里 —— 那种 bug 表现为"选完音频，
          * 聊天里多出一张图"，很难查。
          */
-        const val REQ_PREVIEW_REF = 0x9E01
+        const val REQ_REF_AUDIO = 0x9E01
 
         /** 等引擎卸载完成的轮询间隔。200ms ≈ 5 次/秒，对一次几百毫秒的操作够细 */
         private const val ENGINE_POLL_MS = 200L
