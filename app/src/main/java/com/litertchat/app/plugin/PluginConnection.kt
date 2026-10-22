@@ -124,6 +124,19 @@ class PluginConnection(
         private set
 
     /**
+     * 插件比宿主认识的 SDK 更新（`pluginApi > API_MAX_SUPPORTED`）。
+     *
+     * **这种情况下插件照常能用**，只是：
+     * · 宿主不认识的新控件类型会降级成「标签 + 值 + 需要更新 Ponko」
+     * · 新回调（如 v4 的 `onImage` / `onUiPatch`）会被静默丢弃
+     *
+     * UI 上要提示用户"更新 Ponko 可获得完整功能"——
+     * **别说成"不兼容"**，那会让用户去更新一个已经最新的插件，白折腾。
+     */
+    @Volatile var pluginNewerThanHost: Boolean = false
+        private set
+
+    /**
      * 这个插件是否支持界面（SDK v[PluginConst.API_WITH_SCHEMA] 起）。
      *
      * **必须按版本判断，不能靠 try-catch 兜** —— AIDL 调用遇到不认识的函数时，
@@ -289,7 +302,23 @@ class PluginConnection(
             val p = IPonkoPlugin.Stub.asInterface(binder)
             plugin = p
 
-            // ---- 版本校验：不匹配就**不绑定**，避免后续调用全炸 ----
+            // ---- 版本校验 ----
+            //
+            // ## 只拒绝**更低**的版本，不拒绝更高的
+            //
+            // 原来的判断是 `api !in MIN..MAX` → 拒绝。这个方向是错的：
+            // 新版插件配旧版宿主时，宿主会**直接拒连**，用户看到
+            // 「插件 SDK v4 不兼容，请更新插件」—— 但插件已经是最新的，
+            // 他要更新的是 Ponko。更糟的是插件本来能用（老功能一个没少），
+            // 只是宿主不认识新增的那几个控件。
+            //
+            // 这样做之所以安全，是因为 AIDL 只**在末尾追加**方法：
+            // 老宿主收到不认识的 transaction code 会走 Stub 的 default 分支
+            // 返回 false（可能是 null / 0 / 全零 Parcel），不抛异常。
+            // 特性判断也都写成 `api >= API_WITH_XXX`，天然是"认不出来就当没有"。
+            //
+            // 所以判据是：**低于下限 = 真不兼容**（老插件缺宿主必需的方法），
+            // **高于上限 = 能用，但要让用户知道更新 Ponko 才有完整功能**。
             val api = try {
                 p.apiVersion
             } catch (t: Throwable) {
@@ -297,16 +326,21 @@ class PluginConnection(
                 safeUnbind()
                 return
             }
-            if (api !in PluginConst.API_MIN_SUPPORTED..PluginConst.API_MAX_SUPPORTED) {
+            if (api < PluginConst.API_MIN_SUPPORTED) {
                 setState(
                     State.FAILED,
-                    "插件 SDK v$api 不兼容（当前支持 v${PluginConst.API_MIN_SUPPORTED}–v${PluginConst.API_MAX_SUPPORTED}），请更新插件"
+                    "插件 SDK v$api 太旧（宿主最低支持 v${PluginConst.API_MIN_SUPPORTED}），请更新插件"
                 )
                 safeUnbind()
                 return
             }
-            // 记下来：决定「能不能调插件界面」以及「UI 上要不要提示插件偏旧」
+            // 记下来：决定「能不能调插件界面」以及「UI 上要不要提示版本差异」
             pluginApi = api
+            pluginNewerThanHost = api > PluginConst.API_MAX_SUPPORTED
+            if (pluginNewerThanHost) {
+                Log.i(TAG, "[$packageName] 插件 SDK v$api 比宿主（v${PluginConst.API_MAX_SUPPORTED}）新，" +
+                        "老功能照常可用，不认识的控件会降级显示")
+            }
 
             manifest = try {
                 p.manifest
