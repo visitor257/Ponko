@@ -581,17 +581,22 @@ class PluginUiPage(
 
         // 分组 / 标签页要按顺序累积，所以不能简单 forEach —— 需要维护「当前往哪个容器里加」。
         //
-        // ## 为什么是栈，且元素有两种形状
+        // ## 为什么是栈，且元素有四种形状
         //
-        // `GROUP_START` / `TABS_START` 都会开一个新区块、`*_END` 关掉它，层数不固定
-        // （用户要的「页中页中页」就是三层标签页）。用一个栈最省事。
+        // `GROUP_START` / `TABS_START` / `ROW_START` / `GRID_START` 都会开一个
+        // 新区块、`*_END` 关掉它，层数不固定（「页中页中页」「行里套页」「网格里套分组」
+        // 都只是再套一层）。用一个栈最省事。
         //
-        // 但两种区块**往里加东西的方式不同**：
+        // 但四种区块**往里加东西的方式不同**：
         // · 分组（[Slot.Box]）只有一条内容流，直接往 body 里加
         // · 标签页（[Slot.Tab]）有多个页，要往**最后开始的那一页**里加
         //   （不是"用户正在看的那一页" —— 那两者在渲染期不是一回事，
         //    见 [TabGroup.fillTarget] 里记的那个 bug）
-        // 所以栈元素不能只是一个 `LinearLayout`。
+        // · 横向行（[Slot.Row]）用 weight 分宽度，不是 MATCH_PARENT
+        // · 网格（[Slot.Grid]）还要决定"这一项该进第几行的哪一格"
+        //
+        // 所以栈元素不能只是一个 `LinearLayout`，而"怎么加"也不能各处自己写 ——
+        // 统一走 [place]。
         val target = ArrayDeque<Slot>()
         target.addLast(Slot.Box(host))
 
@@ -599,7 +604,7 @@ class PluginUiPage(
             when (item.type) {
                 UiType.GROUP_START -> {
                     val group = buildGroup(item)
-                    target.last().content().addView(group.first, matchWrap())
+                    place(target.last(), group.first)
                     target.addLast(Slot.Box(group.second))
                 }
                 UiType.GROUP_END -> {
@@ -614,7 +619,7 @@ class PluginUiPage(
                     // 嵌在分组里的 pager 横向手势会和纵向滚动打架
                     val swipeable = depth == 0 && target.size == 1
                     val tabs = buildTabGroup(item, depth, swipeable)
-                    target.last().content().addView(tabs.view, matchWrap())
+                    place(target.last(), tabs.view)
                     target.addLast(Slot.Tab(tabs))
                 }
                 UiType.TAB -> {
@@ -637,6 +642,34 @@ class PluginUiPage(
                         android.util.Log.w("PonkoPluginUi", "多余的 TABS_END，已忽略")
                     }
                 }
+                UiType.ROW_START -> {
+                    val row = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL }
+                    place(target.last(), row)
+                    target.addLast(Slot.Row(row, parseWeights(item.value), dp(8)))
+                }
+                UiType.ROW_END -> {
+                    // 只弹 Row：插件多写一个 ROW_END 时若无条件 pop，
+                    // 会把外面的分组弹掉，后面内容全跑到更外层 —— 那种错位比
+                    // "忽略多余结束标记"难查得多（TABS_END 同理）
+                    if (target.lastOrNull() is Slot.Row) target.removeLast()
+                    else android.util.Log.w("PonkoPluginUi", "多余的 ROW_END，已忽略")
+                }
+                UiType.GRID_START -> {
+                    val grid = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL }
+                    place(target.last(), grid)
+                    // 列数：空/写错 → 2；上限 4（5 列以上每格不到 60dp，文字全被吃掉）
+                    val cols = item.value.trim().toIntOrNull()?.coerceIn(1, 4) ?: 2
+                    target.addLast(Slot.Grid(grid, cols, dp(8)))
+                }
+                UiType.GRID_END -> {
+                    val top = target.lastOrNull()
+                    if (top is Slot.Grid) {
+                        top.finish()          // 补最后一行占位，见 Grid.finish
+                        target.removeLast()
+                    } else {
+                        android.util.Log.w("PonkoPluginUi", "多余的 GRID_END，已忽略")
+                    }
+                }
                 UiType.HOST_SLOT -> {
                     // v7：插件挖的坑，把宿主功能块搬进来。
                     // v9.1：value 可以指定分段（actions / params / diag），
@@ -648,13 +681,16 @@ class PluginUiPage(
                     val blk = takeHostSlot(item.value)
                     if (blk != null) {
                         (blk.parent as? ViewGroup)?.removeView(blk)
-                        target.last().content()
-                            .addView(blk, matchWrap().apply { topMargin = dp(10) })
+                        // 走 place 而不是直接 addView：在 Row / Grid 里要按权重放，
+                        // 而且那里不能加 topMargin（纵向容器的语义）
+                        place(target.last(), blk)
                     }
                 }
                 else -> {
                     val v = renderItem(item) ?: return@forEach
-                    target.last().content().addView(v, matchWrap())
+                    // DIVIDER / SPACER 自带尺寸，别让 place 用 WRAP_CONTENT 覆盖
+                    val keep = item.type == UiType.DIVIDER || item.type == UiType.SPACER
+                    place(target.last(), v, keepSize = keep)
                 }
             }
         }
@@ -668,11 +704,19 @@ class PluginUiPage(
         // 少了这一步，上一帧搬走的块会跟着那个已脱离视图树的父容器一起消失
         if (actionBlock != null && !hostSlotConsumed) ensureActionBlockAtTop()
 
-        // 插件可能漏写 TABS_END —— 那些组在 TABS_END 分支里`finish`不到，
-        // 这里补一次，保证空标签条一定被藏掉、恢复上次那页也一定发生。
-        // 从内到外弹：内层先收尾，再收外层（外层的高度依赖内层）
+        // 插件可能漏写 *_END —— 那些区块在这里收尾。从内到外弹：
+        // 内层先收尾，再收外层（外层的高度依赖内层）
+        //
+        // 三种收尾各不相同：
+        // · Tab  → finish()：藏掉空标签条、按 key 恢复上次那页、给 pager 定高
+        // · Grid → finish()：最后一行不满时补透明占位，否则已填的格子会被拉满整行
+        // · Row  / Box → 无需收尾（内容已经加进去了）
         while (target.size > 1) {
-            (target.removeLast() as? Slot.Tab)?.group?.finish()
+            when (val top = target.removeLast()) {
+                is Slot.Tab -> top.group.finish()
+                is Slot.Grid -> top.finish()
+                else -> Unit
+            }
         }
 
         // 顶部那排要**最后**填：schemaDeclaredActions 是上面渲染时攒出来的，
@@ -1240,6 +1284,9 @@ class PluginUiPage(
         UiType.AUDIO -> audioBar(item)
         // ---- v6：模型文件槽位 ----
         UiType.MODEL_SLOT -> modelSlotRow(item)
+        // ---- v10：纯排版 ----
+        UiType.DIVIDER -> dividerView()
+        UiType.SPACER -> spacerView(item)
         // 插件用了宿主还不认识的控件。
         //
         // **这是跨版本兼容的关键分支**：绝不能崩、也不能整页不显示 ——
@@ -1628,6 +1675,155 @@ class PluginUiPage(
         class Tab(val group: TabGroup) : Slot() {
             // ⚠ 是 **fillTarget**，不是 currentPage —— 这两者不一样，见 fillTarget 的说明
             override fun content(): LinearLayout = group.fillTarget()
+        }
+
+        /**
+         * 横向容器（v10）。
+         *
+         * 子项按 [weights] 分配宽度（`weight=1` 那种），不是 `MATCH_PARENT` ——
+         * 否则后加的会把先加的挤成 0 宽。
+         *
+         * @param gapPx 子项间距。第 0 个不加左边距
+         */
+        class Row(
+            val body: LinearLayout,
+            private val weights: List<Float>,
+            private val gapPx: Int,
+        ) : Slot() {
+            private var count = 0
+            override fun content(): LinearLayout = body
+
+            /** 下一个子项加到哪、用什么参数。份数不够时按 1 补 */
+            fun next(): Pair<LinearLayout, LinearLayout.LayoutParams> {
+                val w = weights.getOrElse(count) { 1f }
+                val p = LinearLayout.LayoutParams(
+                    0, LinearLayout.LayoutParams.WRAP_CONTENT, w
+                )
+                if (count > 0) p.leftMargin = gapPx
+                count++
+                return body to p
+            }
+        }
+
+        /**
+         * 等宽网格（v10）。
+         *
+         * 实现是"外层竖向 + 每满 [cols] 个就新开一行横向"，而不是
+         * `android.widget.GridLayout`：
+         * · GridLayout 的 `columnWeight` 只在 API 21+ 行为稳定
+         * · 它按"最大子项"定列宽，几个长度不同的按钮会出现参差的格子
+         *
+         * 自己数行虽然土，但每个格子宽度**一定相等**，而且和 [Row] 共用
+         * 同一套 `weight` 逻辑。
+         */
+        class Grid(
+            val body: LinearLayout,
+            private val cols: Int,
+            private val gapPx: Int,
+        ) : Slot() {
+            private var row: LinearLayout? = null
+            private var inRow = 0
+
+            override fun content(): LinearLayout = body
+
+            fun next(): Pair<LinearLayout, LinearLayout.LayoutParams> {
+                if (row == null || inRow >= cols) {
+                    val r = LinearLayout(body.context).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                    }
+                    body.addView(r, LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).apply {
+                        // 第二行起才有上边距。body.childCount 在 addView 前是几就代表
+                        // 已有几行 —— 这里刚 new 一个 r，所以 >0 表示不是第一行
+                        if (body.childCount > 0) topMargin = gapPx
+                    })
+                    row = r
+                    inRow = 0
+                }
+                val p = LinearLayout.LayoutParams(
+                    0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
+                )
+                if (inRow > 0) p.leftMargin = gapPx
+                inRow++
+                return (row ?: body) to p
+            }
+
+            /**
+             * 收尾：最后一行不满时补**透明占位**，把已有的格子撑回 1/[cols] 宽。
+             *
+             * ## 为什么必须补
+             *
+             * 不补的话，最后一行只有 1 个子项时它是唯一的 `weight=1`，
+             * 会被拉满整行 —— 上面几行是三列、最后一行全宽，看起来像布局坏了。
+             *
+             * ## 为什么占位而不是别的
+             *
+             * 占位是 `View`，没有背景、没有内容，视觉上就是空白，
+             * 等于"剩下的格子不占位"；但它参与了 weight 计算，
+             * 所以已有格子宽度正确。两者只能这样兼得。
+             */
+            fun finish() {
+                val r = row ?: return
+                if (inRow <= 0) return
+                while (inRow < cols) {
+                    r.addView(View(body.context), LinearLayout.LayoutParams(
+                        0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
+                    ).apply { if (inRow > 0) leftMargin = gapPx })
+                    inRow++
+                }
+            }
+        }
+    }
+
+    /**
+     * 解析 `ROW_START` 的 `value` → 各子项的宽度份数。
+     *
+     * | 输入 | 结果 |
+     * |---|---|
+     * | `""` | 空列表 → 所有子项按 1 份（等分） |
+     * | `"1,2"` | `[1f, 2f]` |
+     * | `"1, 2 ,3"` | `[1f, 2f, 3f]`（容忍空格） |
+     * | `"1,x,3"` | `[1f, 1f, 3f]`（坏的那一项按 1 补，不整行作废） |
+     * | `"0"` / 负数 | 按 1 处理 —— weight=0 会让那个子项宽度变 0，等于藏起来 |
+     *
+     * 为什么要容忍坏值而不是报错：布局参数写错是插件侧最容易出的问题，
+     * 而"整行按默认等分"比"整行消失"有用得多。
+     */
+    private fun parseWeights(value: String): List<Float> {
+        val t = value.trim()
+        if (t.isEmpty()) return emptyList()
+        return t.split(',')
+            .map { it.trim().toFloatOrNull()?.takeIf { f -> f > 0f } ?: 1f }
+    }
+
+    /**
+     * 把一个渲染好的子项放进 [slot]。
+     *
+     * 统一入口的理由：[Slot.Box] / [Slot.Tab] 用 `MATCH_PARENT`，
+     * [Slot.Row] / [Slot.Grid] 用 `weight`。如果各处自己 `addView`，
+     * 加一种容器就要改一遍所有调用点 —— 那正是"每加一种布局都要动宿主"
+     * 的老毛病。
+     *
+     * @param keepSize true = 保留控件**自己设的** layoutParams。
+     *   [UiType.DIVIDER] / [UiType.SPACER] 需要它：`addView(v, params)` 会
+     *   无条件替换掉 v 原有的 params，不加这个开关，spacer 设的
+     *   `height = dp(n)` 会被 `WRAP_CONTENT` 冲掉、高度变成 0 ——
+     *   表现是"写了 spacer 但没空隙"，而且完全看不出原因。
+     */
+    private fun place(slot: Slot, v: View, keepSize: Boolean = false) {
+        // Row / Grid 永远用容器给的 weight，keepSize 在那里没有意义
+        // （高度由内容决定、宽度由 weight 决定）
+        when (slot) {
+            is Slot.Box -> slot.body.addView(
+                v, if (keepSize && v.layoutParams != null) v.layoutParams else matchWrap()
+            )
+            is Slot.Tab -> slot.content().addView(
+                v, if (keepSize && v.layoutParams != null) v.layoutParams else matchWrap()
+            )
+            is Slot.Row -> slot.next().let { (c, lp) -> c.addView(v, lp) }
+            is Slot.Grid -> slot.next().let { (c, lp) -> c.addView(v, lp) }
         }
     }
 
@@ -2895,6 +3091,49 @@ class PluginUiPage(
         }, matchWrap())
         if (item.help.isNotBlank()) box.addView(smallHint(item.help), matchWrap())
         return box
+    }
+
+    // ==================== v10：纯排版控件 ====================
+
+    /**
+     * 分割线（v10）。
+     *
+     * 颜色用 [PonkoTheme.divider]（半透明），**由宿主决定** —— 插件只说
+     * "这里要一条线"，不说它什么颜色。这就是"结构归插件、样式归宿主"。
+     *
+     * 在 [Slot.Row] 里它会变成一条细竖线（宽度由 weight 决定、高度 1dp）——
+     * 同一个类型在横向容器里自然成为竖分隔，不需要再定义一个"竖分割线"。
+     */
+    private fun dividerView(): View {
+        val v = View(act)
+        v.setBackgroundColor(pal.divider)
+        v.minimumHeight = 1
+        v.layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, 1
+        ).apply { topMargin = dp(8); bottomMargin = dp(8) }
+        return v
+    }
+
+    /**
+     * 空白占位（v10）。
+     *
+     * `value` = 高度（dp），空 = 8。
+     *
+     * **放进 Row / Grid 时高度被忽略**，宽度改由容器的 weight 决定 ——
+     * 那里它的作用是"把两边推开"。上层 [place] 会用 weight 参数覆盖这里设的
+     * layoutParams，所以这段高度只在纵向容器里生效。
+     *
+     * 这是 SPACER 最关键的价值：没有它，[Slot.Row] 只能等分，
+     * 做不出"左边一组、右边一组"这种对齐。
+     */
+    private fun spacerView(item: UiItem): View {
+        val h = item.value.trim().toIntOrNull()?.takeIf { it >= 0 } ?: 8
+        val v = View(act)
+        v.minimumHeight = dp(h)
+        v.layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, dp(h)
+        )
+        return v
     }
 
     // ==================== 小工具 ====================

@@ -86,6 +86,17 @@ object PluginConst {
      * v9 让 `UiType.ACTION` 的 `value` 可以点名宿主动作（[HostActionId]），
      * 于是插件能把这些按钮分配进自己的标签页。逐个覆盖：只接管一个也行。
      *
+     * ## 为什么加到 10（2026-10-23）
+     *
+     * 用户定的方向：「应该做成最大程度自由（除了 theme）」。
+     *
+     * 盘点下来，和 theme 无关的限制只剩一条大的：**布局**。`items` 一直是
+     * 纯纵向单列，插件连"两个滑块并排"都做不到。v10 加了
+     * `ROW_START` / `GRID_START` 两种容器（可嵌套），这条就补上了。
+     *
+     * **样式一律不放开**：插件读不到 `PonkoTheme`，自己写颜色必然出现两套配色、
+     * 换主题时留在旧色里。所以自由的上限是"结构全自由 + 样式零自由"。
+     *
      * ## 两类不兼容，处理方式不同
      *
      * · **扩展**（加方法、加字段、加常量）→ 版本 +1，老插件继续能用，
@@ -98,7 +109,7 @@ object PluginConst {
      * Binder 的事务码按声明顺序分配。在中间插入会让后面所有方法的事务码整体后移，
      * 老插件收到的码对不上 → **调用串味**（本该调 A 却执行了 B），比直接报错更糟。
      */
-    const val API_VERSION = 9
+    const val API_VERSION = 10
 
     /**
      * 从这一版起，插件支持「界面」那组方法（`getSettingsSchema` 等）。
@@ -181,9 +192,20 @@ object PluginConst {
      */
     const val API_WITH_HOST_ACTION_ITEMS = 9
 
+    /**
+     * 从这一版起，插件可以自己排布局：`ROW_START` / `GRID_START`（及对应的 `_END`）。
+     *
+     * 加之前 `items` 是一个**纯纵向**的有序列表 —— 「语速」和「音高」两个滑块
+     * 想并排都做不到，那是当时最大的表达力缺口。
+     *
+     * 边界仍然只有一条：**样式不归插件管**（颜色 / 字号 / 圆角 / 深色模式
+     * 全部走宿主的 `PonkoTheme`）。插件决定结构，宿主决定长相。
+     */
+    const val API_WITH_LAYOUT_CONTAINERS = 10
+
     /** 宿主兼容区间：允许老插件继续跑，所以下限保持 1 */
     const val API_MIN_SUPPORTED = 1
-    const val API_MAX_SUPPORTED = 9
+    const val API_MAX_SUPPORTED = 10
 
     // ---- 插件 Action（宿主靠它发现插件）----
     const val ACTION_PLUGIN = "com.litertchat.ponko.PLUGIN"

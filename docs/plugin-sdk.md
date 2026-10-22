@@ -983,13 +983,21 @@ object UiType {
     const val MODEL_SLOT = 18  // 模型文件槽位（导入/清除由宿主出按钮）
     // ---- v7 ----
     const val HOST_SLOT  = 19  // 宿主功能块挂在这里（不写就还在标题下面）
-    const val MAX_KNOWN = 19
+    // ---- v10：布局容器 ----
+    const val ROW_START  = 20  // 横向一行，value 控宽度占比（"1,2"）
+    const val ROW_END    = 21
+    const val GRID_START = 22  // 等宽网格，value = 列数（2~4）
+    const val GRID_END   = 23
+    const val DIVIDER    = 24  // 分割线（横容器里自动变竖线）
+    const val SPACER     = 25  // 空白占位，value = 高度 dp
+    const val MAX_KNOWN = 25
 }
 ```
 
 **类型集合是刻意克制的**。每加一种，宿主就要多一份渲染代码 + 多一套主题适配；
 最早那 7 种能覆盖「配置型插件」的绝大多数需求（VoxCPM2 全部设置都在其中）。
-v2 加到 12 个、v4 加到 15 个、v5 加到 18 个、v7 加到 19 个（编号 0–19），
+v2 加到 12 个、v4 加到 15 个、v5 加到 18 个、v7 加到 19 个、
+v10 加到 26 个（编号 0–25），
 都是被具体场景逼出来的，
 不是为了"提供更多选择"。
 
@@ -1550,6 +1558,100 @@ TABS_END
 这是宿主内部排版，插件不需要也不会因此有任何感知 —— 但如果你是用
 `HostActionId` 把 `reasoning` **搬走**了，那 `stop` 会独占一格（不会留个空槽）。
 
+### v10 补充：插件自己排布局（`ROW_START` / `GRID_START`）
+
+**问题**：`items` 一直是一个**纯纵向**的有序列表。插件能决定"有哪些项、什么顺序"，
+但不能"并排"。所以「语速」和「音高」两个滑块只能上下叠着，两列按钮也做不出来。
+
+**这是当时最大的表达力缺口** —— 和 theme 无关，纯粹是宿主没给容器。
+
+#### 两种容器
+
+```kotlin
+// 一行两个滑块，各占一半
+UiItem(type = UiType.ROW_START)
+UiItem(key = "speed", type = UiType.SLIDER, label = "语速", …)
+UiItem(key = "pitch", type = UiType.SLIDER, label = "音高", …)
+UiItem(type = UiType.ROW_END)
+
+// 一行两个，宽度 1:2（左边窄、右边宽）
+UiItem(type = UiType.ROW_START, value = "1,2")
+…
+
+// 三列网格，第 4 个自动到第二行
+UiItem(type = UiType.GRID_START, value = "3")
+UiItem(key = "v1", type = UiType.ACTION, label = "音色 A")
+UiItem(key = "v2", type = UiType.ACTION, label = "音色 B")
+UiItem(key = "v3", type = UiType.ACTION, label = "音色 C")
+UiItem(key = "v4", type = UiType.ACTION, label = "音色 D")
+UiItem(type = UiType.GRID_END)
+```
+
+| 容器 | `value` | 说明 |
+|---|---|---|
+| `ROW_START` | 空 = 等分；`"1,2"` = 按份数分 | 份数不够按 1 补；`0` 或负数按 1（否则子项宽度变 0，等于藏起来） |
+| `GRID_START` | 列数 `"2"`~`"4"`，空/写错 = 2 | 每列**等宽**；上限 4（5 列以上每格不到 60dp，文字全被省略号吃掉） |
+
+#### 可以随意嵌套
+
+和 `GROUP_START` / `TABS_START` 同一套栈式语法，所以这些都成立：
+
+```kotlin
+ROW 里放 GROUP         // 一行两栏，每栏自己可折叠
+GROUP 里放 ROW         // 折叠组里一行两个滑块
+ROW 里放 TABS          // 一行里嵌标签页
+GRID 里放 ACTION       // 按钮矩阵
+TABS 里放 GRID         // 结果页里三列图
+```
+
+**横向套横向**语法上允许，但手机上很快就挤到没法用（每个子项几十 dp）。
+
+#### 装什么、别装什么
+
+| 适合 | 不适合（能放，但会很窄） |
+|---|---|
+| `SLIDER` `TEXT` `SWITCH` `ACTION` `CHOICE` `STATUS` `INFO` | `TEXTAREA` `LOG` `IMAGE` `TABS_START` |
+
+半屏宽的多行输入框只有两三行可见，不如纵向叠着 —— 这是取舍不是限制。
+
+#### 网格最后一行不满时
+
+**不占位**。三个格子放在 3 列网格里，第二行只有 1 个，它仍然只有 1/3 宽，
+右边是空白 —— 不会因为"只剩一个"就拉满整行。宿主内部补了透明占位来实现这点。
+
+#### 两个配套的排版类型
+
+| 类型 | 作用 | `value` |
+|---|---|---|
+| `DIVIDER` | 一条 1px 分割线（颜色走主题）。放进 ROW 会**自动变成竖线** | 忽略 |
+| `SPACER` | 空白占位。纵向时是高度；放进 ROW/GRID 时宽度由容器的 weight 决定 | 高度 dp，空 = 8 |
+
+`SPACER` 是 ROW 自由度的关键补齐 —— 没有它，ROW 只能等分，做不出「左右两组」：
+
+```kotlin
+UiItem(type = UiType.ROW_START, value = "1,2,1")
+UiItem(key = "save", type = UiType.ACTION, label = "保存")
+UiItem(type = UiType.SPACER)                  // 占中间 2 份，把两边推开
+UiItem(key = "load", type = UiType.ACTION, label = "加载")
+UiItem(type = UiType.ROW_END)
+```
+
+#### 边界：结构全自由，样式零自由
+
+| 归插件 | 归宿主 |
+|---|---|
+| 有哪些控件 | 颜色（全部走 `PonkoTheme`） |
+| 顺序、分组、标签页 | 字号、行高 |
+| **横向 / 网格 / 嵌套结构** | 圆角、内边距 |
+| 每个子项的宽度占比 | 深色模式适配 |
+
+**样式不放开的理由不是保守**：插件读不到 `PonkoTheme`，自己写颜色必然出现
+两套配色，用户切主题时那些控件会留在旧色里。让它写死一套色值，等于给主题
+切换埋一个永远修不干净的 bug。
+
+所以自由的上限就是这句话：**插件决定结构，宿主决定长相。**
+
+
 
 
 
@@ -1865,7 +1967,7 @@ AIDL 调用遇到对方不认识的方法时，行为**不保证抛异常**：
 `API_VERSION` 是编译期写死进插件二进制的。所以"旧插件报 1、新插件报 2"这件事
 自动成立，不需要插件作者做任何事。
 
-### 现状（v9 = 2026-10-23）
+### 现状（v10 = 2026-10-23）
 
 | 版本 | 引入 | 宿主能否连接 |
 |---|---|---|
@@ -1878,6 +1980,7 @@ AIDL 调用遇到对方不认识的方法时，行为**不保证抛异常**：
 | v7 | `requestSynthesis` / `onAudioFile` / `HOST_SLOT`，以及分组的默认收起 | ✅ 支持 |
 | v8 | `selectTab` —— 插件让宿主切换到指定标签页 | ✅ 支持 |
 | v9 | `HostActionId` —— `ACTION` 的 `value` 可点名宿主动作，按钮位置由插件定 | ✅ 支持 |
+| v10 | 布局容器 `ROW_START/END`、`GRID_START/END` + `DIVIDER`、`SPACER` | ✅ 支持 |
 
 **「能否连接」和「能力是否齐」是两件事。** 上表问的是前者，答案永远是"能"——
 只要 `apiVersion >= API_MIN_SUPPORTED`（现在是 1）就会绑定。
@@ -1892,18 +1995,20 @@ AIDL 调用遇到对方不认识的方法时，行为**不保证抛异常**：
 | v6 | 缺 `requestSynthesis` / `onAudioFile` / `HOST_SLOT` |
 | v7 | 缺"插件主动切页"（标签页只能用户点） |
 | v8 | 缺「按钮位置自由」（5 个功能按钮只能在顶部） |
-| v9 | 全部功能 |
-| v10+（未来） | 老功能照常，新控件降级成文字块，新回调被丢弃 |
+| v9 | 缺「横向 / 网格布局」——只能纵向单列 |
+| v10 | 全部功能 |
+| v11+（未来） | 老功能照常，新控件降级成文字块，新回调被丢弃 |
 
 宿主自己的 `API_MAX_SUPPORTED` 只影响最后一行的**提示文案**，不影响能否连接。
 
-- `API_VERSION = 9`，`API_WITH_SCHEMA = 2`，`API_WITH_ACTION_LABELS = 3`，
+- `API_VERSION = 10`，`API_WITH_SCHEMA = 2`，`API_WITH_ACTION_LABELS = 3`，
   `API_WITH_RICH_UI = 4`，`API_WITH_TABS = 5`，`API_WITH_MODEL_IMPORT = 6`，
   `API_WITH_SYNTH_REQUEST = 7`（v7 的三项共用这一个版本号 —— 常量名沿用最先落地的那个，
   判断写 `api >= API_WITH_SYNTH_REQUEST` 即可），`API_WITH_TAB_SELECT = 8`，
   `API_WITH_HOST_ACTION_ITEMS = 9`（v9 只加了 `HostActionId` 常量 + 宿主渲染，
-  AIDL 一行没加 —— 但它是个「能和不能」的区分，所以照样升版本）
-- 宿主兼容下限 `API_MIN_SUPPORTED = 1` → **v1–v7 老插件照常连接、照常合成**，
+  AIDL 一行没加 —— 但它是个「能和不能」的区分，所以照样升版本），
+  `API_WITH_LAYOUT_CONTAINERS = 10`
+- 宿主兼容下限 `API_MIN_SUPPORTED = 1` → **v1–v10 老插件照常连接、照常合成**，
   只是拿不到对应版本才有的能力：
   · v1 插件没有插件界面，卡片上不显示「进入」，并提示"插件 SDK v1（当前 v7）"
   · v1 / v2 插件不能改按钮文案，一律用宿主默认
@@ -1914,8 +2019,10 @@ AIDL 调用遇到对方不认识的方法时，行为**不保证抛异常**：
     每条历史记录也只能播"最近一次产物"
   · v1–v7 插件不能自己切页（`selectTab`），标签页只能由用户点
   · v1–v8 插件不能点名宿主动作（`HostActionId`），5 个功能按钮只能固定在顶部
-- `API_MAX_SUPPORTED = 9` 是**认识上限**，不是拒绝阈值。
-  `api > 9` 的插件仍会连接，只是新控件降级、新回调被丢弃
+  · v1–v9 插件没有 `ROW_START` / `GRID_START`，只能纵向单列
+    （在老宿主上这两个类型会降级成"未知控件"文字块，所以要用先判版本）
+- `API_MAX_SUPPORTED = 10` 是**认识上限**，不是拒绝阈值。
+  `api > 10` 的插件仍会连接，只是新控件降级、新回调被丢弃
 - `API_MIN_SUPPORTED` **一直是 1** —— 至今所有改动都是扩展，没有破坏性改动
 
 ### v3 的 `getActionLabels()`：为什么是一个方法，不是 manifest 的字段
