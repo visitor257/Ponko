@@ -298,11 +298,34 @@ object Capability {
     const val TTS = "tts.synthesize"   // 文本 → 音频
     const val ASR = "asr.transcribe"   // 音频 → 文本（预留）
     const val IMG = "img.generate"     // 图像生成（预留）
+    const val TEST = "test.self"       // 测试/示例插件，不参与正式路由
+    const val GPU = "gpu.inference"    // v6：支持 GPU/NPU 推理
 }
 ```
 
 宿主按能力把插件挂到不同 UI 位置。**没声明能力的插件不显示**——
 这样以后加新类型不用改 AIDL，只加一个常量 + 一个 UI 挂点。
+
+#### `Capability.GPU` 怎么用（v6）
+
+声明了它，宿主才会在插件界面的试听参数里显示 **CPU / GPU** 切换：
+
+```kotlin
+override fun getManifest() = PluginManifest(
+    ...
+    capabilities = listOf(Capability.TTS, Capability.GPU),
+)
+```
+
+用户的选择会一路传到 `EngineConfig.useGpu`。插件收到 `true` 时：
+
+- 能上 GPU 就上
+- 上不了（设备/驱动不支持）就**回退 CPU，并在 `UiType.STATUS` 里写清楚**
+  —— 静默回退会让用户以为 GPU 生效了，对着更慢的速度困惑
+
+**为什么放进 `capabilities` 而不是给 `PluginManifest` 加字段**：
+`PluginManifest` 是 `@Parcelize`，加字段会改二进制布局，新宿主读老插件写出的
+Parcel 会读越界。而 `capabilities` 是 `List<String>`，加个新字符串不改任何结构。
 
 ### 3.6 版本协商
 
@@ -1074,6 +1097,18 @@ UiSchema(items = listOf(
 **降级提醒**：老宿主（v4 及更早）不认识这三个类型，会把它们**逐个**当成
 "未知控件"画成文字块 —— 界面上会是一串方块加断断续续的内容。
 所以想在老宿主上也体面，先用版本号判断再决定用不用。
+
+#### 可以左右滑动（2026-10-22 补）
+
+**最外层**那组标签页会渲染成可滑动的分页，跟手左右翻，和「绘图页」的
+「参数 / 结果」一个手感。内层嵌套的仍然只点标签切换，不滑动 ——
+内外两层都能横滑的话手势会互相抢。
+
+对插件的约束只有一条：**想要滑动手感，就别把最外层标签页塞进
+`GROUP_START` 里**（那也算嵌套，会退化成点击切换）。
+
+一个已知取舍：pager 的高度按**最高那一页**定，所以短页下方会留白。
+按当前页定高的话，从长页滑到短页时中间那一帧会被裁掉半截，更像出故障。
 
 ### v6 补充：模型文件导入（`MODEL_SLOT`）
 

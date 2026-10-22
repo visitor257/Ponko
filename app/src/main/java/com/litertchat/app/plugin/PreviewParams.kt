@@ -51,6 +51,26 @@ data class PreviewParams(
     /** 推理线程数；0 = 插件自定。改了下次加载引擎生效 */
     val threads: Int = 0,
 
+    /**
+     * 是否希望插件用 GPU/NPU 后端。改了**下次加载引擎才生效**。
+     *
+     * ## 为什么是真的传下去，而不是只做个开关
+     *
+     * 这个值一路传到 `EngineConfig.useGpu`。之前那条链路断了一截：
+     * `PluginSession` 调 `loadEngine` 时只传了 `threads`，`useGpu` 永远走默认
+     * `false` —— 用户在外面切了 GPU，插件收到的仍是 CPU。
+     *
+     * ## 插件不支持怎么办
+     *
+     * 看 manifest 的 `capabilities` 里有没有 `Capability.GPU`（`"gpu.inference"`）：
+     * · 有 → 才显示这个开关
+     * · 没有 → 不显示，并说明"该插件没有声明 GPU 推理能力"
+     *
+     * **不能只画开关不管真假** —— 用户切到 GPU、插件悄悄用 CPU，
+     * 那个界面就是在撒谎，比没有这个开关更糟。
+     */
+    val useGpu: Boolean = false,
+
     /** 参考音频的 SAF Uri（字符串形式，便于持久化）；空 = 没选 */
     val refUri: String = "",
 
@@ -120,6 +140,7 @@ data class PreviewParams(
                 transcript = g.getString("$pkg.transcript", "") ?: "",
                 seed = g.getInt("$pkg.seed", 0),
                 threads = g.getInt("$pkg.threads", defaultThreads()),
+                useGpu = g.getBoolean("$pkg.useGpu", false),
                 refUri = g.getString("$pkg.refUri", "") ?: "",
                 refName = g.getString("$pkg.refName", "") ?: "",
             )
@@ -132,6 +153,7 @@ data class PreviewParams(
                 .putString("$pkg.transcript", p.transcript)
                 .putInt("$pkg.seed", p.seed)
                 .putInt("$pkg.threads", p.threads)
+                .putBoolean("$pkg.useGpu", p.useGpu)
                 .putString("$pkg.refUri", p.refUri)
                 .putString("$pkg.refName", p.refName)
                 .apply()

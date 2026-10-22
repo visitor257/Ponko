@@ -363,7 +363,10 @@ class PluginUiPage(
                     // 深度 = 栈里已经有几层标签页。用数出来的，不用计数器：
                     // 插件少写/多写 TABS_END 时计数器会永久偏掉
                     val depth = target.count { it is Slot.Tab }
-                    val tabs = buildTabGroup(item, depth)
+                    // 最外层（depth==0）**且**在最顶层（栈里只有根）才做成可滑动：
+                    // 嵌在分组里的 pager 横向手势会和纵向滚动打架
+                    val swipeable = depth == 0 && target.size == 1
+                    val tabs = buildTabGroup(item, depth, swipeable)
                     target.last().content().addView(tabs.view, matchWrap())
                     target.addLast(Slot.Tab(tabs))
                 }
@@ -744,8 +747,8 @@ class PluginUiPage(
             setOnClickListener {
                 val wasOpen = body.visibility == View.VISIBLE
                 groupOpen[key] = !wasOpen
-                body.visibility = if (wasOpen) View.GONE else View.VISIBLE
                 arrow.text = if (wasOpen) "▸" else "▾"
+                animateGroup(body, expand = !wasOpen)
             }
         }
         head.addView(TextView(act).apply {
@@ -763,6 +766,79 @@ class PluginUiPage(
             addView(body, matchWrap())
         }
         return wrapper to body
+    }
+
+    /**
+     * 折叠/展开的**高度动画**。
+     *
+     * ## 为什么要动高度而不是只 swap visibility
+     *
+     * 只切 `visibility` 的话，下面所有内容会瞬间跳一整块高度 ——
+     * 眼睛跟不上，用户会怀疑自己点错了东西。关于页那个弹层用的是
+     * `alpha + scaleY`，但那是**浮层**，可以靠缩放糊过去；
+     * 分组展开是**撑开文档流**的，位置必须真的从 0 长到真实高度。
+     *
+     * ## 实现要点
+     *
+     * · 展开：`height 0 → measuredHeight`。先把 body 设成可测（VISIBLE +
+     *   height=0），量完再交给 ValueAnimator 逐帧改 `layoutParams.height`
+     * · 收起：`measuredHeight → 0`，动画结束才 `GONE`（并清掉固定高度，
+     *   让它回到 wrap_content —— 不清的话下次内容变长还是老高度）
+     * · 用 `height = 0` 而不是 `alpha`，动画期间内容会被裁切，那正是要的效果
+     */
+    private fun animateGroup(body: View, expand: Boolean) {
+        val lp = body.layoutParams ?: return
+        val from: Int
+        val to: Int
+        if (expand) {
+            // 先量真实高度：临时放开高度约束测一次
+            body.visibility = View.VISIBLE
+            lp.height = 0
+            body.layoutParams = lp
+            body.measure(
+                View.MeasureSpec.makeMeasureSpec(
+                    (body.parent as? View)?.width ?: act.resources.displayMetrics.widthPixels,
+                    View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
+            from = 0
+            to = body.measuredHeight
+            if (to <= 0) {
+                // 量不出高度（父容器还没布局）→ 直接显出来，别卡在 0
+                lp.height = ViewGroup.LayoutParams.WRAP_CONTENT
+                body.layoutParams = lp
+                return
+            }
+        } else {
+            from = body.height
+            to = 0
+        }
+
+        val anim = android.animation.ValueAnimator.ofInt(from, to)
+        anim.duration = if (expand) 180L else 140L
+        // 展开用减速（内容"落下"）、收起用加速（"被吸走"），方向感和关于页一致
+        anim.interpolator = if (expand)
+            android.view.animation.DecelerateInterpolator()
+        else
+            android.view.animation.AccelerateInterpolator()
+        anim.addUpdateListener { a ->
+            val l = body.layoutParams ?: return@addUpdateListener
+            l.height = a.animatedValue as Int
+            body.layoutParams = l
+        }
+        anim.addListener(object : android.animation.AnimatorListenerAdapter() {
+            override fun onAnimationEnd(a: android.animation.Animator) {
+                val l = body.layoutParams ?: return
+                if (expand) {
+                    // 展开完还要能跟着内容长（日志、图片之类会变高）
+                    l.height = ViewGroup.LayoutParams.WRAP_CONTENT
+                } else {
+                    l.height = ViewGroup.LayoutParams.WRAP_CONTENT
+                    body.visibility = View.GONE
+                }
+                body.layoutParams = l
+            }
+        })
+        anim.start()
     }
 
     /**
@@ -964,6 +1040,8 @@ class PluginUiPage(
         private val stateKey: String,
         /** 嵌套深度，0 = 最外层。只影响标签条的字号和底色 */
         val depth: Int,
+        /** 是否做成可左右滑动（只有最外层、且在最顶层时才给 true） */
+        private val swipeable: Boolean = false,
     ) {
         val view: LinearLayout = LinearLayout(act).apply {
             orientation = LinearLayout.VERTICAL
@@ -986,8 +1064,21 @@ class PluginUiPage(
             setPadding(dp(3), dp(3), dp(3), dp(3))
         }
 
-        /** 所有页叠在这里，靠 visibility 切换 */
-        private val pagesHost = android.widget.FrameLayout(act)
+        /**
+         * 所有页叠在这里。
+         *
+         * 两种形态：
+         * · **可滑动**（最外层那组）→ [androidx.viewpager.widget.ViewPager]，
+         *   跟手左右翻页，和绘图页的「参数 / 结果」一个手感
+         * · 其它（内层嵌套）→ FrameLayout + visibility
+         *
+         * 内层不能也做成 pager：横向手势会和外层 pager 互相抢
+         * （绘图页 `DrawPage` 也是这个取舍，见它「模式容器用 visibility」那条注释）。
+         */
+        private val pagesHost: ViewGroup
+
+        /** 只有 [swipeable] 时才非空 */
+        private val pager: androidx.viewpager.widget.ViewPager?
 
         private val pages = ArrayList<LinearLayout>()
         private val chips = ArrayList<TextView>()
@@ -1010,12 +1101,69 @@ class PluginUiPage(
 
         init {
             view.addView(bar, matchWrap())
+            if (swipeable) {
+                val vp = androidx.viewpager.widget.ViewPager(act).apply {
+                    adapter = PageAdapter(pages)
+                    addOnPageChangeListener(object :
+                        androidx.viewpager.widget.ViewPager.SimpleOnPageChangeListener() {
+                        override fun onPageSelected(position: Int) {
+                            if (position == current) return
+                            current = position
+                            // 滑动切页也要记账，否则重画后回到旧页
+                            keys.getOrNull(position)?.takeIf { it.isNotBlank() }
+                                ?.let { tabSelected[stateKey] = it }
+                            styleChips()
+                            settleCurrentPage()
+                        }
+                    })
+                }
+                pager = vp
+                pagesHost = vp
+            } else {
+                pager = null
+                pagesHost = android.widget.FrameLayout(act)
+            }
             view.addView(pagesHost, matchWrap())
             pages.add(implicitPage)
             keys.add("")
-            pagesHost.addView(implicitPage, android.widget.FrameLayout.LayoutParams(
-                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
-                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT))
+            if (pager == null) {
+                pagesHost.addView(implicitPage, android.widget.FrameLayout.LayoutParams(
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                    android.widget.FrameLayout.LayoutParams.WRAP_CONTENT))
+            }
+        }
+
+        /**
+         * 把 [pagesHost] 的高度定成**所有页里最高的那个**。
+         *
+         * ## 为什么必须手动定高
+         *
+         * pager 在整页 ScrollView 里拿到的是 UNSPECIFIED 高度。不给定高的话，
+         * 要么塌成 0、要么靠 ViewPager 自己按"最大子页"去猜 —— 后者行为随版本变化，
+         * 而这里明确算一遍更可靠，也顺便解释了"为什么短页会留白"。
+         *
+         * ## 为什么是"最高"而不是"当前页"
+         *
+         * 按当前页定高的话，从长页滑到短页、或反过来，中间那一帧会被裁掉半截，
+         * 看起来像闪了一下。定成最高就永远裁不到。
+         * 代价是短页下方有空白 —— 这是可滑动分页的固有取舍，
+         * 想要"页页紧凑"就得像绘图页那样让 pager 占满整屏，那要重排整页结构。
+         */
+        private fun stretchToTallestPage() {
+            val vp = pager ?: return
+            val w = vp.width.takeIf { it > 0 } ?: act.resources.displayMetrics.widthPixels
+            var h = 0
+            pages.forEach { p ->
+                p.measure(
+                    View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.AT_MOST),
+                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
+                if (p.measuredHeight > h) h = p.measuredHeight
+            }
+            if (h <= 0) return
+            vp.layoutParams = (vp.layoutParams ?: LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, h)).apply { height = h }
+            // 短页下方会留白，但**不给它加底色** —— 留白就是页面底色（pal.bg）的延续，
+            // 读起来是"这页就这么多"；加个 fieldBg 反而会让所有卡片外面多出一层灰块
         }
 
         /**
@@ -1033,9 +1181,14 @@ class PluginUiPage(
                 val page = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL }
                 pages.add(page)
                 keys.add(item.key)
-                pagesHost.addView(page, android.widget.FrameLayout.LayoutParams(
-                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
-                    android.widget.FrameLayout.LayoutParams.WRAP_CONTENT))
+                if (pager == null) {
+                    pagesHost.addView(page, android.widget.FrameLayout.LayoutParams(
+                        android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                        android.widget.FrameLayout.LayoutParams.WRAP_CONTENT))
+                } else {
+                    // pager 里的页由 adapter 负责挂载，这里只通知它"多了一页"
+                    pager.adapter?.notifyDataSetChanged()
+                }
                 idx = pages.size - 1
             }
 
@@ -1083,6 +1236,8 @@ class PluginUiPage(
             // restoreIndex 用 keys 查，此时已是完整列表
             val want = restoreIndex()
             if (want != current) select(want) else settleCurrentPage()
+            // pager 的高度要在所有页都建完之后算（此时才知道哪页最高）
+            pager?.post { stretchToTallestPage() }
         }
 
         private fun buildChip(label: String, idx: Int): TextView = TextView(act).apply {
@@ -1111,9 +1266,33 @@ class PluginUiPage(
          * （新 chip 还是默认色），但**不能**顺手改选中项。
          */
         private fun applySelection() {
-            pages.forEachIndexed { i, p ->
-                p.visibility = if (i == current) View.VISIBLE else View.GONE
+            if (pager != null) {
+                // pager 自己管显示哪一页；这里只同步选中项和标签样式。
+                // **不能**再改 page.visibility —— pager 会把非当前页也 attach 住，
+                // 设成 GONE 会让它布局错乱（滑过去是空白）
+                if (pager.currentItem != current) pager.setCurrentItem(current, false)
+                styleChips()
+                return
             }
+            pages.forEachIndexed { i, p ->
+                val show = i == current
+                val was = p.visibility == View.VISIBLE
+                p.visibility = if (show) View.VISIBLE else View.GONE
+                // 切进来时淡入一下。只在新显示的那一页上做，不碰其它页 ——
+                // 一页一个 alpha 动画，页面多了会同时跑一堆没必要的动画
+                if (show && !was) {
+                    p.alpha = 0f
+                    p.animate().alpha(1f).setDuration(130L).start()
+                } else if (show) {
+                    // 首次构建时（本来就是 VISIBLE）直接给满，避免"进页面先闪一下"
+                    p.alpha = 1f
+                }
+            }
+            styleChips()
+        }
+
+        /** 只刷标签条的选中样式（pager 滑动时也要调它） */
+        private fun styleChips() {
             chips.forEachIndexed { i, c ->
                 val sel = i == current
                 c.setTextColor(if (sel) pal.primary else pal.subText)
@@ -1137,6 +1316,37 @@ class PluginUiPage(
         fun currentPage(): LinearLayout = pages.getOrNull(current) ?: implicitPage
     }
 
+    /**
+     * pager 用的最小 adapter：**直接复用已建好的页 View**，不重建。
+     *
+     * 和绘图页 `DrawPage.PaneAdapter` 同一个做法，也同一个理由：
+     * 页是我们在渲染时按 schema 一次性建好的（只有这样 `patches` 才能按 key
+     * 找到对应控件）。走 RecyclerView 那套（ViewPager2）会重复 attach 同一批
+     * View，直接崩。
+     *
+     * `pages` 是**活的 list**（[TabGroup] 边渲染边往里加），所以
+     * `getCount()` 每次现读，`beginTab` 里再 `notifyDataSetChanged()`。
+     */
+    private class PageAdapter(
+        private val pages: List<LinearLayout>,
+    ) : androidx.viewpager.widget.PagerAdapter() {
+        override fun getCount(): Int = pages.size
+        override fun isViewFromObject(view: View, obj: Any): Boolean = view === obj
+
+        override fun instantiateItem(container: ViewGroup, position: Int): Any {
+            val v = pages[position]
+            (v.parent as? ViewGroup)?.removeView(v)
+            container.addView(v, ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT))
+            return v
+        }
+
+        override fun destroyItem(container: ViewGroup, position: Int, obj: Any) {
+            (obj as? View)?.let { container.removeView(it) }
+        }
+    }
+
     /** 在一棵子树里把所有日志框滚到底 */
     private fun scrollLogsToBottomIn(root: View) {
         val stack = ArrayDeque<View>()
@@ -1157,12 +1367,19 @@ class PluginUiPage(
     /**
      * 建一组标签页。
      *
-     * @param depth 嵌套深度（外层 0）。由调用方数**当前栈里已有几层标签页**得出，
-     *              不自增计数器 —— 那种计数器一旦遇到插件写错的
-     *              `TABS_END`（少写/多写）就会永久偏掉。
+     * @param depth     嵌套深度（外层 0）。由调用方数**当前栈里已有几层标签页**得出，
+     *                  不自增计数器 —— 那种计数器一旦遇到插件写错的
+     *                  `TABS_END`（少写/多写）就会永久偏掉。
+     * @param swipeable 是否做成可左右滑动。**只有最外层且在最顶层**才给 true：
+     *                  · 内层做成 pager 会和外层 pager 抢横向手势
+     *                  · 嵌在可折叠分组里的 pager 横向手势也容易和纵向滚动打架，
+     *                    而且"分组里再分页"本身读起来就绕
      */
-    private fun buildTabGroup(item: com.litertchat.plugin.UiItem, depth: Int): TabGroup =
-        TabGroup(item.key, depth)
+    private fun buildTabGroup(
+        item: com.litertchat.plugin.UiItem,
+        depth: Int,
+        swipeable: Boolean,
+    ): TabGroup = TabGroup(item.key, depth, swipeable)
 
     /**
      * 只读日志框。固定高度 + 内部独立滚动。

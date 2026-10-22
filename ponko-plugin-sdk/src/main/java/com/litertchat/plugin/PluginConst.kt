@@ -187,6 +187,30 @@ object Capability {
     const val TEST = "test.self"
 
     /**
+     * **支持 GPU / NPU 推理**（`"gpu.inference"`）。
+     *
+     * 声明了它，宿主才会在试听参数里显示 CPU/GPU 切换；没声明就不显示
+     * （并说明该插件没有这个能力）。
+     *
+     * ## 为什么不加 Manifest 字段
+     *
+     * `PluginManifest` 是 `@Parcelize`，**加字段会改二进制布局** ——
+     * 新宿主读老插件写出来的 Parcel 会读越界，轻则垃圾值、重则
+     * `BadParcelableException`。而 `capabilities` 是个 `List<String>`，
+     * 往里加一个新常量的字符串**不改任何结构**，老宿主只是不认识、直接忽略。
+     *
+     * 同一个理由也解释了为什么 v3 的按钮文案走独立方法而不是加字段。
+     *
+     * ## 声明之后要真的用得上
+     *
+     * 宿主会把用户的开关一路传到 `EngineConfig.useGpu`。插件收到 `true` 时：
+     * · 能上 GPU 就上
+     * · 上不了（设备/驱动不支持）就**回退 CPU 并在 `STATUS` 里写清楚**
+     *   —— 静默回退会让用户以为 GPU 生效了，对着更慢的速度困惑
+     */
+    const val GPU = "gpu.inference"
+
+    /**
      * **连上就自动加载引擎**。不声明 = 默认手动加载。
      *
      * ## 为什么加载时机必须由插件决定
