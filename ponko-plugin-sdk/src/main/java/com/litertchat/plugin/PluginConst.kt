@@ -48,6 +48,16 @@ object PluginConst {
      * 「未知控件」文字块 —— 用户看到的是一串方块加断断续续的内容，不是完整界面。
      * 所以想在老宿主上也体面的话，插件该按版本判断后再决定用不用标签页。
      *
+     * ## 为什么加到 6（2026-10-22）
+     *
+     * v6 让插件能收**本地模型文件**：`UiType.MODEL_SLOT` 声明槽位，
+     * 宿主画「导入 / 清除」，用户点导入后由**宿主**弹系统文件选择器，
+     * 再把 FD 通过 `importModel` 交给插件。
+     *
+     * 选择器必须宿主弹，插件自己弹不了 —— 它是 bound Service，
+     * `startActivityForResult` 是 Activity 的 API，而且 Android 10+ 禁止
+     * 后台启动 Activity。见 `IPonkoPlugin.importModel` 的说明。
+     *
      * ## 两类不兼容，处理方式不同
      *
      * · **扩展**（加方法、加字段、加常量）→ 版本 +1，老插件继续能用，
@@ -60,7 +70,7 @@ object PluginConst {
      * Binder 的事务码按声明顺序分配。在中间插入会让后面所有方法的事务码整体后移，
      * 老插件收到的码对不上 → **调用串味**（本该调 A 却执行了 B），比直接报错更糟。
      */
-    const val API_VERSION = 5
+    const val API_VERSION = 6
 
     /**
      * 从这一版起，插件支持「界面」那组方法（`getSettingsSchema` 等）。
@@ -97,9 +107,17 @@ object PluginConst {
      */
     const val API_WITH_TABS = 5
 
+    /**
+     * 从这一版起，插件可以声明 [UiType.MODEL_SLOT] 槽位，
+     * 并通过 [IPonkoPlugin.importModel] / `deleteModel` 收下/删除用户选的模型文件。
+     *
+     * 宿主按版本决定要不要给槽位画「导入 / 清除」按钮。
+     */
+    const val API_WITH_MODEL_IMPORT = 6
+
     /** 宿主兼容区间：允许老插件继续跑，所以下限保持 1 */
     const val API_MIN_SUPPORTED = 1
-    const val API_MAX_SUPPORTED = 5
+    const val API_MAX_SUPPORTED = 6
 
     // ---- 插件 Action（宿主靠它发现插件）----
     const val ACTION_PLUGIN = "com.litertchat.ponko.PLUGIN"

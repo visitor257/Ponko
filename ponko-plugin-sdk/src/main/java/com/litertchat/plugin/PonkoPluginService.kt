@@ -144,6 +144,55 @@ abstract class PonkoPluginService : Service() {
     protected open fun onActionInvoked(key: String) {}
 
     /**
+     * 用户通过宿主选好了一个 [UiType.MODEL_SLOT] 的模型文件（v6）。
+     *
+     * **在后台线程调用**，可以直接同步读那个 FD（几百 MB 也不会卡界面）。
+     *
+     * ## 你要做的事
+     *
+     * 1. 把 [fd] 读完、写进**自己的私有目录**（`filesDir` 之类）。
+     *    宿主的目录你读不到，它也不会给你路径 —— 只有这个 FD。
+     * 2. close 掉 [fd]。**基类也会兜底 close 一次**，所以忘了也不会泄漏，
+     *    但自己关更清楚（尤其是你想读一半就放弃的时候）。
+     * 3. 调 [notifySchemaChanged]，新状态从 [buildSettingsSchema] 的
+     *    `UiItem.value` 里报出来（已导入就写大小，如 `"2.83 GB"`）。
+     *
+     * ## 为什么不是插件自己弹选择器
+     *
+     * 插件是 bound Service：`startActivityForResult` 是 Activity 的 API，
+     * Service 没有；而且 Android 10+ 禁止后台启动 Activity。
+     * 所以选择器只能宿主弹，插件只负责收 FD。
+     *
+     * ## 磁盘上只有一份
+     *
+     * 宿主只是把系统给的 FD 转发过来，自己不留副本。
+     * 所以最终代价和"用户在宿主模型页导入"完全一样：复制一次到自己的目录。
+     *
+     * @param role        [UiType.MODEL_SLOT] 的 key
+     * @param fd          只读 FD，读完请 close
+     * @param displayName 原始文件名，**只用于显示/日志**，别拿它拼路径
+     * @param sizeBytes   大小；SAF 给不出时是 -1
+     */
+    protected open fun onModelFileReceived(
+        role: String,
+        fd: android.os.ParcelFileDescriptor,
+        displayName: String,
+        sizeBytes: Long,
+    ) {}
+
+    /**
+     * 用户点了 [UiType.MODEL_SLOT] 那行的「清除」（v6）。**在后台线程调用**。
+     *
+     * 删自己私有目录里那份文件 —— 宿主删不了（那是别的包的目录）。
+     * 删完调 [notifySchemaChanged] 刷新状态。
+     *
+     * 引擎正在用这个模型时该不该让删，由你判断：更体面的做法是
+     * 在 schema 里把那个槽位的 `enabled` 设成 `false` 直接灰掉按钮，
+     * 而不是等用户点了才报错。
+     */
+    protected open fun onModelDeleteRequested(role: String) {}
+
+    /**
      * 宿主按钮叫什么。键见 [ActionLabel]，值就是显示的文字。
      *
      * ```kotlin
@@ -487,6 +536,38 @@ abstract class PonkoPluginService : Service() {
                     onActionInvoked(key)
                 } catch (t: Throwable) {
                     Log.e(TAG, "onActionInvoked 失败：$key", t)
+                }
+            }
+        }
+
+        /**
+         * v6：宿主替用户选好了一个模型文件。
+         *
+         * **FD 在这里就交给 worker 线程了**，不留在 Binder 线程上 ——
+         * 读 2.8GB 会占死 Binder 线程池，之后连 `cancel` 都进不来。
+         * 兜底 close 也在 worker 里做：插件覆写的方法**没关**就由这里关掉，
+         * 否则就是 FD 泄漏（每进程默认 1024 个）。
+         */
+        override fun importModel(role: String, fd: android.os.ParcelFileDescriptor,
+                                 displayName: String, sizeBytes: Long) {
+            worker.execute {
+                try {
+                    onModelFileReceived(role, fd, displayName, sizeBytes)
+                } catch (t: Throwable) {
+                    Log.e(TAG, "onModelFileReceived 失败：$role", t)
+                } finally {
+                    // 插件可能已经自己关了 —— close 两次是安全的（第二次是空操作）
+                    runCatching { fd.close() }
+                }
+            }
+        }
+
+        override fun deleteModel(role: String) {
+            worker.execute {
+                try {
+                    onModelDeleteRequested(role)
+                } catch (t: Throwable) {
+                    Log.e(TAG, "onModelDeleteRequested 失败：$role", t)
                 }
             }
         }

@@ -173,6 +173,17 @@ class PluginUiPage(
     var zoomable: ((android.graphics.Bitmap) -> Unit)? = null
 
     /**
+     * 用户点了模型槽位的「导入」（v6）。由 [PluginPage] 注入 ——
+     * 它才知道怎么弹 SAF、怎么把结果转成 FD 交给插件。
+     *
+     * 参数是槽位的 role（= `UiItem.key`）。
+     */
+    var modelPicker: ((String) -> Unit)? = null
+
+    /** 用户确认了「清除」（v6）。参数同上。 */
+    var modelDeleter: ((String) -> Unit)? = null
+
+    /**
      * 播放器。宿主注入（[PluginPage] 里那个 MediaPlayer 的包装）。
      *
      * 为空说明宿主没提供播放能力 —— 那 [UiType.AUDIO] 会画成灰掉的假控件，
@@ -612,6 +623,8 @@ class PluginUiPage(
         UiType.LOG -> logBlock(item)
         UiType.IMAGE -> imageBlock(item)
         UiType.AUDIO -> audioBar(item)
+        // ---- v6：模型文件槽位 ----
+        UiType.MODEL_SLOT -> modelSlotRow(item)
         // 插件用了宿主还不认识的控件。
         //
         // **这是跨版本兼容的关键分支**：绝不能崩、也不能整页不显示 ——
@@ -780,6 +793,127 @@ class PluginUiPage(
         }
         box.addView(smallHint("这个控件需要更新 Ponko 才能显示（类型 ${item.type}）"), matchWrap())
         return box
+    }
+
+    // ==================== v6：模型文件槽位 ====================
+
+    /**
+     * 一个模型槽位：「槽位名 · 当前状态 · [导入] [清除]」。
+     *
+     * ## 为什么选择器必须宿主弹
+     *
+     * 插件是 bound Service（另一个进程）：
+     * · `startActivityForResult` 是 Activity 的 API，Service 根本没有
+     * · Android 10+ 禁止后台启动 Activity —— 用户点「导入」那一刻插件不在前台，
+     *   真发起了也会被系统拦掉
+     *
+     * 所以这里是宿主画按钮、宿主弹 SAF、宿主把 FD 转给插件。
+     *
+     * ## 「已导入」的状态谁说了算
+     *
+     * **插件。** [UiItem.value] 是插件报告的状态文字（如 `"2.83 GB"`）——
+     * 宿主不去查插件目录（那是别的包，本来就读不到）。
+     * 导入完成后插件调 `notifySchemaChanged()`，这个值就变了。
+     *
+     * ## 什么时候不画按钮
+     *
+     * 插件 SDK 低于 v6 时根本不该有这个类型（老插件不认识它）；
+     * 万一出现了，也只画一行文字、不画按钮 —— 按了也没人接。
+     */
+    private fun modelSlotRow(item: UiItem): View {
+        val role = item.key
+        val box = LinearLayout(act).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(8), 0, dp(4))
+            alpha = if (item.enabled) 1f else 0.5f
+        }
+
+        val row = LinearLayout(act).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(12), dp(9), dp(12), dp(9))
+            background = rounded(pal.fieldBg, 9)
+        }
+
+        // 左边：槽位名 + 状态
+        val left = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL }
+        left.addView(TextView(act).apply {
+            text = item.label.ifBlank { role }
+            textSize = 13f
+            setTextColor(pal.text)
+        }, matchWrap())
+        val stateTv = TextView(act).apply {
+            text = item.value.ifBlank { "未导入" }
+            textSize = 11f
+            setTextColor(if (item.value.isBlank()) pal.hint else pal.primary)
+            setPadding(0, dp(2), 0, 0)
+        }
+        left.addView(stateTv, matchWrap())
+        row.addView(left, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+
+        // 只有插件真的能接 FD 时才画按钮 —— 画了没人接比不画更糟
+        if (role.isBlank() || !session.supportsModelImport(pkg)) {
+            box.addView(row, matchWrap())
+            if (item.help.isNotBlank()) box.addView(smallHint(item.help), matchWrap())
+            return box
+        }
+
+        val importBtn = slotButton("导入", primary = item.value.isBlank()) {
+            modelPicker?.invoke(role)
+        }
+        row.addView(importBtn, wrapWrap())
+
+        // 已经导入了才显示「清除」—— 空槽位上摆个删除按钮没有意义，
+        // 而且容易误点（用户会以为那个按钮是"导入"）
+        if (item.value.isNotBlank()) {
+            val clearBtn = slotButton("清除", primary = false) {
+                confirmDeleteModel(role, item.label.ifBlank { role })
+            }
+            row.addView(clearBtn, wrapWrap().apply { leftMargin = dp(8) })
+        }
+
+        // 引擎运行中（插件把 enabled 设成 false）→ 两个按钮都不可点
+        if (!item.enabled) {
+            importBtn.isEnabled = false
+            importBtn.alpha = 0.5f
+        }
+
+        box.addView(row, matchWrap())
+        if (item.help.isNotBlank()) box.addView(smallHint(item.help), matchWrap())
+        return box
+    }
+
+    private fun slotButton(text: String, primary: Boolean, onClick: () -> Unit): TextView =
+        TextView(act).apply {
+            this.text = text
+            textSize = 12f
+            gravity = Gravity.CENTER
+            setPadding(dp(14), dp(7), dp(14), dp(7))
+            if (primary) {
+                setTextColor(android.graphics.Color.WHITE)
+                background = rounded(pal.primary, 9)
+            } else {
+                setTextColor(pal.primary)
+                background = rounded(pal.primarySoft, 9)
+            }
+            isClickable = true
+            setOnClickListener { onClick() }
+        }
+
+    /**
+     * 删之前问一句。
+     *
+     * 模型动辄几个 GB，删掉要重新导（还得再传一遍文件）。而且这个文件在
+     * **插件自己的私有目录**里，用户在系统文件管理器里根本看不到、也删不了 ——
+     * 误删之后他没有任何办法自己恢复，只能重新走一遍导入。
+     */
+    private fun confirmDeleteModel(role: String, name: String) {
+        android.app.AlertDialog.Builder(act)
+            .setTitle("清除模型文件")
+            .setMessage("「$name」的文件会被删掉，下次要重新导入。")
+            .setPositiveButton("清除") { _, _ -> modelDeleter?.invoke(role) }
+            .setNegativeButton("取消", null)
+            .show()
     }
 
     // ==================== v5：标签页（页中页）====================

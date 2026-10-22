@@ -644,6 +644,56 @@ class PluginConnection(
     }
 
     /**
+     * v6：把用户选好的模型文件交给插件。
+     *
+     * ## FD 所有权
+     *
+     * 调用方（[PluginPage]）把 `ParcelFileDescriptor` 传进来，这里的 AIDL 调用
+     * 会让 Binder **dup 一份**给插件。**不管转发成功与否，本方法都会关掉
+     * 传进来的那个 FD** —— 它是从 `ContentResolver.openFileDescriptor` 拿的，
+     * 属于宿主，不关就是泄漏（每进程默认 1024 个）。
+     *
+     * 插件那份由插件自己关；SDK 的 `importModel` 兜底还会再关一次（重复 close 安全）。
+     *
+     * ## 为什么是 oneway
+     *
+     * 插件收到 FD 后要读几百 MB 落盘，同步调用会把宿主的 Binder 线程堵住。
+     * 进度由插件自己通过 `onUiPatch` 推给它声明的 PROGRESS 项。
+     */
+    fun importModel(role: String, fd: android.os.ParcelFileDescriptor, displayName: String, sizeBytes: Long) {
+        try {
+            if (!supportsModelImport) {
+                Log.w(TAG, "[$packageName] 插件 SDK v$pluginApi 不支持导入模型，丢弃 $role")
+                return
+            }
+            val p = plugin ?: return
+            runCatching { p.importModel(role, fd, displayName, sizeBytes) }
+                .onFailure { Log.w(TAG, "[$packageName] importModel 失败：$role", it) }
+        } finally {
+            // 转发完就关自己这份。插件拿到的是 dup 过的，关这个不影响它
+            runCatching { fd.close() }
+        }
+    }
+
+    /** v6：用户点了槽位上的「清除」 */
+    fun deleteModel(role: String) {
+        if (!supportsModelImport) return
+        runCatching { plugin?.deleteModel(role) }
+            .onFailure { Log.w(TAG, "[$packageName] deleteModel 失败：$role", it) }
+    }
+
+    /**
+     * 插件是否支持模型导入（SDK v[PluginConst.API_WITH_MODEL_IMPORT] 起）。
+     *
+     * 和 [supportsSchema] 同样按版本判断，不靠 try-catch —— 调一个不存在的方法时
+     * 老插件会收到不认识的事务码，行为不保证；oneway 甚至静默丢弃，
+     * 看起来"点了没反应"却查不出原因。
+     */
+    val supportsModelImport: Boolean
+        get() = state == State.CONNECTED &&
+            pluginApi >= PluginConst.API_WITH_MODEL_IMPORT
+
+    /**
      * 引擎是否已就绪。
      *
      * 这是**同步** AIDL 调用（插件侧保证 O(1) 只读 volatile），

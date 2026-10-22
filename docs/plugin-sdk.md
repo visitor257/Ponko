@@ -866,6 +866,21 @@ void onImage(in ParcelFileDescriptor fd, int width, int height, in @nullable Str
 
 /** 原地改一个控件，不重画整页：日志追加、进度推进、状态换值 */
 void onUiPatch(in String key, in @nullable String value, boolean append);
+
+// ---- v6 追加到 IPonkoPlugin（末尾）----
+/**
+ * 宿主替用户选好了模型文件，把只读 FD 交过来。
+ * 对应 UiType.MODEL_SLOT 的「导入」按钮。
+ *
+ * ⚠ 选择器必须**宿主**弹：插件是 bound Service，没有 startActivityForResult，
+ *   Android 10+ 也禁止它后台启动 Activity。
+ * ⚠ 插件要在 worker 线程读，读完 close 掉这个 FD（是 dup 过的一份）。
+ */
+oneway void importModel(in String role, in ParcelFileDescriptor fd,
+                        in String displayName, long sizeBytes);
+
+/** 删除某个槽位已导入的文件（插件删自己私有目录里的那份） */
+oneway void deleteModel(in String role);
 ```
 
 ```kotlin
@@ -924,7 +939,9 @@ object UiType {
     const val TABS_START = 15  // 标签页组开始（key 记上次停在哪页）
     const val TAB        = 16  // 一页（label 是标签文字）
     const val TABS_END   = 17  // 标签页组结束
-    const val MAX_KNOWN = 17
+    // ---- v6 ----
+    const val MODEL_SLOT = 18  // 模型文件槽位（导入/清除由宿主出按钮）
+    const val MAX_KNOWN = 18
 }
 ```
 
@@ -1058,7 +1075,79 @@ UiSchema(items = listOf(
 "未知控件"画成文字块 —— 界面上会是一串方块加断断续续的内容。
 所以想在老宿主上也体面，先用版本号判断再决定用不用。
 
-### 完整写法（插件侧）
+### v6 补充：模型文件导入（`MODEL_SLOT`）
+
+插件可以声明"我要这几份模型文件"，由**宿主**弹系统文件选择器，
+选完把 FD 交给插件，插件自己复制进自己的私有目录。
+
+```kotlin
+override fun buildSettingsSchema() = UiSchema(items = listOf(
+    UiItem(key = "base_lm", type = UiType.MODEL_SLOT,
+           label = "主干模型 BaseLM",
+           value = if (baseLmReady) fmtSize(baseLmSize) else "",   // 空 = 未导入
+           help = "VoxCPM2 的 .safetensors 主干，约 2.4 GB"),
+    UiItem(key = "acoustic", type = UiType.MODEL_SLOT,
+           label = "声学模型 AudioVAE",
+           value = if (acousticReady) fmtSize(acousticSize) else ""),
+))
+
+override fun onModelFileReceived(
+    role: String,
+    fd: android.os.ParcelFileDescriptor,
+    displayName: String,
+    sizeBytes: Long,
+) {
+    // 基类已经在 worker 线程调这里，可以同步读几百 MB
+    val dst = File(filesDir, if (role == "base_lm") "base_lm.safetensors" else "acoustic.bin")
+    java.io.FileInputStream(fd.fileDescriptor).use { ins ->
+        dst.outputStream().use { outs -> ins.copyTo(outs, 1 shl 16) }
+    }
+    // fd 由基类兜底 close，自己关也可以
+    notifySchemaChanged()      // 让宿主重画，新状态从 value 报出去
+}
+
+override fun onModelDeleteRequested(role: String) {
+    File(filesDir, if (role == "base_lm") "base_lm.safetensors" else "acoustic.bin").delete()
+    notifySchemaChanged()
+}
+```
+
+#### 为什么选择器必须宿主弹
+
+插件是 bound **Service**，在另一个进程里：
+
+| 限制 | 后果 |
+|---|---|
+| `startActivityForResult` 是 Activity 的 API | Service 根本没有这个方法 |
+| Android 10+ 禁止后台启动 Activity | 用户点「导入」时插件不在前台，真发起了也被系统拦掉 |
+
+所以插件**不可能**自己弹文件选择器。这不是设计上偷懒，是平台限制。
+（文档旧版本里"文件选择交给插件自己的 ACTION + 下载逻辑"那条，
+就是因为这个原因走不通，v6 已推翻。）
+
+#### 磁盘上只有一份
+
+```
+用户选文件(SAF) → 宿主拿 FD（不落盘、不存路径）
+              → FD 转给插件（Binder dup 一份）
+              → 插件复制到 /data/data/<插件包名>/files/xxx
+              → 宿主那份 FD 关掉
+```
+
+最终代价和"用户在宿主模型页导入"**完全相同**：复制一次到自己的私有目录。
+唯一的区别是落在哪个包下面（宿主读不到插件的目录，反之亦然）。
+
+#### 几个容易踩的点
+
+| 点 | 说明 |
+|---|---|
+| 读文件要在 worker 线程 | 基类已经放 worker 了。**别**自己改回 Binder 线程——读 2.8GB 会把线程池占死，连 `cancel` 都进不来 |
+| 别关错 FD | 你拿到的是 Binder **dup** 过的一份，关它不影响宿主；不关就是泄漏（每进程 1024 个上限） |
+| 状态由插件报 | `UiItem.value` 是你自己的账（如 `"2.83 GB"` / 空）。宿主不会去查你的目录——它读不到 |
+| 槽位 `key` = 角色 | `key` 就是 `importModel` 的 `role`，必须非空且唯一 |
+| 引擎跑着时别让换模型 | 把那个槽位的 `enabled` 设 `false`，按钮会灰掉。比等用户点了再报错体面 |
+
+
 
 `PonkoPluginService` 提供了三个 `protected` 辅助方法，插件直接用，不用碰 AIDL：
 
@@ -1581,6 +1670,16 @@ Ponko-EX/                          ← 插件项目（独立工程，自己的 g
 - ❌ 不做跨插件通信
 - ❌ 不做插件权限细分（v1 要么全信要么不用）
 - ❌ 不做 `ModelBundle` 的 FD 路由实现（接口留好，v2 再实现）
-- ❌ 设置 schema **不做嵌套布局**（不能一行放两个控件，不做 tab / 折叠）
-- ❌ 设置 schema **不做 TYPE_MODEL_SLOT**（文件选择交给插件自己的 ACTION + 下载逻辑）
+  —— ⚠ 2026-10-22 更新：这条仍然成立，但 **v6 改了做法**。
+  插件要"用宿主已导入的模型"依然没做（`ModelBundle` 还是 `null`）；
+  做的是另一件事：**插件自己导入自己的模型**，走 `UiType.MODEL_SLOT` +
+  `importModel`，宿主只转发 FD、不留副本。见 3.x「模型文件导入」。
+- ~~❌ 设置 schema 不做嵌套布局（不能一行放两个控件，不做 tab / 折叠）~~
+  —— **部分作废**：`GROUP_START/END`（v2）和 `TABS_START/TAB/TABS_END`（v5）已实现，
+  tab 可多层嵌套。**仍然不做**的是「一行放两个控件」这种横向布局
+- ~~❌ 设置 schema 不做 TYPE_MODEL_SLOT~~
+  —— **已推翻**（v6 实现了 `MODEL_SLOT`）。当初的理由是"文件选择交给插件自己的
+  ACTION + 下载逻辑"，但那条路**根本走不通**：插件是 bound Service，
+  没有 `startActivityForResult`，Android 10+ 也禁止它后台启动 Activity。
+  所以选择器只能宿主弹 —— 那就必然需要一个宿主侧的槽位控件
 
