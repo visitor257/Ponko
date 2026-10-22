@@ -41,11 +41,21 @@ class PluginUiPage(
     private val title: String,
     private val session: PluginSession,
     /**
-     * 宿主侧的功能动作。
+     * 宿主侧的功能动作（一份**注册表**，不是"固定要画的那几个"）。
      *
      * 「试听」「朗读」这类不是插件自己实现的功能 —— 它们是**宿主**发起一次合成
-     * 再播放结果。所以按钮由宿主画，插件只提供配置项（schema）。
-     * 这解释了为什么卡片上不再有「试听」：功能按钮属于插件界面。
+     * 再播放结果。所以执行归宿主，插件只提供配置项（schema）。
+     *
+     * ## v9 起：放哪里由插件决定
+     *
+     * 以前这 5 个按钮固定画在标题下面。插件想在「参数」页里放一个「开始推理」，
+     * 做不到 —— 只能让用户滚回顶部。
+     *
+     * 现在插件可以在 schema 里用 `UiItem(type = ACTION, value = HostAction.REASONING)`
+     * **点名**要哪个动作，那个按钮就画在它指定的位置（含 tab 里）；
+     * 顶部那排会自动跳过被点名的那些。没点名的照旧留顶部。
+     *
+     * 是**逐个覆盖**而不是全有全无 —— 插件可以只接管「合成」，其余不动。
      */
     private val hostActions: List<HostAction> = emptyList(),
     /**
@@ -63,8 +73,9 @@ class PluginUiPage(
     /**
      * 宿主提供的一个功能按钮。
      *
-     * @param id 用于回传状态（同一个页面可能有多个动作）
-     * @param label 按钮文字
+     * @param id 动作 id，要和 `com.litertchat.plugin.HostAction` 里的常量一致 ——
+     *           插件在 schema 里就是靠这个值点名要它的
+     * @param label 默认文案。插件点名时可以覆盖，也可以被 [setActionLabel] 改
      * @param enabled 初始是否可点。运行中要改就用 [setActionEnabled]
      */
     data class HostAction(
@@ -75,8 +86,53 @@ class PluginUiPage(
         val run: () -> Unit,
     )
 
-    /** 动作 id → 按钮，用于运行期启用/禁用（比如"正在生成时不能点试听"） */
-    private val actionButtons = HashMap<String, TextView>()
+    /**
+     * 一个宿主动作按钮的实例。
+     *
+     * 同一个动作可能在**两个地方**各有一份：顶部那排、以及插件自己声明的位置
+     * （`UiItem.value` = 动作 id）。两处状态必须同步，否则会出现
+     * "顶部的「合成」灰了、插件页里那个还能点"——所以按 id 存一个列表。
+     *
+     * @param compact true = 顶部那排的等宽小按钮；false = 插件页里的全宽按钮
+     */
+    private class ActionBtn(val view: TextView, val compact: Boolean, val primary: Boolean)
+
+    /** 动作 id → 它在界面上的**所有**实例，用于运行期启用/禁用 */
+    private val actionButtons = HashMap<String, MutableList<ActionBtn>>()
+
+    /**
+     * 动作 id → 动作。插件在 schema 里可以用 `UiItem.value` 点名要哪个。
+     *
+     * 见 [HostAction] 常量的说明：能放开的只有"放哪些、放哪里、叫什么"，
+     * 执行仍然归宿主。
+     */
+    private val hostActionMap = LinkedHashMap<String, HostAction>()
+
+    /**
+     * 这一帧 schema 里，插件**声明过**的宿主动作 id。
+     *
+     * 顶部那排会把它们跳过 —— 逐个覆盖，不是全有全无。
+     * 每次 [render] 开头清空，解析 schema 时填充。
+     */
+    private val schemaDeclaredActions = HashSet<String>()
+
+    /**
+     * 顶部那排功能按钮的容器。
+     *
+     * 内容**不能**在 [buildActionBlock] 里一次填死：那时还不知道 schema 里
+     * 插件声明了哪些动作。所以先建空容器，等 [render] 解析完再填。
+     */
+    private var actionRowHost: LinearLayout? = null
+
+    /** 「功能」小标题。所有动作都被插件接管后要藏掉它 */
+    private var actionBlockTitle: TextView? = null
+
+    init {
+        // 注册表：插件在 schema 里用 value 点名时查的就是它。
+        // 放 init 而不是 build()，因为 render() 可能在 build 之前被调到（refresh）
+        hostActions.forEach { hostActionMap[it.id] = it }
+    }
+
 
     /**
      * 动作 id → **当前**标签。
@@ -85,6 +141,15 @@ class PluginUiPage(
      * 所以文字单独存一份：只改样式时（[setActionEnabled]）不会把文字冲回初始值。
      */
     private val actionLabels = HashMap<String, String>()
+
+    /**
+     * 动作 id → **当前**启用态。
+     *
+     * 和 [actionLabels] 同理，是"运行期状态"，不是"初始值"。
+     * [render] 会重建所有按钮，重建时必须从这份状态里取 ——
+     * 否则"正在合成 → 合成按钮灰掉"会在下一次重画后变回可点。
+     */
+    private val actionEnabled = HashMap<String, Boolean>()
 
     /** 内容容器。重画时清空它再填 */
     private var host: LinearLayout? = null
@@ -367,6 +432,10 @@ class PluginUiPage(
         // 视图全要换，按 key 索引的组实例必须一起丢 ——
         // 留着会让 selectTab 切到已经脱离视图树的旧页（屏幕上看不出变化）
         tabGroups.clear()
+        // 按钮实例同理：旧的还在 actionButtons 里的话，setActionEnabled 会去改
+        // 一个已经不在屏幕上的 View，而屏幕上那个永远是灰的
+        actionButtons.clear()
+        schemaDeclaredActions.clear()
         stopAudioTicker()
         host.removeAllViews()
 
@@ -383,6 +452,10 @@ class PluginUiPage(
         if (schema.items.isEmpty()) {
             // 空 schema 是合法的 —— 这个插件没提供任何可配置项。
             // 不要显示成错误：用户点进来看到空页面，本来就是这个插件本来的样子
+            //
+            // 但顶部按钮行**必须先填上** —— 下面直接 return 了，
+            // 不填的话这个插件会一个按钮都没有，彻底不可用
+            rebuildTopActionRow()
             host.addView(emptyBlock(
                 "这个插件没有可配置项",
                 "插件作者还没有为它提供界面内容。\n功能仍然可以通过上面的按钮直接使用。"
@@ -476,6 +549,10 @@ class PluginUiPage(
             (target.removeLast() as? Slot.Tab)?.group?.finish()
         }
 
+        // 顶部那排要**最后**填：schemaDeclaredActions 是上面渲染时攒出来的，
+        // 提前填会把插件已经接管的动作又画一遍（同一个按钮出现两次）
+        rebuildTopActionRow()
+
         // 重画完了：播放条要立刻反映当前播放状态（否则切回页面时显示成「▶」却在响）
         refreshAudioBars()
         startAudioTicker()
@@ -508,14 +585,152 @@ class PluginUiPage(
     }
 
     /**
+     * 重建**顶部那排**功能按钮（v9）。
+     *
+     * ## 为什么每次 render 都要重建
+     *
+     * 因为"哪些还留在顶部"取决于这一版 schema 里插件接管了哪些动作。
+     * 插件可能上一版声明了 `reasoning`、这一版删掉了 —— 那它得回到顶部，
+     * 否则用户就再也点不到「合成」了。
+     *
+     * ## 等宽均分，超三个折两行
+     *
+     * 原来是 `WRAP_CONTENT` + 左右各 16dp 内边距 + 8dp 间距。宽度一超，
+     * 最后的按钮就被裁掉（实测第 4 个「保存」少 46dp，文字显示不全）——
+     * 而横向 LinearLayout **不会**因为放不下就换行，它直接把尾巴切掉。
+     *
+     * 现在按等权重分，文案超长单行省略。四个以上折两行：
+     * 5 个挤一行每个只剩 50dp，不如两行平均。
+     */
+    private fun rebuildTopActionRow() {
+        val host = actionRowHost ?: return
+        host.removeAllViews()
+
+        val top = hostActions.filter { it.id !in schemaDeclaredActions }
+        // 全被接管了就藏掉「功能」小标题，否则标题下面空着、紧跟一行提示，像坏了
+        actionBlockTitle?.visibility = if (top.isEmpty()) View.GONE else View.VISIBLE
+        if (top.isEmpty()) return
+
+        val perRow = if (top.size <= 3) top.size else (top.size + 1) / 2
+        var row = newActionRow()
+        var inRow = 0
+        top.forEachIndexed { i, action ->
+            if (i > 0 && i % perRow == 0) {
+                host.addView(row, matchWrap().apply { topMargin = dp(8) })
+                row = newActionRow()
+                inRow = 0
+            }
+            val btn = makeHostActionButton(
+                action = action,
+                label = action.label,
+                compact = true,
+                primary = true,          // 顶部那排本来就是主色按钮
+            )
+            row.addView(btn, LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
+            ).apply { if (inRow > 0) leftMargin = dp(8) })
+            inRow++
+        }
+        host.addView(row, matchWrap().apply { topMargin = dp(6) })
+    }
+
+    /**
+     * 造一个宿主动作按钮。顶部那排（`compact = true`）和插件页里
+     * （`compact = false`，全宽）都用它 —— 好让"点下去发生什么"只有一份实现。
+     *
+     * **enabled 一律取 `action.enabled`**（宿主的实时状态），不看 `UiItem.enabled`：
+     * 插件不知道引擎加载到几成、是不是正在合成。让它说了算会出现
+     * "插件说能点、宿主拒绝"的死路。
+     */
+    private fun makeHostActionButton(
+        action: HostAction,
+        label: String,
+        compact: Boolean,
+        primary: Boolean,
+        /** true = 用传进来的 [label]（插件显式声明了文案）；false = 缓存优先（顶部那排） */
+        useGivenLabel: Boolean = false,
+    ): TextView {
+        // 运行期状态优先于初始值：render 会重建按钮，这时"正在合成所以不可点"
+        // 必须还在（见 actionEnabled 的说明）。
+        // 文案则看调用方：插件显式写了 label 就以它为准（它有权决定按钮叫什么），
+        // 顶部那排用缓存 —— 那里读的是 [setActionLabel] 改过的文案
+        val enabled = actionEnabled[action.id] ?: action.enabled
+        val shownLabel = if (useGivenLabel) label else (actionLabels[action.id] ?: label)
+        val btn = TextView(act).apply {
+            gravity = Gravity.CENTER
+            textSize = if (compact) 13f else 14f
+            setPadding(
+                if (compact) dp(6) else dp(14),
+                if (compact) dp(9) else dp(11),
+                if (compact) dp(6) else dp(14),
+                if (compact) dp(9) else dp(11),
+            )
+            if (compact) {
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+            }
+            text = shownLabel
+            styleHostAction(this, enabled, compact, primary)
+            setOnClickListener {
+                if (!isEnabled) return@setOnClickListener
+                android.util.Log.i("PonkoPluginUi", "功能动作：${action.id}")
+                try {
+                    action.run()
+                } catch (t: Throwable) {
+                    android.util.Log.e("PonkoPluginUi", "功能动作失败：${action.id}", t)
+                    setActionHint("出错了：${t.javaClass.simpleName}")
+                }
+            }
+        }
+        actionButtons.getOrPut(action.id) { mutableListOf() }
+            .add(ActionBtn(btn, compact, primary))
+        actionLabels[action.id] = shownLabel
+        return btn
+    }
+
+    /**
+     * 宿主动作按钮的配色。
+     *
+     * @param compact 顶部那排（等宽小按钮，实心主色）
+     *                对比 插件页里的（全宽，`primary` 决定实心还是浅底）
+     */
+    private fun styleHostAction(
+        tv: TextView,
+        enabled: Boolean,
+        compact: Boolean,
+        primary: Boolean,
+    ) {
+        tv.isEnabled = enabled
+        tv.isClickable = enabled
+        if (!enabled) {
+            tv.setTextColor(pal.hint)
+            tv.background = rounded(pal.fieldBg, 10)
+            tv.alpha = 0.9f
+            return
+        }
+        val solid = compact || primary
+        tv.setTextColor(if (solid) pal.surface else pal.primary)
+        tv.background = rounded(if (solid) pal.primary else pal.primarySoft, 10)
+        tv.alpha = 1f
+    }
+
+
+    /**
      * 「功能」区：宿主自己的动作按钮 + 可选的参数区 + 一行状态提示 + 诊断区。
      *
-     * 为什么这块由宿主画、而不让插件在 schema 里声明一个 ACTION：
+     * ## 为什么这块由宿主画
+     *
      * 这些动作的执行者是**宿主**（发起合成、播放音频、路由到别的页面），
      * 插件只是被动接受一次 `synthesize` 调用。
-     * 让插件声明它，插件就得知道"宿主要怎么展示结果"，那是把宿主的事推给插件。
      *
-     * 分工：**插件管"能做什么"（能力），宿主管"怎么触发"（按钮 + 参数）。**
+     * ## v9 起：按钮**放哪里**交给插件
+     *
+     * 但"画在标题下面"这件事不该由宿主规定死。插件可以在 schema 里用
+     * `UiItem(type = ACTION, value = HostActionId.REASONING)` 点名，
+     * 那个按钮就画到它指定的位置（含 tab 里）—— 见 [rebuildTopActionRow]。
+     *
+     * 所以这里的按钮行是**空容器**：真正填什么要等 [render] 解析完 schema
+     * 才知道哪些被插件接管了。
      */
     private fun buildActionBlock(): View {
         val block = LinearLayout(act).apply {
@@ -523,54 +738,19 @@ class PluginUiPage(
             setPadding(dp(14), dp(4), dp(14), dp(12))
             background = rounded(pal.surface, 12)
         }
-        block.addView(TextView(act).apply {
+        val titleView = TextView(act).apply {
             text = "功能"
             textSize = 13f
             setTextColor(pal.subText)
             typeface = Typeface.DEFAULT_BOLD
             setPadding(0, dp(8), 0, dp(2))
-        }, matchWrap())
-
-        // ## 等宽均分，超三个就折成两行
-        //
-        // 原来是 `WRAP_CONTENT` + 左右各 16dp 内边距 + 8dp 间距。宽度一超，
-        // 最后的按钮就被裁掉（实测第 4 个「保存」少 46dp，文字显示不全）——
-        // 而 LinearLayout 横向排布**不会**因为放不下就换行，它直接把尾巴切掉。
-        //
-        // 现在按等权重分：`weight = 1` 让每个按钮拿到相同的宽度，
-        // 文案超长就单行省略（见 applyActionStyle）。四个以上折成两行 ——
-        // 5 个按钮挤一行的结果是每个只剩 50dp，不如两行平均。
-        val perRow = if (hostActions.size <= 3) hostActions.size
-        else (hostActions.size + 1) / 2
-        var row = newActionRow()
-        var inRow = 0
-        hostActions.forEachIndexed { i, action ->
-            if (i > 0 && i % perRow == 0) {
-                block.addView(row, matchWrap().apply { topMargin = dp(8) })
-                row = newActionRow()
-                inRow = 0
-            }
-            val btn = TextView(act).apply {
-                setPadding(dp(6), dp(9), dp(6), dp(9))
-                applyActionText(this, action.id, action.label)
-                applyActionStyle(this, action.enabled)
-                setOnClickListener {
-                    if (!isEnabled) return@setOnClickListener
-                    android.util.Log.i("PonkoPluginUi", "功能动作：${action.id}")
-                    try {
-                        action.run()
-                    } catch (t: Throwable) {
-                        android.util.Log.e("PonkoPluginUi", "功能动作失败：${action.id}", t)
-                        setActionHint("出错了：${t.javaClass.simpleName}")
-                    }
-                }
-            }
-            actionButtons[action.id] = btn
-            row.addView(btn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                .apply { if (inRow > 0) leftMargin = dp(8) })
-            inRow++
         }
-        block.addView(row, matchWrap().apply { topMargin = dp(6) })
+        actionBlockTitle = titleView
+        block.addView(titleView, matchWrap())
+
+        // 按钮行：先建空容器，内容在 render 里填（那时才知道哪些动作被插件接管）
+        actionRowHost = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL }
+        block.addView(actionRowHost, matchWrap())
 
         // ---- 宿主自己的参数区（试听文本 / 模式 / 参考音频 …）----
         hostExtra?.let { builder ->
@@ -642,43 +822,10 @@ class PluginUiPage(
         return block
     }
 
-    /** 功能按钮的一行。按钮按 `weight = 1` 均分宽度，见 [buildActionBlock] 里的说明 */
+    /** 功能按钮的一行。按钮按 `weight = 1` 均分宽度，见 [rebuildTopActionRow] 里的说明 */
     private fun newActionRow(): LinearLayout = LinearLayout(act).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
-    }
-
-    /**
-     * 按钮**样式**（只改配色和可点性，不动文字）。
-     *
-     * 刻意和文字分开：有的按钮文字会随状态变（「加载引擎」↔「卸载引擎」），
-     * 如果把 `text = ...` 也塞进来，那么一次 [setActionEnabled] 就会把
-     * 已经改好的文字冲回初始值 —— 那种 bug 表现为"点了按钮，字又变回去了"。
-     */
-    private fun applyActionStyle(tv: TextView, enabled: Boolean) {
-        tv.isEnabled = enabled
-        tv.isClickable = enabled
-        tv.gravity = Gravity.CENTER
-        tv.textSize = 13f
-        // 等宽均分之后每个按钮只有 60~90dp，长文案必须截断而不是换行 ——
-        // 换行会把整行撑高，几个按钮高度不一致比截断更难看
-        tv.maxLines = 1
-        tv.ellipsize = android.text.TextUtils.TruncateAt.END
-        if (enabled) {
-            tv.setTextColor(pal.surface)
-            tv.background = rounded(pal.primary, 10)
-            tv.alpha = 1f
-        } else {
-            tv.setTextColor(pal.hint)
-            tv.background = rounded(pal.fieldBg, 10)
-            tv.alpha = 0.9f
-        }
-    }
-
-    /** 按钮**文字**。记进 [actionLabels]，后续只改样式时不会丢 */
-    private fun applyActionText(tv: TextView, id: String, label: String) {
-        actionLabels[id] = label
-        tv.text = label
     }
 
     /**
@@ -688,14 +835,26 @@ class PluginUiPage(
      * 「停止」反过来只在生成中可点（平时点了没意义）。
      */
     fun setActionEnabled(id: String, enabled: Boolean) {
-        val tv = actionButtons[id] ?: return
-        applyActionStyle(tv, enabled)
+        // 先记账**再**遍历：按钮可能此刻还没建（render 之前、或插件这一版
+        // 没声明这个动作且它不在顶部），但状态必须留住 ——
+        // 否则"正在合成 → 灰掉"会在下一次 render 后变回可点
+        actionEnabled[id] = enabled
+        // 遍历**所有**实例：同一个动作可能同时存在于顶部那排和插件声明的页面里。
+        // 只改第一个的话会出现"顶部灰了、插件页里还能点"这种分裂状态
+        actionButtons[id]?.forEach {
+            styleHostAction(it.view, enabled, it.compact, it.primary)
+        }
     }
 
-    /** 改按钮文字（比如「加载引擎」→「卸载引擎」）。不改启用态 */
+    /**
+     * 改按钮文字（比如「加载引擎」→「卸载引擎」）。不改启用态。
+     *
+     * ⚠ 这会**覆盖插件自定义的文案**。宿主只在状态语义变了的时候调它
+     * （目前只有 engine：加载 ↔ 卸载），所以一般不会和插件打架。
+     */
     fun setActionLabel(id: String, label: String) {
-        val tv = actionButtons[id] ?: return
-        applyActionText(tv, id, label)
+        actionLabels[id] = label
+        actionButtons[id]?.forEach { it.view.text = label }
     }
 
     /**
@@ -2330,12 +2489,60 @@ class PluginUiPage(
         return box
     }
 
-    /** 按钮（ACTION） */
+    /**
+     * 按钮（ACTION）。
+     *
+     * ## 两种按钮，靠 [UiItem.value] 区分（v9）
+     *
+     * | `value` | 含义 | 点了发生什么 |
+     * |---|---|---|
+     * | 空 | 插件自己的按钮 | `invokeAction(key)` 回调插件 |
+     * | 宿主动作 id（`"reasoning"` 等） | **宿主动作**，插件只决定放哪、叫什么 | 宿主执行（合成 / 播放 / 保存…） |
+     *
+     * 为什么要分两种：这些动作背后是宿主的状态机（引擎加载了几成、是否在合成、
+     * 参考音频 FD、播放器、音乐库）。插件在另一个进程里，这些它一样都拿不到。
+     * 所以能放开的只有**放哪些、放哪里、叫什么**，执行仍然归宿主。
+     *
+     * 认不出来的 `value`（拼错、或来自更新的 SDK）一律当插件自己的按钮 ——
+     * 宁可回调插件，也不要静默变成一个点了没反应的死按钮。
+     */
     private fun actionRow(item: UiItem): View {
+        val hostAction = item.value.trim().takeIf { it.isNotEmpty() }?.let { hostActionMap[it] }
+
         val box = LinearLayout(act).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(0, dp(8), 0, dp(8))
         }
+
+        if (hostAction != null) {
+            // 宿主动作：登记到"这一帧被接管了"，顶部那排会跳过它
+            schemaDeclaredActions.add(hostAction.id)
+            // enabled 由宿主实时状态说了算（见 makeHostActionButton）；
+            // 文案插件写了就用它 —— 那是它接管这个按钮的主要理由之一
+            box.addView(
+                makeHostActionButton(
+                    action = hostAction,
+                    label = item.label.ifBlank { hostAction.label },
+                    compact = false,
+                    primary = item.primary,
+                    useGivenLabel = item.label.isNotBlank(),
+                ),
+                matchWrap()
+            )
+            if (item.help.isNotBlank()) box.addView(smallHint(item.help), matchWrap())
+            return box
+        }
+
+        if (item.value.trim().isNotEmpty()) {
+            // 有 value 但不是宿主动作 —— 大概率是 id 拼错。降级成插件按钮，
+            // 但要留一条日志，否则"点了没合成"会查很久
+            android.util.Log.w(
+                "PonkoPluginUi",
+                "ACTION 的 value='${item.value}' 不是已知宿主动作，按插件按钮处理" +
+                    "（已知：${hostActionMap.keys}）"
+            )
+        }
+
         box.addView(TextView(act).apply {
             text = item.label
             textSize = 13f

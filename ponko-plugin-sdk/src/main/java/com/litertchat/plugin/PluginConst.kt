@@ -77,6 +77,15 @@ object PluginConst {
      * 标签页状态（用户点哪页、上次停哪页）一直是宿主私有的，
      * v8 开了 `selectTab` —— 第一次允许插件决定**显示哪一页**。
      *
+     * ## 为什么加到 9（2026-10-23）
+     *
+     * 插件开发者反馈："UI 那块限制得太死，固定画 5 个按钮，而不是由插件自由声明"。
+     * 那 5 个按钮背后是宿主的状态机（引擎、合成、播放器、音乐库），执行不能外包；
+     * 但**放哪些、放哪里、叫什么**没有任何理由由宿主规定。
+     *
+     * v9 让 `UiType.ACTION` 的 `value` 可以点名宿主动作（[HostActionId]），
+     * 于是插件能把这些按钮分配进自己的标签页。逐个覆盖：只接管一个也行。
+     *
      * ## 两类不兼容，处理方式不同
      *
      * · **扩展**（加方法、加字段、加常量）→ 版本 +1，老插件继续能用，
@@ -89,7 +98,7 @@ object PluginConst {
      * Binder 的事务码按声明顺序分配。在中间插入会让后面所有方法的事务码整体后移，
      * 老插件收到的码对不上 → **调用串味**（本该调 A 却执行了 B），比直接报错更糟。
      */
-    const val API_VERSION = 8
+    const val API_VERSION = 9
 
     /**
      * 从这一版起，插件支持「界面」那组方法（`getSettingsSchema` 等）。
@@ -157,9 +166,24 @@ object PluginConst {
      */
     const val API_WITH_TAB_SELECT = 8
 
+    /**
+     * 从这一版起，`UiType.ACTION` 的 `value` 可以用来**点名宿主动作**
+     * （见 [HostActionId]）。
+     *
+     * ## 为什么这次升版本，虽然 AIDL 一行没加
+     *
+     * 因为它确实多了一个"能和不能"的区分：老宿主会把 `value` 当成普通值忽略，
+     * 按钮变回"回调插件"—— 插件以为合成了、其实没有。这种静默失效必须有
+     * 一个判断依据，否则插件只能靠猜。
+     *
+     * 和 v3（`getActionLabels`）是同一类：协议面扩展了，插件要靠版本号决定
+     * 能不能用。**不是破坏性改动**，所以 `API_MIN_SUPPORTED` 仍然不动。
+     */
+    const val API_WITH_HOST_ACTION_ITEMS = 9
+
     /** 宿主兼容区间：允许老插件继续跑，所以下限保持 1 */
     const val API_MIN_SUPPORTED = 1
-    const val API_MAX_SUPPORTED = 8
+    const val API_MAX_SUPPORTED = 9
 
     // ---- 插件 Action（宿主靠它发现插件）----
     const val ACTION_PLUGIN = "com.litertchat.ponko.PLUGIN"
