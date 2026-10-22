@@ -55,8 +55,52 @@ MIN_WIDTH_FOR_TEXT = 72
 # 48px 图标上 0.085 只能算出 4px 的 ©，看上去像脏点；放大 1.6 倍才认得出来。
 TINY_SCALE = 1.6
 
-# 描边宽度 / 字号。见 sign_visible 里的说明
+# 描边宽度 / 字号。见 _draw_sign 里的说明
 STROKE_RATIO = 0.07
+
+# 自适应图标的可见区（72/108）。传统图标是 1.0
+ADAPTIVE_VISIBLE = 72.0 / 108.0
+
+
+def to_canvas(ratio, visible=1.0):
+    """把**显示区坐标**换算成**画布坐标**。
+
+    ## 为什么需要这个换算（这一版才加，之前是 bug 来源）
+
+    同一句 "右下角 90%"，在两种图上意思完全不同：
+
+    | 图层 | 显示区占画布 | 画布的 90% 是显示区的 |
+    |---|---|---|
+    | 传统图标 ic_launcher.png | 全部 | 90% |
+    | 自适应前景层 foreground | 中间 72/108（两侧各留 18/108） | **126%**（跑到画外） |
+
+    所以位置**必须按显示区说**，不能按画布说。第一版直接给画布比例、两层用同一组数字，
+    结果两层都跑到显示区 60~65% 的位置 —— 用户看到的仍然是"在中间"。
+
+    @param ratio    显示区里的相对位置，0 = 左/上边缘，1 = 右/下边缘
+    @param visible  显示区占画布的比例：传统图标 1.0，自适应前景层 [ADAPTIVE_VISIBLE]
+    """
+    return (1.0 - visible) / 2.0 + visible * ratio
+
+
+def display_room(visible=ADAPTIVE_VISIBLE):
+    """显示区右下角**能放到的**显示区坐标上限。
+
+    ## 两种图标的上限其实是同一个数
+
+    · **自适应前景层**：只显示中间 72/108 的圆，画布坐标上
+      `(x1-n/2)² + (y1-n/2)² ≤ (n/3)²` → 45° 上限 0.7356n
+    · **传统图标**：整图显示，但启动器普遍会套一个**内切圆**遮罩，
+      此时半径 n/2、45° 上限 `0.5n + 0.3536n = 0.8536n`
+
+    换算回各自的显示区坐标，两个都是 **0.8535**。所以参数可以统一，
+    不需要为两种图标维护两套位置 —— 这是实测出来的巧合，不是设计出来的。
+
+    实现取 **0.80** 而不是 0.8535：余量留给描边和整数取整。
+    实测 0.83 时 48px 那档的角正好压在圆上（浮点差一点点就判超），
+    0.80 让最小档也有 1px 以上的安全边 —— 半截字比多留 3% 边距难看太多。
+    """
+    return 0.80
 
 
 def _load_font(px):
@@ -95,34 +139,29 @@ def sign_visible(
     text=None,
     *,
     height_ratio=0.050,
-    right_ratio=0.92,
-    bottom_ratio=0.92,
-    align="right",
+    right_ratio=None,
+    bottom_ratio=None,
+    visible=1.0,
     fill=(255, 255, 255, 235),
     stroke=(26, 28, 34, 215),
 ):
     """在图片**右下角**画署名，返回新图（不修改入参）。
 
-    ## 为什么是右下角，而且一开始做错了
+    ## 位置按显示区说，不按画布
 
-    第一版是**水平居中 + 底部**。在方形画布上看不出问题，但自适应图标只显示
-    中间 72/108 的圆 —— 居中文字落在这个圆的水平中轴上，视觉上就成了
-    "贴在圆中央偏下"，既不像角标也不像水印，就是一块挡在画面正中的东西。
-    右下角才是"署名"该待的位置：存在感低、不压主体。
+    [right_ratio] / [bottom_ratio] 是**显示区**里的相对位置（0=左/上，1=右/下），
+    内部用 [to_canvas] 换算成画布坐标。`visible` 传显示区占画布的比例。
 
-    ## 位置受可见圆约束（图标场景）
-
-    可见圆半径 n/3。右下角要落在圆内，必须
-        (x1 - n/2)² + (y1 - n/2)² ≤ (n/3)²
-    取默认 0.92 会超（距中心 0.594n）。所以图标调用方传的是更靠内的值，
-    由 [inside_visible_circle] 在生成时把关。
+    自适应图标传 `visible=ADAPTIVE_VISIBLE`，传统图标留默认 1.0。
+    不传 [right_ratio] 时自动取 [display_room]，也就是显示区右下角的物理上限
+    （自适应 0.8535，传统 1.0）。
 
     @param im             RGBA 图片（方形）
     @param text           覆盖署名文字；None = 按尺寸自动选
-    @param height_ratio   字号占画布高度的比例
-    @param right_ratio    文字**右边界**距左边界的比例（1.0 = 贴右边缘）
-    @param bottom_ratio   文字**底边**距顶部的比例（1.0 = 贴底边）
-    @param align          `"right"` = 右对齐（默认）；`"center"` = 水平居中
+    @param height_ratio   字号占**画布**高度的比例
+    @param right_ratio    显示区里的右边界位置
+    @param bottom_ratio   显示区里的底边位置
+    @param visible        显示区占画布的比例
     @param fill           文字颜色
     @param stroke         描边颜色
     """
@@ -131,15 +170,20 @@ def sign_visible(
     if im.size[1] != n:
         raise ValueError("署名只支持方形画布，当前 %dx%d" % im.size)
 
+    if right_ratio is None:
+        right_ratio = display_room(visible)
+    if bottom_ratio is None:
+        bottom_ratio = display_room(visible)
+
     out = im.copy()
     draw = ImageDraw.Draw(out)
-    _draw_sign(draw, n, text, height_ratio, right_ratio, bottom_ratio,
-               align, fill, stroke)
+    _draw_sign(draw, n, text, height_ratio, right_ratio, bottom_ratio, visible,
+               fill, stroke)
     return out
 
 
 def _draw_sign(draw, n, text, height_ratio, right_ratio, bottom_ratio,
-               align, fill, stroke):
+               visible, fill, stroke):
     """实际绘制。sign_visible 和 sign_region 共用，保证"量的"就是"画的"。"""
     tiny = n <= MIN_WIDTH_FOR_TEXT
     if text is None:
@@ -148,44 +192,69 @@ def _draw_sign(draw, n, text, height_ratio, right_ratio, bottom_ratio,
     font_px = _font_px(n, height_ratio, tiny)
     font = _load_font(font_px)
 
-    # anchor：mb = 水平居中 + 底边；rb = 右对齐 + 底边。
-    # 用 anchor 而不是自己减宽高：字体度量里 ascent/descent 各字体不同，
-    # 手算必偏（第一版就偏了 23px 跑到区域外）。
-    anchor = "rb" if align == "right" else "mb"
-    x = n * right_ratio if align == "right" else n / 2.0
+    # 显示区坐标 → 画布坐标。这两个数就是第一版出错的地方（见 to_canvas）。
+    x = n * to_canvas(right_ratio, visible)
+    y = n * to_canvas(bottom_ratio, visible)
 
+    # anchor="rb" = 右对齐 + 底边。用 anchor 而不是自己减宽高：
+    # 字体度量里 ascent/descent 各字体不同，手算必偏（第一版偏了 23px）。
+    #
     # 描边按**字号**算，不按画布 —— 按画布算的话 1024px 图上会得到 9px 描边，
     # 而字才 46px 高，描边比笔画还粗。
     stroke_w = max(1, int(round(font_px * STROKE_RATIO)))
 
     draw.text(
-        (x, n * bottom_ratio), text, font=font, anchor=anchor,
+        (x, y), text, font=font, anchor="rb",
         fill=fill, stroke_width=stroke_w, stroke_fill=stroke,
     )
 
 
-def sign_region(n, text=None, *, height_ratio=0.050, right_ratio=0.92,
-                bottom_ratio=0.92, align="right"):
+def sign_region(n, text=None, *, height_ratio=0.050, right_ratio=None,
+                bottom_ratio=None, visible=1.0):
     """返回署名会占用的矩形 (x0, y0, x1, y1)，供校验用。
 
-    校验脚本拿它确认"署名确实落在可见圆内"，而不是凭肉眼看。
+    校验脚本拿它确认"署名确实落在可见圆内 / 确实在右下角"，
     和 [sign_visible] 走完全同一套绘制逻辑，保证量出来的就是画出来的。
     """
+    if right_ratio is None:
+        right_ratio = display_room(visible)
+    if bottom_ratio is None:
+        bottom_ratio = display_room(visible)
     probe = Image.new("RGBA", (n, n), (0, 0, 0, 0))
     draw = ImageDraw.Draw(probe)
-    _draw_sign(draw, n, text, height_ratio, right_ratio, bottom_ratio,
-               align, (255, 255, 255, 255), (0, 0, 0, 255))
+    _draw_sign(draw, n, text, height_ratio, right_ratio, bottom_ratio, visible,
+               (255, 255, 255, 255), (0, 0, 0, 255))
     box = probe.getbbox()
     if box is None:
-        return (n * right_ratio, n * bottom_ratio, n * right_ratio, n * bottom_ratio)
+        cx = n * to_canvas(right_ratio, visible)
+        cy = n * to_canvas(bottom_ratio, visible)
+        return (cx, cy, cx, cy)
     return box
 
 
-def inside_visible_circle(n, rect, visible=72.0 / 108.0):
+def center_in_display(rect, n, visible=1.0):
+    """署名墨迹中心在**显示区**里的相对位置。用来确认"看起来真的在右下角"。
+
+    ⚠ 只看"右边界有没有过 0.5"是不够的 —— 文字本身有宽度，右边界到 0.70 时
+    中心可能还在 0.60，视觉上就是居中。第一版就是这么错的。
+    """
+    x0, y0, x1, y1 = rect
+    cx, cy = (x0 + x1) / 2.0 / n, (y0 + y1) / 2.0 / n
+    if visible >= 0.999:
+        return cx, cy
+    off = (1.0 - visible) / 2.0
+    return (cx - off) / visible, (cy - off) / visible
+
+
+def inside_visible_circle(n, rect, visible=1.0):
     """署名的四个角是否都落在可见圆内。
 
-    自适应图标只显示中间 72/108 的圆；超出部分的署名会被启动器裁掉，
-    而且裁一半比完全不可见更难看（会变成半截字）。
+    **圆半径 = 显示区 / 2 × n**，一个公式覆盖两种图标：
+
+    · 传统图标 `visible=1.0` → 半径 0.5n（启动器套的是内切圆）
+    · 自适应前景层 `visible=72/108` → 半径 n/3
+
+    超出会被启动器裁掉，而且裁一半比完全不可见更难看（会变成半截字）。
     """
     x0, y0, x1, y1 = rect
     cx = cy = n / 2.0
