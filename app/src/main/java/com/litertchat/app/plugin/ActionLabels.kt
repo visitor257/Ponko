@@ -32,8 +32,10 @@ object ActionLabels {
     private val DEFAULTS = mapOf(
         ActionLabel.ENGINE_LOAD to "加载引擎",
         ActionLabel.ENGINE_UNLOAD to "卸载引擎",
-        ActionLabel.PREVIEW to "试听",
-        ActionLabel.PREVIEW_AGAIN to "重新合成",
+        // 「合成」而不是「试听」：这个按钮只跑推理、不播放。
+        // 叫「试听」的话用户会等着一句声音，等不到就以为坏了 ——
+        // 而音频其实已经生成好，就等「播放」。
+        ActionLabel.REASONING to "合成",
         ActionLabel.PLAY to "播放",
         ActionLabel.STOP to "停止",
         ActionLabel.SAVE to "保存",

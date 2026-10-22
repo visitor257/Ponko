@@ -221,11 +221,25 @@ object ActionLabel {
     /** 引擎已就绪时的按钮（同一个按钮的另一个状态） */
     const val ENGINE_UNLOAD = "engine.unload"
 
-    /** 还没有产物时的按钮：跑一次推理 */
-    const val PREVIEW = "preview"
-
-    /** 已经有产物之后，同一个按钮的文字：再跑一次推理 */
-    const val PREVIEW_AGAIN = "preview.again"
+    /**
+     * 跑一次推理得到音频。**只合成，不播放。**
+     *
+     * ## 为什么名字是 reasoning 而不是 preview
+     *
+     * 「preview / 试听」暗示的是**听**这个动作 —— 用户会以为点下去直接出声。
+     * 但这个按钮做的是跑一遍推理，产出的是一个文件；听它需要再点「播放」。
+     *
+     * 名字错了会带来实际的困惑：用户点完没听到声音，会以为功能坏了，
+     * 而实际上音频已经生成好了、就在那儿等着播。
+     *
+     * ## 也不带 .again 这种"第二次改名"的变体
+     *
+     * 曾经有过 `preview.again`：因为那时合成完会自动播，同一个按钮在
+     * "还没听过"和"听过了"两种状态下含义不同，只好改名。
+     * 改成仅合成之后，点几次都是同一个动作（再跑一次推理），歧义消失，
+     * 那个 key 也就没有存在的理由了 —— **它是补丁，不是需求。**
+     */
+    const val REASONING = "reasoning"
 
     /** 重放上一次的结果，不重新推理 */
     const val PLAY = "play"
@@ -246,7 +260,7 @@ object ActionLabel {
     const val MAX_LEN = 12
 
     /** 全部合法的 key。解析时用来过滤插件乱写的项 */
-    val ALL = setOf(ENGINE_LOAD, ENGINE_UNLOAD, PREVIEW, PREVIEW_AGAIN, PLAY, STOP, SAVE)
+    val ALL = setOf(ENGINE_LOAD, ENGINE_UNLOAD, REASONING, PLAY, STOP, SAVE)
 
     /**
      * 把 `getActionLabels()` 返回的 `["key=文字", ...]` 解析成 map。
