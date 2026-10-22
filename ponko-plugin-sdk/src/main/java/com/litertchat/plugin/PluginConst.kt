@@ -28,6 +28,17 @@ object PluginConst {
      * v3 加了 `getActionLabels()`：插件可以指定宿主那几个按钮叫什么
      * （「加载引擎」→「加载模型」这种）。同样是纯扩展，老插件照常可用。
      *
+     * ## 为什么加到 4（2026-10-22）
+     *
+     * v4 给"看不见过程"的插件补了三件事：
+     * · `UiType.LOG` —— 只读日志框，配 [IPonkoCallback.onUiPatch] 增量追加
+     * · `UiType.IMAGE` —— 结果图，配 [IPonkoCallback.onImage] 送图
+     * · `UiType.AUDIO` —— 播放进度条，宿主自己播、自己算进度
+     *
+     * 同样是纯扩展。但要注意**双向兼容不是对称的**：
+     * 新插件调老宿主没有的 `onImage` / `onUiPatch` 时，oneway 调用会**静默无操作**，
+     * 不报错也不生效。所以插件要用 `API_VERSION` 判断，别假定宿主一定收到了。
+     *
      * ## 两类不兼容，处理方式不同
      *
      * · **扩展**（加方法、加字段、加常量）→ 版本 +1，老插件继续能用，
@@ -40,7 +51,7 @@ object PluginConst {
      * Binder 的事务码按声明顺序分配。在中间插入会让后面所有方法的事务码整体后移，
      * 老插件收到的码对不上 → **调用串味**（本该调 A 却执行了 B），比直接报错更糟。
      */
-    const val API_VERSION = 3
+    const val API_VERSION = 4
 
     /**
      * 从这一版起，插件支持「界面」那组方法（`getSettingsSchema` 等）。
@@ -62,9 +73,17 @@ object PluginConst {
      */
     const val API_WITH_ACTION_LABELS = 3
 
+    /**
+     * 从这一版起，插件可以用 [UiType.LOG] / [UiType.IMAGE] / [UiType.AUDIO]，
+     * 以及 [IPonkoCallback.onImage] / [IPonkoCallback.onUiPatch]。
+     *
+     * 宿主按版本决定要不要渲染这三种控件；不认识就降级成纯文本，不崩。
+     */
+    const val API_WITH_RICH_UI = 4
+
     /** 宿主兼容区间：允许老插件继续跑，所以下限保持 1 */
     const val API_MIN_SUPPORTED = 1
-    const val API_MAX_SUPPORTED = 3
+    const val API_MAX_SUPPORTED = 4
 
     // ---- 插件 Action（宿主靠它发现插件）----
     const val ACTION_PLUGIN = "com.litertchat.ponko.PLUGIN"

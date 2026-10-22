@@ -854,6 +854,17 @@ object UiType {
     const val CHOICE  = 4  // 单选（宿主画成下拉或分段）
     const val TEXT    = 5  // 单行文本输入
     const val ACTION  = 6  // 按钮，点了走 invokeAction(key)
+    // ---- v2 ----
+    const val PROGRESS   = 7   // 只读进度条（value = 0–100）
+    const val STATUS     = 8   // 只读键值行（左 label 右 value）
+    const val TEXTAREA   = 9   // 多行文本输入
+    const val GROUP_START = 10 // 可折叠分组开始
+    const val GROUP_END   = 11 // 分组结束
+    // ---- v4 ----
+    const val LOG     = 12  // 只读日志框（配 onUiPatch 追加）
+    const val IMAGE   = 13  // 结果图（配 onImage 送图）
+    const val AUDIO   = 14  // 播放条（播宿主持有的那份产物）
+    const val MAX_KNOWN = 14
 }
 ```
 
@@ -876,10 +887,15 @@ object UiType {
 缓解手段有三条，已全部实现：
 
 1. **一次放够类型**。2026-10-21 补到 12 种，全部来自「做 VoxCPM2 时一定会撞上」的
-   真实场景（进度条、状态行、多行文本、可折叠分组）。宁可多放，不要以后被迫发版。
+   真实场景（进度条、状态行、多行文本、可折叠分组）。2026-10-22 又补到 15 种
+   （日志、结果图、播放条）。宁可多放，不要以后被迫发版。
 2. **老宿主优雅降级**。`type > UiType.MAX_KNOWN` 时不崩、不整页空白，
    显示成「标签 + 值 + 这个控件需要更新 Ponko」的文字块。核心功能不受影响。
 3. **`UiType.MAX_KNOWN`**：插件作者可以据此判断"我用的类型是不是太新了"。
+
+**v4 的两个新回调是单向不对称的**：新插件调老宿主的 `onImage` / `onUiPatch` 时，
+oneway 调用**静默无操作** —— 不报错、也不生效。所以插件必须按
+`API_VERSION >= 4`（或宿主报的版本）判断，别假定宿主一定收到了。
 
 ### v2 补充的 5 种（2026-10-21）
 
@@ -890,6 +906,41 @@ object UiType {
 | `TEXTAREA` | 多行文本 | 音色描述、提示词 | `TEXT` 是单行，长文本没法输入 |
 | `GROUP_START` | — | 可折叠分组开始（`key` 记折叠状态） | 参数十几个，一屏铺满要滚很久 |
 | `GROUP_END` | — | 分组结束（**不支持嵌套**） | — |
+
+### v4 补充的 3 种（2026-10-22）：过程与产物
+
+前面 12 种都是**配置项** —— 用户改它、插件读它。这三种不是：
+
+| 类型 | 值 | 用途 | 缺了会怎样 |
+|---|---|---|---|
+| `LOG` | 12 | 只读日志框（固定 160dp 高、内部滚动、长按可复制） | 加载/推理日志只能塞 `debugInfo`，用户要开 adb 才看得到 |
+| `IMAGE` | 13 | 结果图（等比、点击全屏） | 图像插件根本送不出图 |
+| `AUDIO` | 14 | 播放条（播放/暂停 + 可拖进度 + 时间） | 只有宿主那个「播放」按钮，不能 seek、看不到进度 |
+
+**它们不参与 `setSetting`** —— 用户改不了。内容走另外两个回调：
+
+```kotlin
+// 追加一行日志（append = true）。**不要用 onSchemaChanged**，那会整页重建：
+// 滚动位置复位、输入框失焦、正在编辑的 TEXTAREA 被覆盖
+callback.onUiPatch("log", "[12:03:41] loading tokenizer…\n", true)
+
+// 推进度（append = false 表示替换）
+callback.onUiPatch("dl", "37.5", false)
+
+// 送一张结果图。FD 所有权归宿主，插件不要自己 close
+val pfd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+callback.onImage(pfd, 1024, 1024, "image/png")
+```
+
+`AUDIO` 不需要插件送任何东西 —— 它播的是**宿主持有**的那份产物
+（宿主最近一次合成结果）。插件只是要求"在这一页放一个播放器"。
+
+### ⚠ `onUiPatch` 的两个硬限制
+
+1. **key 必须和 schema 里那个 item 完全一致。** 对不上就静默忽略（宿主不会去猜）。
+   整页只有一个日志框时，key 写空也能兜底追加 —— 但也只在这一种情况下兜底。
+2. **要节流。** 和所有回调一样是 oneway、没有背压。刷日志建议 ≥100ms 合并一次；
+   每读一行就发一个 Binder 事务，宿主那 1MB 配额会被吃满。
 
 ### 值归谁管
 **插件管。** 宿主不持久化任何设置值 —— 它只是每次 `getSettingsSchema()` 拿最新状态来画。
