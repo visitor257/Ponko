@@ -110,8 +110,13 @@ class PluginUiPage(
     private var diagHeadView: TextView? = null
     private var diagBodyView: TextView? = null
 
-    /** 外层滚动容器（build 时创建） */
-    private var self: View? = null
+    /**
+     * 外层滚动容器（build 时创建）。
+     *
+     * 存成 `ScrollView` 而不是 `View`：日志追加时要读/恢复它的 `scrollY`，
+     * 不然日志内容一变，整页可能被焦点机制带走（见 [appendLog]）。
+     */
+    private var self: android.widget.ScrollView? = null
 
     /** 日志框的固定高度。见 [logBlock] 的说明：不随内容长，页面结构才稳 */
     private val LOG_HEIGHT_DP = 160
@@ -770,12 +775,22 @@ class PluginUiPage(
             setPadding(dp(10), dp(8), dp(10), dp(8))
             setLineSpacing(dp(2).toFloat(), 1f)
             setTextIsSelectable(true)
+            // ⚠ `setTextIsSelectable(true)` 会顺手把 isFocusable 也设成 true。
+            // 一个 focusable 的子 View 在内容变化时会触发父容器的
+            // `requestChildRectangleOnScreen`，表现是**整页跳到日志这里**。
+            // 触摸模式下仍能长按选中/复制（靠 isFocusableInTouchMode），
+            // 但不再参与方向键/焦点的自动可见性机制。
+            isFocusable = false
+            isFocusableInTouchMode = true
             // 横向也能滚：原生库的报错行经常超宽，换行会把本来就难读的
             // 十六进制/路径切得七零八落
             setHorizontallyScrolling(false)
         }
         val scroll = android.widget.ScrollView(act).apply {
             background = rounded(pal.fieldBg, 9)
+            // 日志框自己不该抢焦点，理由同上
+            isFocusable = false
+            isFocusableInTouchMode = false
             addView(body, ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -789,8 +804,40 @@ class PluginUiPage(
         }
         if (item.help.isNotBlank()) box.addView(smallHint(item.help), matchWrap())
         // 初始内容就已经很长时，先滚到底 —— 用户想看的通常是最后几行
-        scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
+        scroll.post { scrollToBottom(scroll) }
         return box
+    }
+
+    /**
+     * 把日志框滚到最底部，**只滚它自己**。
+     *
+     * ## 为什么不能用 `ScrollView.fullScroll(View.FOCUS_DOWN)`
+     *
+     * `fullScroll` 内部走的是 `scrollAndFocus()` → `requestChildRectangleOnScreen()`，
+     * 而后者会**沿 View 树向上冒泡**：它请求父容器把这块矩形变可见 ——
+     * 于是外层那个整页 ScrollView 也跟着滚，用户看到的就是"日志一有内容，
+     * 整个页面唰地跳到日志那里"。
+     *
+     * `scrollTo` 只改自己的 `mScrollY`，对父容器一无影响。这就是这一行
+     * 看起来"更笨"却必须这么写的原因。
+     */
+    private fun scrollToBottom(scroll: android.widget.ScrollView) {
+        val child = scroll.getChildAt(0) ?: return
+        val target = (child.height - scroll.height).coerceAtLeast(0)
+        scroll.scrollTo(0, target)
+    }
+
+    /**
+     * 日志框是不是已经停在底部（容忍一点误差）。
+     *
+     * 用来决定**要不要跟着新内容走**：用户往上翻在看历史时，
+     * 新日志不该把他拽回底部 —— 那正是日志框最烦人的行为。
+     */
+    private fun isAtBottom(scroll: android.widget.ScrollView): Boolean {
+        val child = scroll.getChildAt(0) ?: return true
+        val max = (child.height - scroll.height).coerceAtLeast(0)
+        // 内容还没填满一屏时 max=0，任何位置都算"在底部"
+        return max - scroll.scrollY <= dp(8)
     }
 
     /**
@@ -1011,10 +1058,26 @@ class PluginUiPage(
     }
 
     private fun appendLog(key: String, body: TextView, value: String, append: Boolean) {
+        val scroll = logScrolls[key]
+        // 先记账：**追加之前**是不是停在底部。
+        // 判断必须放在 setText 之前 —— 设完文本内容变长，原来的位置就不在底部了，
+        // 再判断会永远得到 false，于是日志再也不跟随。
+        val follow = scroll != null && isAtBottom(scroll)
+        // 外面那个整页 ScrollView 的位置也要留住。
+        // 光标/选中区的自动可见性在个别机型上仍会把父级带走，这是第二道保险。
+        val outer = self
+        val outerY = outer?.scrollY ?: 0
+
         body.text = if (append) body.text.toString() + value else value
-        // 追加后滚到底：日志的用处就是看最后几行。用户手动往上翻过也别管 ——
-        // 新内容来了就是要看的，比"停在原处"更符合预期
-        logScrolls[key]?.post { logScrolls[key]?.fullScroll(View.FOCUS_DOWN) }
+
+        // 只有原本就在底部才跟随。用户翻上去看历史时把他拽回底部，
+        // 是日志框最招人烦的行为之一。
+        if (follow && scroll != null) {
+            scroll.post { scrollToBottom(scroll) }
+        }
+        if (outer != null) {
+            outer.post { if (outer.scrollY != outerY) outer.scrollTo(0, outerY) }
+        }
     }
 
     /** PROGRESS 的进度条，按 key 索引，供 [patch] 原地改 */
