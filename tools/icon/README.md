@@ -30,14 +30,23 @@ python make-icon.py             # 输出到 out/res/，需手动覆盖
 立绘 `app/src/main/res/drawable-nodpi/about_portrait.png` 用 `© Ponko · visitor257`，
 见文件末尾的处理命令。
 
-### 为什么放底部居中，不放角落
+### 位置：右下角
 
-Android 自适应图标只显示 108dp 画布**中间 72dp 的圆**，四角会被遮罩裁掉。
-署名放角落的话，在圆形遮罩的启动器上直接消失 —— 等于没加。底部居中的位置在
-圆/圆角方/方三种遮罩下都保留。
+**第一版做成了"底部居中"，这是错的。** 方形画布上看不出问题，但自适应图标只显示
+中间 72/108 的圆 —— 居中文字正好落在这个圆的水平中轴上，视觉上就成了"贴在圆中央
+偏下"的一块，既不像角标也不像水印，而是挡在画面正中。右下角才是署名该待的位置。
+
+位置参数 `right_ratio` / `bottom_ratio` = **0.70**（不是贴边 0.9+）：
+
+- 可见圆半径是 `n/3`，右下角要落在圆内需满足
+  `(x1 - n/2)² + (y1 - n/2)² ≤ (n/3)²`，解得 45° 方向上最多到 **0.736n**
+- 0.70 换算到显示区（只取中间 66.7%）是 **80%** 处，视觉上就是右下角
+- 再往外就被启动器的圆形遮罩裁掉
 
 `make-icon-plain.py` 跑完会自检署名是否落在可见圆内，超出直接 `SystemExit(1)`。
 自检失败的典型表现不是"看不见"，而是**被裁成半截字**，那比不加更难看。
+
+立绘是方形图、不受图标遮罩限制，所以用 `0.965` 真正贴右下角。
 
 ### 为什么是白字 + 深描边
 
@@ -80,6 +89,16 @@ DCT 系数全为 0，扰动被 clip 到 255 直接丢失。而且"先给原图�
 | `TINY_SCALE` | 1.6 | 小图只画 `©` 时可以把字号放大，宽度不是约束 |
 | `STROKE_RATIO` | 0.07 | 描边宽度 / 字号 |
 
+图标实际调用的是 `make-icon-plain.py` 里的 `SIGN_KW`：
+
+| 参数 | 值 | 说明 |
+|---|---|---|
+| `height_ratio` | 0.050 | 字号占画布高度。0.070 显得太大（第一版），在图标上很抢画面 |
+| `right_ratio` | 0.70 | 右边界位置（受可见圆约束） |
+| `bottom_ratio` | 0.70 | 底边位置（同上） |
+
+立绘用 `height_ratio=0.032 / right_ratio=0.965 / bottom_ratio=0.965`，文案 `© Ponko · visitor257`。
+
 ## 已知问题（未修）
 
 1. **`ic_launcher_round.png` 与 `ic_launcher.png` 逐像素相同**
@@ -100,8 +119,8 @@ import visible_sign as vs, watermark as wm
 
 p = "app/src/main/res/drawable-nodpi/about_portrait.png"
 vs.sign_visible(Image.open(p).convert("RGBA"), vs.TEXT_LARGE,
-                height_ratio=0.045, bottom_ratio=0.94,
-                fill=(255,255,255,242), stroke=(18,20,26,230)
+                height_ratio=0.032, right_ratio=0.965, bottom_ratio=0.965,
+                fill=(255,255,255,235), stroke=(18,20,26,225)
                 ).convert("RGB").save(p, "PNG", optimize=True)
 print(wm.read_mark(p))   # 必须是 100%，否则水印被破坏了
 ```
