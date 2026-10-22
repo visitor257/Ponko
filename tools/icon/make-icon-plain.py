@@ -13,13 +13,24 @@ ICON_FILL 可覆盖比例（默认 0.471 = 零裁切；0.50 只丢 0.6%；0.611 
   mipmap-*/ic_launcher_background.png                自适应背景层（108dp 纯白）
   mipmap-*/ic_launcher_foreground.png                自适应前景层（108dp，原图居中缩小）
   mipmap-anydpi-v26/ic_launcher(.round).xml
+
+## 可见署名
+
+除背景层外，每张图标底部居中都有 `© Ponko`（小图只写 `©`，见 visible_sign.py）。
+**背景层故意不加**：自适应图标是 background 垫底、foreground 盖在上面，
+foreground 只在立绘处不透明 —— 把署名画在背景层，它会被立绘遮掉大半，
+只在边缘露出残字，比不加更难看。同理署名必须画在**前景层**（最上层）才完整可见。
 """
 import os
+import sys
 
 import numpy as np
 from PIL import Image, ImageDraw
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import visible_sign  # noqa: E402  （同目录模块，要在 sys.path 调整之后导入）
+
 REPO = os.path.dirname(os.path.dirname(HERE))
 SRC = os.environ.get("ICON_SRC") or os.path.join(HERE, "source.png")
 RES = os.path.join(REPO, "app", "src", "main", "res")
@@ -82,13 +93,16 @@ def lost_ratio(im, tol=30):
 
 
 for d, px in DENS:
-    full = compose(px, FILL)
+    # 署名在**最终尺寸**上画，不能先画再缩 —— 缩放会把字糊成一团。
+    # 传统图标（方图 + 圆图）也各自画一遍，同理。
+    full = visible_sign.sign_visible(compose(px, FILL))
     save(full, os.path.join(RES, "mipmap-" + d, "ic_launcher.png"))
     save(full, os.path.join(RES, "mipmap-" + d, "ic_launcher_round.png"))
     big = int(round(px * 108 / 48.0))
+    # 背景层**不署名**：它垫在前景下面，署名会被立绘遮出残字（见文件头注释）
     save(Image.new("RGBA", (big, big), BG),
          os.path.join(RES, "mipmap-" + d, "ic_launcher_background.png"))
-    save(compose_fg(big, FILL),
+    save(visible_sign.sign_visible(compose_fg(big, FILL)),
          os.path.join(RES, "mipmap-" + d, "ic_launcher_foreground.png"))
 
 old = os.path.join(RES, "drawable", "ic_launcher_foreground.xml")
@@ -115,14 +129,31 @@ for name in ("ic_launcher.xml", "ic_launcher_round.xml"):
         fh.write(ADAPTIVE)
     print("  write res/mipmap-anydpi-v26/" + name)
 
+# ---- 校验：署名必须落在可见圆内，否则圆形启动器会把它裁成半截字 ----
+bad = []
+for d, px in DENS:
+    for label, size in (("ic_launcher", px), ("ic_launcher_foreground", int(round(px * 108 / 48.0)))):
+        rect = visible_sign.sign_region(size)
+        ok, worst, rad = visible_sign.inside_visible_circle(size, rect)
+        if not ok:
+            bad.append("%s/%s 最远角 %.1f > 半径 %.1f" % (d, label, worst, rad))
+if bad:
+    print("  ✗ 署名超出可见圆：")
+    for b in bad:
+        print("     " + b)
+    raise SystemExit(1)
+print("  署名圆内自检：%d 个尺寸全部通过" % (len(DENS) * 2))
+
 # ---- 预览：旧 61% 圆形(标红被切部分) / 新比例圆形 / 新比例 48px ----
 S = 432
-new_c = compose(S, FILL)
+new_c = visible_sign.sign_visible(compose(S, FILL))
 ln, tt, lost, nonwhite = lost_ratio(new_c)
 print("  %.3f 比例在圆形下被切 %d/%d 像素 (%.2f%%)" % (FILL, ln, tt, 100.0 * ln / tt))
 vis = np.asarray(new_c.convert("RGB")).copy()
 vis[lost] = [255, 40, 40]
-marked = Image.fromarray(vis)
+# 统一成 RGBA：下面 paste 用 im2 当蒙版，RGB 图没有 alpha 通道会被 Pillow
+# 当成"蒙版格式不对"直接抛 ValueError（bad transparency mask）
+marked = Image.fromarray(vis).convert("RGBA")
 
 out = os.path.join(HERE, "out", "preview")
 os.makedirs(out, exist_ok=True)

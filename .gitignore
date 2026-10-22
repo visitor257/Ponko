@@ -48,3 +48,6 @@ tools/upload-pan.py
 # Python 缓存
 __pycache__/
 *.pyc
+
+# 图标脚本的预览图输出（每次跑 make-icon*.py 都会重写，不是产物）
+tools/icon/out/
