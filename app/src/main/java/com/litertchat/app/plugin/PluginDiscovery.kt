@@ -70,6 +70,17 @@ object PluginDiscovery {
         val stopped: Boolean,
         /** 插件自带的启动入口（用来「点开一次」清掉 stopped）；没有则 null */
         val hasLauncher: Boolean,
+        /**
+         * 插件声明的**功能按钮白名单**（`ponko.actions` meta-data）。
+         *
+         * - `null` = 没声明 → 显示宿主的全部按钮（老插件行为，完全不受影响）
+         * - 空列表 = 声明了但一个都不要 → **一个按钮都不画**（插件明确要求）
+         * - 非空 = 只画列表里的那些，其余全部隐藏
+         *
+         * 为什么走 manifest 而不是 AIDL：这只是显示偏好，不需要跨进程协议。
+         * 加字段就得升 SDK、所有插件重编，代价和收益完全不成比例。
+         */
+        val actionWhitelist: List<String>?,
     )
 
     fun scan(c: Context): List<Found> {
@@ -130,11 +141,65 @@ object PluginDiscovery {
                 resolvable = resolvable,
                 stopped = (ai.flags and ApplicationInfo.FLAG_STOPPED) != 0,
                 hasLauncher = hasLauncher(pm, pkg),
+                actionWhitelist = actionsWhitelistOf(pm, pkg, serviceClass),
             )
         } catch (t: Throwable) {
             // 包在扫描和读取之间被卸载了（竞态），跳过即可
             null
         }
+    }
+
+    /**
+     * 读插件声明的 `ponko.actions` 白名单。
+     *
+     * ## 两个位置都读
+     *
+     * 插件通常写在 `<service>` 里（它本来就在 Service 上挂
+     * `ACTION_PLUGIN`），但写 `<application>` 下也一样合理 ——
+     * 两处都支持，**service 优先**（那是最贴近插件本体的位置）。
+     *
+     * ## 三种返回值，含义严格区分
+     *
+     * | meta-data | 返回 | 效果 |
+     * |---|---|---|
+     * | 没写 | `null` | 显示全部按钮（老插件不受影响） |
+     * | `android:value=""` | 空列表 | 一个按钮都不画 |
+     * | `"reasoning,stop"` | 两个 id | 只画这两个 |
+     *
+     * 空白项会被丢掉（`"reasoning, ,stop"` 里那个空串不是 id）。
+     * 认不出的 id 由调用方过滤并打日志 —— 这里只管"解析"。
+     */
+    private fun actionsWhitelistOf(
+        pm: PackageManager,
+        pkg: String,
+        serviceClass: String,
+    ): List<String>? {
+        val key = "ponko.actions"
+
+        fun fromService(): String? = try {
+            @Suppress("DEPRECATION")
+            pm.getServiceInfo(
+                android.content.ComponentName(pkg, serviceClass),
+                PackageManager.GET_META_DATA
+            ).metaData?.getString(key)
+        } catch (t: Throwable) {
+            null
+        }
+
+        fun fromApp(): String? = try {
+            @Suppress("DEPRECATION")
+            pm.getApplicationInfo(pkg, PackageManager.GET_META_DATA)
+                .metaData?.getString(key)
+        } catch (t: Throwable) {
+            null
+        }
+
+        // 注意 `?: return null` 和 `?.` 的区别：这里必须用 `?:` 判断
+        // "到底有没有声明"，因为空字符串也是有效的声明（= 一个都不要）
+        val raw = fromService() ?: fromApp() ?: return null
+        return raw.split(',', ';', '\n')
+            .map { it.trim().lowercase() }
+            .filter { it.isNotEmpty() }
     }
 
     /** 插件有没有可启动的激活组件 —— 有它才能清掉 stopped 状态 */
