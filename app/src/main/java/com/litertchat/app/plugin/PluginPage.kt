@@ -449,6 +449,20 @@ class PluginPage(
             override fun onPluginAudioFile(pkg: String, key: String, bytes: ByteArray, displayName: String?) {
                 acceptPluginAudio(pkg, key, bytes, displayName)
             }
+
+            /**
+             * v8：插件要求切到某一页（"推理完成 → 跳结果页"）。
+             *
+             * 界面没开着时直接丢 —— 那种"过去的意图"没有意义，
+             * 等用户下次进来再自动跳过去会显得界面自己在乱动。
+             */
+            override fun onPluginSelectTab(pkg: String, groupKey: String, tabKey: String) {
+                if (openUiPkg != pkg || currentUiPage == null) {
+                    android.util.Log.i("PonkoPluginPage", "[$pkg] selectTab 时界面没开着，已忽略")
+                    return
+                }
+                currentUiPage?.selectTab(groupKey, tabKey)
+            }
         }
 
         refresh()

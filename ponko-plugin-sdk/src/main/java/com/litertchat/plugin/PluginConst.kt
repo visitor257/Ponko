@@ -71,6 +71,12 @@ object PluginConst {
      * 前两件之前根本没有通道：合成由宿主发起（插件只说"我有个按钮被点了"），
      * 功能块由 `build()` 写死挂在标题下面。
      *
+     * ## 为什么加到 8（2026-10-22）
+     *
+     * 插件开发者问："能不能做触发事件？比如推理完成后跳到 a 页"。
+     * 标签页状态（用户点哪页、上次停哪页）一直是宿主私有的，
+     * v8 开了 `selectTab` —— 第一次允许插件决定**显示哪一页**。
+     *
      * ## 两类不兼容，处理方式不同
      *
      * · **扩展**（加方法、加字段、加常量）→ 版本 +1，老插件继续能用，
@@ -83,7 +89,7 @@ object PluginConst {
      * Binder 的事务码按声明顺序分配。在中间插入会让后面所有方法的事务码整体后移，
      * 老插件收到的码对不上 → **调用串味**（本该调 A 却执行了 B），比直接报错更糟。
      */
-    const val API_VERSION = 7
+    const val API_VERSION = 8
 
     /**
      * 从这一版起，插件支持「界面」那组方法（`getSettingsSchema` 等）。
@@ -141,9 +147,19 @@ object PluginConst {
      */
     const val API_WITH_SYNTH_REQUEST = 7
 
+    /**
+     * 从这一版起，插件可以**让宿主切换到指定标签页**
+     * （`IPonkoCallback.selectTab`）。
+     *
+     * 用途：推理完成后自动翻到「结果」页，不用用户再点一下标签。
+     * 宿主侧的标签页状态一直是私有的（用户点哪页、记住哪页），
+     * 这是第一次开放"由插件决定显示哪一页"。
+     */
+    const val API_WITH_TAB_SELECT = 8
+
     /** 宿主兼容区间：允许老插件继续跑，所以下限保持 1 */
     const val API_MIN_SUPPORTED = 1
-    const val API_MAX_SUPPORTED = 7
+    const val API_MAX_SUPPORTED = 8
 
     // ---- 插件 Action（宿主靠它发现插件）----
     const val ACTION_PLUGIN = "com.litertchat.ponko.PLUGIN"

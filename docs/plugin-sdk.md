@@ -157,6 +157,11 @@ oneway interface IPonkoCallback {
      * key 对应 UiItem.key；同一个 key 再送 = 替换。FD 归宿主所有。
      */
     void onAudioFile(in String key, in ParcelFileDescriptor fd, in @nullable String displayName);
+
+    // ---- v8：插件控制宿主界面 ----
+
+    /** 让宿主切到某一页。groupKey = TABS_START.key，tabKey = TAB.key */
+    void selectTab(in String groupKey, in String tabKey);
 }
 ```
 
@@ -815,7 +820,7 @@ ponko-plugin-sdk/
     ├── AndroidManifest.xml   空（SDK 不含组件声明）
     ├── aidl/com/litertchat/plugin/
     │   ├── IPonkoPlugin.aidl          主接口（15 方法）
-    │   ├── IPonkoCallback.aidl        回调（11 方法：v4 加 2、v7 加 2）
+    │   ├── IPonkoCallback.aidl        回调（12 方法：v4 加 2、v7 加 2、v8 加 1）
     │   └── 12 个 Parcelable 声明文件
     └── java/com/litertchat/plugin/
         ├── PluginConst.kt             API 版本 / 角色 / 模式 / 限流常量
@@ -1327,6 +1332,67 @@ UiItem(key = "advanced", type = UiType.GROUP_START,
 - 用户手动折过之后以用户的选择为准（`groupOpen` 优先），不会被下次刷新顶回默认
 - 其它 `value` 一律当展开（只有 `"collapsed"` 这一个开关值，大小写不敏感）
 
+### v8 补充：插件切换标签页（`selectTab`）
+
+**问题**：标签页做出来之后，插件只能**声明**有哪几页，不能让宿主**翻到**某一页。
+推理跑完了，用户还得自己点一下「结果」才看得到。
+
+**用法**（推理完成 → 跳结果页）：
+
+```kotlin
+override fun synthesize(req: SynthesisRequest) {
+    val wav = runInference(req)
+    callback.onResult(ResultBundle(...))     // ① 先把结果交出去
+    notifySelectTab("main", "result")        // ② 再把界面翻过去
+}
+```
+
+| 参数 | 是什么 |
+|---|---|
+| `groupKey` | 那个 `UiType.TABS_START` 的 **`key`** |
+| `tabKey` | 目标 `UiType.TAB` 的 **`key`** |
+
+**① ② 的顺序是有讲究的**：宿主在 `onResult` 里把音频落盘、让结果页的播放条变成可用。
+先切页再交结果，用户可能先看到一条"还没有可播放的音频"。
+
+#### 命中规则与降级
+
+| 情况 | 结果 |
+|---|---|
+| 组和页都找到 | 切过去。最外层那组是**滑动**过去的（pager 动画），内层是淡入 |
+| 组不存在（key 拼错，或还没渲染完） | 静默忽略，但**把目标记进"这一组该停在哪页"**，下次重画时自动生效 |
+| 组在，页不在（插件后来才加这一页） | 同上，记账 + 下次渲染生效 |
+| 同名 `TABS_START` 写了多个 | 只认**第一个**。后出现的仍能正常点击，只是 `selectTab` 不命中它 |
+| 插件界面没开着 | 丢弃，**连记账都不做** —— "过去的意图"等用户下次进来再自动跳会显得界面自己在动 |
+| `groupKey` / `tabKey` 为空 | 忽略，logcat 一行警告 |
+
+"记账"这一点让两种常见时序都能work：**先发跳转、后改 schema**（插件在 `onStage`
+里就想跳到某个还没建出来的页），以及**宿主正处在 `refresh()` 途中**。
+
+#### 排查：跳转没反应
+
+```bash
+adb logcat | grep PonkoPluginUi
+```
+
+会看到其中之一：
+
+```
+selectTab 没有匹配的组：'mian'（已记账，下次重画时生效）。现有组：[main]
+selectTab 组 'main' 里没有 tab 'reslt'（已记账）
+```
+
+第一行通常就是**把 `main` 打成了 `mian`**。日志里会列出当前实际存在的组 key，
+直接对照即可。
+
+#### 它和"用户点标签"谁赢
+
+**插件赢。** 用户刚点了某一页、插件随后又要跳走，以后者为准。
+
+这是刻意的：插件只在**有明确理由**时该调它（结果出来了、阶段变了）。
+滥用会让标签页像自己会乱动 —— 那也是这类"自动跳转"最招人烦的地方。
+建议只在两种时机用：产物就绪、或者明确的长任务阶段切换。
+
 
 
 
@@ -1340,6 +1406,7 @@ UiItem(key = "advanced", type = UiType.GROUP_START,
 | `notifyImage(fd / file, w, h, mime)` | 送结果图 |
 | `notifyRequestSynthesis()` | v7：请宿主用当前参数合成一次 |
 | `notifyAudioFile(key, fd / file, name)` | v7：给 `AUDIO` 条目送它自己的音频 |
+| `notifySelectTab(groupKey, tabKey)` | v8：让宿主切到某一页（推理完跳结果页） |
 
 ```kotlin
 class MyPluginService : PonkoPluginService() {
@@ -1641,7 +1708,7 @@ AIDL 调用遇到对方不认识的方法时，行为**不保证抛异常**：
 `API_VERSION` 是编译期写死进插件二进制的。所以"旧插件报 1、新插件报 2"这件事
 自动成立，不需要插件作者做任何事。
 
-### 现状（v7 = 2026-10-22）
+### 现状（v8 = 2026-10-22）
 
 | 版本 | 引入 | 宿主能否连接 |
 |---|---|---|
@@ -1652,27 +1719,29 @@ AIDL 调用遇到对方不认识的方法时，行为**不保证抛异常**：
 | v5 | 标签页（`TABS_START` / `TAB` / `TABS_END`），可多层嵌套 | ✅ 支持 |
 | v6 | 模型槽位（`MODEL_SLOT`）+ `importModel` / `deleteModel` | ✅ 支持 |
 | v7 | `requestSynthesis` / `onAudioFile` / `HOST_SLOT`，以及分组的默认收起 | ✅ 支持 |
+| v8 | `selectTab` —— 插件让宿主切换到指定标签页 | ✅ 支持 |
 
 **「能否连接」和「能力是否齐」是两件事。** 上表问的是前者，答案永远是"能"——
 只要 `apiVersion >= API_MIN_SUPPORTED`（现在是 1）就会绑定。
 后者要看 `apiVersion` 落在哪：
 
-| 插件版本 | 跑在当前宿主（v7）上的实际效果 |
+| 插件版本 | 跑在当前宿主（v8）上的实际效果 |
 |---|---|
 | v1 | 能合成，没有界面 |
 | v2 / v3 | 有界面，缺日志框/结果图/播放条 |
 | v4 | 有过程与产物，缺标签页、模型槽位、反向指挥 |
 | v5 | 缺模型槽位、反向指挥 |
 | v6 | 缺 `requestSynthesis` / `onAudioFile` / `HOST_SLOT` |
-| v7 | 全部功能 |
-| v8+（未来） | 老功能照常，新控件降级成文字块，新回调被丢弃 |
+| v7 | 缺"插件主动切页"（标签页只能用户点） |
+| v8 | 全部功能 |
+| v9+（未来） | 老功能照常，新控件降级成文字块，新回调被丢弃 |
 
 宿主自己的 `API_MAX_SUPPORTED` 只影响最后一行的**提示文案**，不影响能否连接。
 
-- `API_VERSION = 7`，`API_WITH_SCHEMA = 2`，`API_WITH_ACTION_LABELS = 3`，
+- `API_VERSION = 8`，`API_WITH_SCHEMA = 2`，`API_WITH_ACTION_LABELS = 3`，
   `API_WITH_RICH_UI = 4`，`API_WITH_TABS = 5`，`API_WITH_MODEL_IMPORT = 6`，
   `API_WITH_SYNTH_REQUEST = 7`（v7 的三项共用这一个版本号 —— 常量名沿用最先落地的那个，
-  判断写 `api >= API_WITH_SYNTH_REQUEST` 即可）
+  判断写 `api >= API_WITH_SYNTH_REQUEST` 即可），`API_WITH_TAB_SELECT = 8`
 - 宿主兼容下限 `API_MIN_SUPPORTED = 1` → **v1–v7 老插件照常连接、照常合成**，
   只是拿不到对应版本才有的能力：
   · v1 插件没有插件界面，卡片上不显示「进入」，并提示"插件 SDK v1（当前 v7）"
@@ -1682,8 +1751,9 @@ AIDL 调用遇到对方不认识的方法时，行为**不保证抛异常**：
   · v1–v5 插件没有模型槽位
   · v1–v6 插件不能反向指挥宿主（`requestSynthesis` / `onAudioFile` / `HOST_SLOT`），
     每条历史记录也只能播"最近一次产物"
-- `API_MAX_SUPPORTED = 7` 是**认识上限**，不是拒绝阈值。
-  `api > 7` 的插件仍会连接，只是新控件降级、新回调被丢弃
+  · v1–v7 插件不能自己切页（`selectTab`），标签页只能由用户点
+- `API_MAX_SUPPORTED = 8` 是**认识上限**，不是拒绝阈值。
+  `api > 8` 的插件仍会连接，只是新控件降级、新回调被丢弃
 - `API_MIN_SUPPORTED` **一直是 1** —— 至今所有改动都是扩展，没有破坏性改动
 
 ### v3 的 `getActionLabels()`：为什么是一个方法，不是 manifest 的字段
