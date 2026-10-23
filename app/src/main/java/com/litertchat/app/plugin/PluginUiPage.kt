@@ -534,6 +534,11 @@ class PluginUiPage(
     private fun render() {
         val host = host ?: return
 
+        // 重画前的滚动位置，**只用于诊断日志**（见 render 尾部）。
+        // 刻意不用它做"恢复" —— 位置该不该保持由布局是否掉高决定，
+        // 而不是靠把旧值写回去。写回去是补偿，补偿永远慢一步。
+        val renderStartY = self?.scrollY ?: 0
+
         // 控件全要重建，这些索引指向的对象立刻作废。
         // **不清的话 patch 会写进已经脱离视图树的老控件** ——
         // 表现是"日志在涨，但屏幕上不动"，极难查。
@@ -738,24 +743,53 @@ class PluginUiPage(
         refreshAudioBars()
         startAudioTicker()
 
-        // 这里**不**恢复滚动位置（2026-10-23 删）。
+        // ---- 关于滚动位置：现在靠"高度不掉"来保住，而不是靠恢复 ----
         //
-        // 曾经有一段 `post { scrollTo(0, keepScrollY) }`，想修"点按钮后页面跳走"。
-        // 那是个错误的方向，两个理由：
+        // ## 曾经的三次尝试，前两次都错
         //
-        // 1. **时机不可靠**：`post` 只保证"下一帧的消息队列"，不保证
-        //    measure/layout 已经完成。那一刻子 View 高度还是 0，
-        //    `scrollTo` 会被 clamp 到 0，反而把位置改错了 —— 用户看到的
-        //    "跳到加载按钮那里"就是它干的。
-        // 2. **更根本：这不归宿主管**。重画之后停在哪，是页面作者的决定；
-        //    宿主替它选一个位置，就是替它做决定。
+        // v11：`post { scrollTo(0, keepScrollY) }`
+        //   `post` 只保证"跑在下一轮消息队列"，**不保证 measure/layout 完成**。
+        //   那时子 View 高度还是 0，`scrollTo` 被 clamp 到 0 —— 反而把位置改坏了。
         //
-        // 删掉之后反而正确：`removeAllViews()` 只 requestLayout 不立即
-        // layout，同一帧内 `addView` 完内容已恢复，帧末 layout 时
-        // `mScrollY` 保持原值 —— **Android 自己就把位置保住了**，
-        // 不需要我干预。
+        // v12：整段删掉，注释里写"Android 自己就把位置保住了"。
+        //   这句**只在一半情况下成立**。AOSP `ScrollView.onLayout` 末尾是
+        //   `scrollTo(mScrollX, mScrollY)`，而 `scrollTo` 会按**当前**子 View
+        //   高度重新 clamp 一次，且 clamp 只会变小、不会自己长回来。
+        //   所以"位置保住"有个前提：**内容高度不能在那一帧变矮**。
         //
-        // 插件若确实要控制滚动，用 `notifyScrollTo(key)` 明说（v12）。
+        // v12.1（当前）：修那个前提本身。
+        //   pager 的高度原来是 `stretchToTallestPage()` 在 `OnPreDrawListener`
+        //   里设的（布局之后），于是重建那一帧高度**先矮后高**，
+        //   `mScrollY` 在中间那次 layout 被截掉，随后没人把它放回去。
+        //   现在高度由 [TallestPager.onMeasure] 在**测量阶段**定好，
+        //   内容高度不掉，`ScrollView` 的默认行为就真的能保住位置。
+        //
+        // ## 所以这里不需要任何恢复代码
+        //
+        // 修的是根因（高度计算时机），不是在下游堵漏。
+        // 插件要主动控制位置仍然走 `notifyScrollTo(key)`（v12）。
+        //
+        // ## 为什么记一行日志
+        //
+        // 这个 bug 难在"跳"是 clamp 的副作用，从代码里看不出来。
+        // 插件侧实测时如果能直接看到"重画前 320 → 重画后 0"，
+        // 就不用再猜是哪一层夹的。正常情况（位置没变）不打日志。
+        //
+        // ⚠ 对比基准必须在 [render] **开头**取（见 renderStartY），
+        // 在这里取到的是"已经重画完"的位置，那永远相等，日志等于没有。
+        if (renderStartY > 0) {
+            self?.let { sv ->
+                afterLayout(sv) {
+                    if (sv.scrollY != renderStartY) {
+                        android.util.Log.i(
+                            "PonkoPluginUi",
+                            "[$pkg] 重画后滚动位置变了：$renderStartY → ${sv.scrollY}" +
+                                "（内容高=${sv.getChildAt(0)?.height} 视口高=${sv.height}）"
+                        )
+                    }
+                }
+            }
+        }
     }
 
     // ==================== 功能区（宿主提供）====================
@@ -2007,7 +2041,9 @@ class PluginUiPage(
         init {
             view.addView(bar, matchWrap())
             if (swipeable) {
-                val vp = androidx.viewpager.widget.ViewPager(act).apply {
+                // TallestPager：高度在 onMeasure 里就定成"最高页"。
+                // 这是"重画后跳回最顶"的根因修复 —— 见类注释
+                val vp = TallestPager(act, pages).apply {
                     adapter = PageAdapter(pages)
                     addOnPageChangeListener(object :
                         androidx.viewpager.widget.ViewPager.SimpleOnPageChangeListener() {
@@ -2037,38 +2073,10 @@ class PluginUiPage(
             }
         }
 
-        /**
-         * 把 [pagesHost] 的高度定成**所有页里最高的那个**。
-         *
-         * ## 为什么必须手动定高
-         *
-         * pager 在整页 ScrollView 里拿到的是 UNSPECIFIED 高度。不给定高的话，
-         * 要么塌成 0、要么靠 ViewPager 自己按"最大子页"去猜 —— 后者行为随版本变化，
-         * 而这里明确算一遍更可靠，也顺便解释了"为什么短页会留白"。
-         *
-         * ## 为什么是"最高"而不是"当前页"
-         *
-         * 按当前页定高的话，从长页滑到短页、或反过来，中间那一帧会被裁掉半截，
-         * 看起来像闪了一下。定成最高就永远裁不到。
-         * 代价是短页下方有空白 —— 这是可滑动分页的固有取舍，
-         * 想要"页页紧凑"就得像绘图页那样让 pager 占满整屏，那要重排整页结构。
-         */
-        private fun stretchToTallestPage() {
-            val vp = pager ?: return
-            val w = vp.width.takeIf { it > 0 } ?: act.resources.displayMetrics.widthPixels
-            var h = 0
-            pages.forEach { p ->
-                p.measure(
-                    View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.AT_MOST),
-                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
-                if (p.measuredHeight > h) h = p.measuredHeight
-            }
-            if (h <= 0) return
-            vp.layoutParams = (vp.layoutParams ?: LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, h)).apply { height = h }
-            // 短页下方会留白，但**不给它加底色** —— 留白就是页面底色（pal.bg）的延续，
-            // 读起来是"这页就这么多"；加个 fieldBg 反而会让所有卡片外面多出一层灰块
-        }
+        // 这里原来有 stretchToTallestPage()：在 OnPreDrawListener 里给 pager
+        // 设 layoutParams.height。已删 —— 那个时机是"布局之后"，导致重建那一帧
+        // 高度先矮后高，ScrollView.onLayout 的 clamp 把 mScrollY 截掉了。
+        // 现在高度由 [TallestPager.onMeasure] 在测量阶段定好。
 
         /**
          * 开一个新页并加上标签。
@@ -2142,18 +2150,15 @@ class PluginUiPage(
                 view.setPadding(0, 0, 0, 0)
                 // ⚠ pager 的高度还是要算 —— 这种情况下 pagesHost 仍然是 pager，
                 // 不给定高它就是 0dp，用户看到一整块空白
-                //
-                // 用 afterLayout 而不是 post：要给各页 measure 定高，
-                // 必须先有真实宽度（post 时 pager.width 可能还是 0）
-                pager?.let { afterLayout(it) { stretchToTallestPage() } }
+                // 高度由 TallestPager.onMeasure 自己定，这里不用再算什么
                 return
             }
             // restoreIndex 用 keys 查，此时已是完整列表
             val want = restoreIndex()
             if (want != current) select(want)
-            // pager 的高度要在所有页都建完之后算（此时才知道哪页最高），
-            // 而且要有真实宽度才能 measure —— 见 afterLayout 的说明
-            pager?.let { afterLayout(it) { stretchToTallestPage() } }
+            // 高度由 TallestPager.onMeasure 负责（它每次都遍历所有页取最高），
+            // 这里不需要额外定高 —— 曾经有两行 afterLayout { stretchToTallestPage() }，
+            // 那正是"重画后位置被 clamp"的来源
         }
 
         private fun buildChip(label: String, idx: Int): TextView = TextView(act).apply {
@@ -2271,6 +2276,84 @@ class PluginUiPage(
 
         /** 用户当前看到的那一页。只用于滚动、日志粘底这类"显示状态"的事 */
         fun currentPage(): LinearLayout = pages.getOrNull(current) ?: implicitPage
+    }
+
+    /**
+     * 高度取「所有页里最高那个」的 ViewPager（v12.1）。
+     *
+     * ## 为什么需要它
+     *
+     * ## 原来的做法和它造成的 bug
+     *
+     * 原来高度靠 `TabGroup.stretchToTallestPage()` 在 `afterLayout`
+     * （`OnPreDrawListener`）里设 `layoutParams.height`。于是重画时的时序是：
+     *
+     * | 时机 | 发生什么 |
+     * |---|---|
+     * | 帧 N layout | 用**新的** ViewPager 自己量的高度（`populate()` 只实例化
+     *   当前页 ±1，量出来的高度和上一帧不一样） |
+     * | 帧 N pre-draw | `stretchToTallestPage()` 才把高度改成"最高页"，requestLayout |
+     * | 帧 N+1 layout | 高度落定，但 `mScrollY` **已经在帧 N 那次 layout 被夹掉了** |
+     *
+     * 关键在于 AOSP `ScrollView.onLayout` 末尾有一行
+     * `scrollTo(mScrollX, mScrollY)`，而 `scrollTo` 会按**当前**子 View 高度
+     * 重新 `clamp` 一遍 —— 而且 `clamp` 只会变小、**不会自己长回来**。
+     *
+     * 所以"重画后页面跳回最顶"的根因是**高度在重建那一帧先矮后高**，
+     * 位置被中间那次 clamp 截掉了。
+     *
+     * （这也是 v12 判断错的地方：我当时写"Android 自己就把位置保住了"，
+     *   那个结论只在"内容高度不掉"时成立，而这一页恰好不满足。）
+     *
+     * ## 为什么在 onMeasure 里做
+     *
+     * 高度在**测量阶段**就定下来，重建那一帧内容高度就**不掉** ——
+     * `ScrollView.onLayout` 的 clamp 读到的范围是对的，`mScrollY` 原样保留。
+     * 于是"位置保持"变成自然结果，不需要任何"记住再恢复"的补偿代码。
+     *
+     * 这才是根因修复；`post`/`preDraw` 里恢复位置是在下游堵漏，
+     * 而且永远比 clamp 慢一步。
+     *
+     * ## 为什么要传活 list
+     *
+     * [pages] 是 `TabGroup` 边渲染边往里加的**同一个** `ArrayList` 实例，
+     * 不是快照 —— 这里持有引用就能看到后续 `add`。
+     */
+    private class TallestPager(
+        context: android.content.Context,
+        private val pages: List<View>,
+    ) : androidx.viewpager.widget.ViewPager(context) {
+
+        override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+            val w = MeasureSpec.getSize(widthMeasureSpec).takeIf { it > 0 }
+                ?: resources.displayMetrics.widthPixels
+
+            // 逐页量一遍取最高。用下标遍历而不是 for-each：
+            // 页是"活的" list，虽然渲染与测量都在主线程、不会真并发，
+            // 但下标遍历对"测量期间 list 被改"更宽容，不会抛 CME
+            var h = 0
+            for (i in pages.indices) {
+                val p = pages[i]
+                p.measure(
+                    MeasureSpec.makeMeasureSpec(w, MeasureSpec.AT_MOST),
+                    MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED),
+                )
+                if (p.measuredHeight > h) h = p.measuredHeight
+            }
+
+            if (h > 0) {
+                // EXACTLY：短页下方留白，但不给底色（留白就是页面底色）。
+                // 按"最高"而不是"当前页"定高，是为了从长页滑到短页时
+                // 中间任何一帧都裁不到内容
+                super.onMeasure(
+                    widthMeasureSpec,
+                    MeasureSpec.makeMeasureSpec(h, MeasureSpec.EXACTLY),
+                )
+            } else {
+                // 还没有页（init 里刚建、pages 只有隐式空页）→ 交回默认逻辑
+                super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+            }
+        }
     }
 
     /**
@@ -2865,10 +2948,6 @@ class PluginUiPage(
         // 判断必须放在 setText 之前 —— 设完文本内容变长，原来的位置就不在底部了，
         // 再判断会永远得到 false，于是日志再也不跟随。
         val follow = scroll != null && isAtBottom(scroll)
-        // 外面那个整页 ScrollView 的位置也要留住。
-        // 光标/选中区的自动可见性在个别机型上仍会把父级带走，这是第二道保险。
-        val outer = self
-        val outerY = outer?.scrollY ?: 0
 
         body.text = if (append) body.text.toString() + value else value
 
@@ -2880,16 +2959,25 @@ class PluginUiPage(
             // 这就是"日志偶尔不跟随"的原因 —— 时好时坏，极难复现
             afterLayout(scroll) { scrollToBottom(scroll) }
         }
-        // 锁外层位置**只在 follow 时**做（2026-10-23 收窄）。
+
+        // 这里**不再锁外层滚动位置**（2026-10-23 删，理由见下）。
         //
-        // 原来是无条件执行 —— 用户在翻整页、插件恰好在推日志，就会被拽回原位。
-        // 而需要这道保险的只有一种情况：日志框自己在跟着滚到底，
-        // 那一次 `requestChildRectangleOnScreen` 可能把父级一并带走。
-        // 用户没在跟随时，我们本来就不碰任何滚动，没有要保险的东西。
-        if (follow && outer != null) {
-            // 同上：要在布局之后才知道滚动范围变没变
-            afterLayout(outer) { if (outer.scrollY != outerY) outer.scrollTo(0, outerY) }
-        }
+        // 原来有一段：follow 成立时记下 `outer.scrollY`，布局后如果变了就拉回去，
+        // 目的是防"日志框滚动把父级 ScrollView 一并带走"。
+        //
+        // 现在删掉，两个理由：
+        //
+        // 1. **它本身就是多余的**：真正会带走父级的是 `fullScroll()`
+        //    （走 requestChildRectangleOnScreen 向上冒泡）。而这里用的是
+        //    `scrollTo`，只改自己的 mScrollY，对父容器没有任何影响 ——
+        //    这一点 `scrollToBottom` 的注释里早就写清楚了。防的东西不存在。
+        // 2. **它误伤的频率远高于它保护的东西**：`isAtBottom` 在日志内容
+        //    不足一屏时恒为 true（`max = 0`），于是**每推一行日志都会锁一次
+        //    外层位置**。用户在翻整页、插件在推日志，页就被按住了。
+        //
+        // 如果真机上仍观察到"日志把整页带走"，那是别的原因（比如日志框
+        // 里有 focusable 的子 View 触发了 requestChildRectangleOnScreen），
+        // 该修的是那个原因，不是在这里按住外层的 scrollY。
     }
 
     /** PROGRESS 的进度条，按 key 索引，供 [patch] 原地改 */
