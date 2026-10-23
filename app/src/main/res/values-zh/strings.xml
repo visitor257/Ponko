@@ -567,7 +567,6 @@
 <string name="s_548">正在停止…</string>
 <string name="s_549">合成参数</string>
 <string name="s_550">文本（要合成的内容）</string>
-<string name="s_551">输入文本后这里会显示预计耗时</string>
 <string name="s_552">在这里输入要合成的文字</string>
 <string name="s_553">模式</string>
 <string name="s_554">纯 TTS</string>
@@ -627,18 +626,13 @@
 <string name="s_608">正在把「%1$s」交给插件…</string>
 <string name="s_609">已交给插件：%1$s</string>
 <string name="s_610">转发失败：%1$s</string>
-<string name="s_611">%1$d 小时</string>
-<string name="s_612">%1$d 小时 %2$d 分</string>
 <string name="s_613">已生成 %1$.1f 秒音频（耗时 %2$.1f 秒），点「%3$s」试听</string>
 <string name="s_588">引擎已加载：%1$d Hz，占用 %2$s MB，耗时 %3$s 秒</string>
 <string name="s_589">引擎已加载：%1$d Hz，耗时 %2$s 秒</string>
-<string name="s_590">约 %1$s 秒语音 · 按当前插件速度估算需 %2$s ~ %3$s（仅供参考）</string>
 <string name="s_599">插件 SDK v%1$d（当前 v%2$s） · 功能可用，但缺插件界面。更新插件可获得</string>
 <string name="s_620">插件 SDK v%1$d，比当前 Ponko（v%2$s）新 · 功能可用，新增的界面元素可能显示不出来。更新 Ponko 可获得完整功能</string>
 <string name="s_621">（%1$s，%2$s）…</string>
 <string name="s_622">自动线程</string>
-<string name="s_623">%1$d 秒</string>
-<string name="s_624">%1$s 分钟</string>
 <string name="s_625">音频保存失败：%1$s</string>
 <string name="s_626">播放完毕（点「%1$s」可存进音乐库）</string>
 <string name="s_627">播放失败（%1$s/%2$s）</string>

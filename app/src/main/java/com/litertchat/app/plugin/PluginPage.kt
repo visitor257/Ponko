@@ -1572,29 +1572,18 @@ class PluginPage(
         // 宿主不知道插件的 RTF，没有依据去定"多长算太长"。真有限制该由插件
         // 自己拒绝并在 message 里说明，宿主照实转达。
         //
-        // 能做的、该做的只是把耗时**告诉**用户 —— 下面那行实时估算。
-        // 它同样是估算（按中文 ~4.5 字/秒、RTF 10~30），所以措辞用"约"，
-        // 并且不做任何强制。
+        // ⚠ 这里原来有一行"实时耗时估算"，2026-10-23 删掉了。
+        //
+        // 删的原因不是嫌麻烦，而是它**算不准而且不可能算准**：
+        // 那个公式按"中文 4.5 字/秒 × RTF 10~30"硬编码，而真实速度取决于
+        // 插件实现、机型、后端（CPU/GPU）、线程数 —— 换个语言（英文的
+        // 字符/秒和中文的 字/秒 不是一回事）连数量级都会偏。
+        // 给用户一个偏差几倍的倒计时，比不给更糟：他会按那个数字判断要不要
+        // 继续等，等超了就以为卡死了。
+        //
+        // 真需要知道进度，应该由插件自己报（`onSpeakStage` 已经能报阶段，
+        // 真要精确到秒就该在协议里带 progress），而不是宿主猜。
         box.addView(fieldLabel(getString(R.string.s_550)), wrapWrap())
-        val estimate = TextView(act).apply {
-            textSize = 11f
-            setTextColor(pal.hint)
-            setPadding(0, dp(4), 0, 0)
-            setLineSpacing(dp(2).toFloat(), 1f)
-        }
-        fun refreshEstimate(s: String) {
-            estimate.text = if (s.isBlank()) {
-                getString(R.string.s_551)
-            } else {
-                // 中文按 4.5 字/秒估语音时长；非中文按字符数近似（英文平均更短）
-                val sec = (s.length / 4.5).coerceAtLeast(0.5)
-                val lo = sec * 10
-                val hi = sec * 30
-                // 三个占位符：秒数、时长下限、上限。用位置参数是因为
-                // 英文语序和中文不同（"about 3.2 s of speech, estimated 1.0 min ~ 3.0 min"）
-                getString(R.string.s_590, "%.1f".format(sec), fmtDur(lo), fmtDur(hi))
-            }
-        }
         val textInput = EditText(act).apply {
             setText(cur.text)
             hint = getString(R.string.s_552)
@@ -1605,15 +1594,10 @@ class PluginPage(
             gravity = Gravity.TOP or Gravity.START
             setLineSpacing(dp(3).toFloat(), 1f)
             styleField(this)
-            addTextChangedListener(simpleWatcher { s ->
-                remember(cur.copy(text = s))
-                refreshEstimate(s)
-            })
+            addTextChangedListener(simpleWatcher { s -> remember(cur.copy(text = s)) })
         }
         speakTextInput = textInput
-        refreshEstimate(cur.text)
         box.addView(textInput, matchWrap().apply { topMargin = dp(4) })
-        box.addView(estimate, matchWrap())
 
         // 显隐要在 chip 回调里用，所以先声明成可变量（Kotlin 局部函数不能前向引用）
         var syncMode: () -> Unit = {}
@@ -2010,20 +1994,9 @@ class PluginPage(
         e.background = rounded(pal.fieldBg, 9)
     }
 
-    /**
-     * 把秒数写成人话：`45 秒` / `2.3 分钟` / `1 小时 5 分`。
-     *
-     * 估算可能算到几十分钟（用户粘了一整篇文章），所以必须处理跨越分钟的显示。
-     */
-    private fun fmtDur(sec: Double): String = when {
-        sec < 60 -> getString(R.string.s_623, sec.toInt().coerceAtLeast(1))
-        sec < 3600 -> getString(R.string.s_624, "%.1f".format(sec / 60))
-        else -> {
-            val h = (sec / 3600).toInt()
-            val m = ((sec % 3600) / 60).toInt()
-            if (m == 0) getString(R.string.s_611, h) else getString(R.string.s_612, h, m)
-        }
-    }
+    // 这里原来有个 `fmtDur`（秒 → "45 秒" / "2.3 分钟" / "1 小时 5 分"），
+    // 只服务于那个已删除的耗时估算。2026-10-23 随估算一起去掉 ——
+    // 留着会让人以为还有地方在显示时长。
 
     /** 输入框变化回调 */
     private fun simpleWatcher(onChanged: (String) -> Unit) = object : android.text.TextWatcher {
