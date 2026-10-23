@@ -8,6 +8,7 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
 import android.os.Build
+import com.litertchat.app.R
 import com.litertchat.plugin.PluginConst
 
 /**
@@ -423,42 +424,39 @@ object PluginDiscovery {
         val crossUser: Boolean
             get() = pluginUserId != selfUserId
 
-        fun headline(): String = when {
+        fun headline(c: Context): String = when {
             !holdsPermission ->
-                "Ponko 没拿到插件权限（系统还没授予），重启手机后再试"
+                c.getString(R.string.s_711)
             !signerMatch && pluginSigner.isNotEmpty() ->
-                "签名不一致：Ponko=$selfSigner，插件=$pluginSigner"
+                c.getString(R.string.s_712, selfSigner, pluginSigner)
             !packageEnabled ->
-                "插件被系统停用了（设置 → 应用 → 找到该插件 → 启用）"
+                c.getString(R.string.s_713)
             !componentEnabled ->
-                "插件服务被禁用（多半是系统的后台限制，去应用设置里放开）"
+                c.getString(R.string.s_714)
             suspended ->
-                "插件被系统「暂停」了（设置 → 应用 → 该插件 → 取消暂停）"
+                c.getString(R.string.s_715)
             crossUser ->
-                "插件装在另一个用户空间（应用分身 / 工作资料），系统禁止跨用户连接。" +
-                    "把 Ponko 和插件装在**同一个**空间里"
+                c.getString(R.string.s_716)
             stopped ->
-                if (hasLauncher) "插件装好后还没启动过（点下面「打开插件」一次即可）"
-                else "插件装好后还没启动过，而且它没有可点的图标，只能卸载重装后先启动一次"
+                if (hasLauncher) c.getString(R.string.s_717)
+                else c.getString(R.string.s_718)
             !resolvable ->
-                "系统找不到插件的服务组件（版本太旧或 APK 安装不完整，重装试试）"
+                c.getString(R.string.s_719)
             !explicitProbe ->
-                "系统认得这个服务，但用完整类名找不到它 —— 组件名解析有问题，" +
-                    "重装插件后再试"
+                c.getString(R.string.s_720)
             else ->
-                "系统能看到这个服务，但拒绝连接。多半是厂商 ROM 的组件隔离，" +
-                    "把 Ponko 和插件都加进「后台白名单 / 自启动」再试"
+                c.getString(R.string.s_721)
         }
 
         /** 给开发者看的一行，用户复制给作者用 */
-        fun detailLine(): String = buildString {
-            append("解析=").append(if (resolvable) "OK" else "失败")
-            append(" 显式=").append(if (explicitProbe) "OK" else "失败")
-            append(" 包=").append(if (packageEnabled) "启用" else "停用")
-            append(" 服务=").append(if (componentEnabled) "启用" else "禁用")
-            append(" 未启动=").append(if (stopped) "是" else "否")
-            append(" 暂停=").append(if (suspended) "是" else "否")
-            append(" 用户=").append(selfUserId).append("/").append(pluginUserId)
+        fun detailLine(c: Context): String = buildString {
+            append(c.getString(R.string.s_722)).append(if (resolvable) "OK" else c.getString(R.string.s_587))
+            append(c.getString(R.string.s_723)) .append(if (explicitProbe) "OK" else c.getString(R.string.s_587))
+            append(c.getString(R.string.s_724)).append(if (packageEnabled) c.getString(R.string.s_731) else c.getString(R.string.s_732))
+            append(c.getString(R.string.s_725)).append(if (componentEnabled) c.getString(R.string.s_731) else c.getString(R.string.s_734))
+            append(c.getString(R.string.s_726)).append(if (stopped) c.getString(R.string.s_735) else c.getString(R.string.s_736))
+            append(c.getString(R.string.s_727)).append(if (suspended) c.getString(R.string.s_735) else c.getString(R.string.s_736))
+            append(c.getString(R.string.s_728)).append(selfUserId).append("/").append(pluginUserId)
         }
     }
 

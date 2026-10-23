@@ -1,6 +1,7 @@
 // Ponko · (c) 2026 visitor257 · MIT License · github.com/visitor257/Ponko
 package com.litertchat.app.plugin
 
+import com.litertchat.app.R
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -44,6 +45,16 @@ class PluginConnection(
     private val context: Context,
     val packageName: String,
 ) {
+
+    /**
+     * 取本地化字符串（2026-10-23 接 i18n 时加）。
+     *
+     * 这个类不是 `Context`，只持有 `context` 字段，所以没有继承来的
+     * `getString`。走 `context.getString` —— 它带当前配置（含语言）。
+     */
+    private fun getString(id: Int, vararg args: Any): String =
+        if (args.isEmpty()) context.getString(id) else context.getString(id, *args)
+
     /** 连接状态。UI 直接拿它决定按钮文案 */
     enum class State { IDLE, BINDING, CONNECTED, FAILED, DISCONNECTED }
 
@@ -210,11 +221,11 @@ class PluginConnection(
     @Volatile private var actionLabels: Map<String, String> = emptyMap()
 
     /**
-     * 取按钮文字：插件覆盖过就用它的，没覆盖用宿主默认。
+     * 取按钮文字：插件覆盖过就用它的，没覆盖用宿主默认（走资源，跟随系统语言）。
      *
      * @param key 见 [com.litertchat.plugin.ActionLabel]
      */
-    fun label(key: String): String = ActionLabels.resolve(key, actionLabels)
+    fun label(key: String): String = ActionLabels.resolve(context, key, actionLabels)
 
     /** 宿主生成的请求 ID，用于丢弃过期回调 */
     @Volatile private var activeRequestId: String? = null
@@ -416,7 +427,7 @@ class PluginConnection(
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             cancelTimeout()
             if (binder == null) {
-                setState(State.FAILED, "插件返回了空 binder")
+                setState(State.FAILED, getString(R.string.s_670))
                 return
             }
             val p = IPonkoPlugin.Stub.asInterface(binder)
@@ -442,14 +453,14 @@ class PluginConnection(
             val api = try {
                 p.apiVersion
             } catch (t: Throwable) {
-                setState(State.FAILED, "读取 API 版本失败：${t.javaClass.simpleName}")
+                setState(State.FAILED, getString(R.string.s_671, t.javaClass.simpleName))
                 safeUnbind()
                 return
             }
             if (api < PluginConst.API_MIN_SUPPORTED) {
                 setState(
                     State.FAILED,
-                    "插件 SDK v$api 太旧（宿主最低支持 v${PluginConst.API_MIN_SUPPORTED}），请更新插件"
+                    getString(R.string.s_672, api, PluginConst.API_MIN_SUPPORTED)
                 )
                 safeUnbind()
                 return
@@ -465,7 +476,7 @@ class PluginConnection(
             manifest = try {
                 p.manifest
             } catch (t: Throwable) {
-                setState(State.FAILED, "读取插件信息失败：${t.javaClass.simpleName}")
+                setState(State.FAILED, getString(R.string.s_673, t.javaClass.simpleName))
                 safeUnbind()
                 return
             }
@@ -473,7 +484,7 @@ class PluginConnection(
             try {
                 p.registerCallback(callback)
             } catch (t: Throwable) {
-                setState(State.FAILED, "注册回调失败：${t.javaClass.simpleName}")
+                setState(State.FAILED, getString(R.string.s_674, t.javaClass.simpleName))
                 safeUnbind()
                 return
             }
@@ -502,17 +513,17 @@ class PluginConnection(
         override fun onServiceDisconnected(name: ComponentName?) {
             // 进程被杀了（OOM / 崩溃 / 用户强停）
             plugin = null
-            setState(State.FAILED, "插件进程已断开")
+            setState(State.FAILED, getString(R.string.s_675))
         }
 
         override fun onBindingDied(name: ComponentName?) {
             plugin = null
-            setState(State.FAILED, "插件被重新安装，连接失效")
+            setState(State.FAILED, getString(R.string.s_676))
             safeUnbind()
         }
 
         override fun onNullBinding(name: ComponentName?) {
-            setState(State.FAILED, "插件的 onBind 返回了 null")
+            setState(State.FAILED, getString(R.string.s_677))
         }
     }
 
@@ -543,9 +554,9 @@ class PluginConnection(
         val candidates = buildList {
             if (!cls.isNullOrEmpty()) {
                 add(Intent(PluginConst.ACTION_PLUGIN)
-                    .setComponent(ComponentName(packageName, cls)) to "显式")
+                    .setComponent(ComponentName(packageName, cls)) to getString(R.string.s_678))
             }
-            add(Intent(PluginConst.ACTION_PLUGIN).setPackage(packageName) to "隐式")
+            add(Intent(PluginConst.ACTION_PLUGIN).setPackage(packageName) to getString(R.string.s_679))
         }
 
         var lastError: String? = null
@@ -584,13 +595,13 @@ class PluginConnection(
      */
     private fun describeFalseReturn(diag: PluginDiscovery.Diag?, lastKind: String?): String {
         if (diag == null) {
-            return "系统找不到插件服务（bindService=false）。插件可能已被卸载或安装不完整"
+            return getString(R.string.s_680)
         }
         return buildString {
-            append(diag.headline())
-            append("\n（诊断：")
-            append(diag.detailLine())
-            append(" 最后尝试=").append(lastKind ?: "?")
+            append(diag.headline(context))
+            append(getString(R.string.s_681))
+            append(diag.detailLine(context))
+            append(getString(R.string.s_682)).append(lastKind ?: "?")
             append("）")
         }
     }
@@ -604,18 +615,18 @@ class PluginConnection(
      */
     private fun describeBindFailure(t: Throwable, diag: PluginDiscovery.Diag?): String {
         if (t !is SecurityException) {
-            return "绑定失败：${t.javaClass.simpleName}${t.message?.let { "（$it）" } ?: ""}"
+            return getString(R.string.s_683, t.javaClass.simpleName, t.message?.let { " ($it)" } ?: "")
         }
-        val d = diag ?: return "绑定被拒（SecurityException），诊断信息读取失败"
+        val d = diag ?: return getString(R.string.s_684)
         return buildString {
-            append("签名校验未通过（SecurityException）：Ponko=")
+            append(getString(R.string.s_685))
             append(d.selfSigner.ifEmpty { "?" })
-            append("，插件=")
+            append(getString(R.string.s_686))
             append(d.pluginSigner.ifEmpty { "?" })
             when {
-                !d.holdsPermission -> append("（Ponko 自己没拿到插件权限 → 重启手机后再试）")
-                d.signerMatch -> append("（指纹相同但权限未生效 → 重启手机后再试）")
-                else -> append("（指纹不同 → 两个 APK 不是同一把密钥签的，必须换成配套版本）")
+                !d.holdsPermission -> append(getString(R.string.s_687))
+                d.signerMatch -> append(getString(R.string.s_688))
+                else -> append(getString(R.string.s_689))
             }
         }
     }
@@ -625,7 +636,7 @@ class PluginConnection(
         main.postDelayed({
             timeoutPosted = false
             if (state == State.BINDING) {
-                setState(State.FAILED, "绑定超时（插件进程可能起不来：缺 .so 或 ABI 不符）")
+                setState(State.FAILED, getString(R.string.s_690))
                 safeUnbind()
             }
         }, BIND_TIMEOUT_MS)
@@ -669,7 +680,7 @@ class PluginConnection(
                 listener?.onEngineError(
                     PluginError(
                         code = 1, // ErrCode.NOT_READY
-                        message = "插件未连接",
+                        message = getString(R.string.s_691),
                     )
                 )
             }
@@ -684,7 +695,7 @@ class PluginConnection(
             // oneway：立刻返回，结果走 onEngineLoaded / onEngineError
             p.loadEngine(null, com.litertchat.plugin.EngineConfig(threads = threads, useGpu = useGpu))
         } catch (t: Throwable) {
-            post { listener?.onEngineError(PluginError(code = 6, message = "调用插件失败：${t.javaClass.simpleName}")) }
+            post { listener?.onEngineError(PluginError(code = 6, message = getString(R.string.s_692, t.javaClass.simpleName))) }
         }
     }
 
@@ -705,7 +716,7 @@ class PluginConnection(
             req.requestId
         } catch (t: Throwable) {
             activeRequestId = null
-            post { listener?.onError(PluginError(code = 6, message = "调用插件失败：${t.javaClass.simpleName}", requestId = req.requestId)) }
+            post { listener?.onError(PluginError(code = 6, message = getString(R.string.s_692, t.javaClass.simpleName), requestId = req.requestId)) }
             null
         }
     }
@@ -728,12 +739,13 @@ class PluginConnection(
      *   · 插件自己抛异常
      */
     fun settingsSchema(): com.litertchat.plugin.UiSchema {
-        val p = plugin ?: return com.litertchat.plugin.UiSchema(intro = "插件未连接")
+        val p = plugin ?: return com.litertchat.plugin.UiSchema(intro = getString(R.string.s_691))
         // 旧插件根本没实现这组方法，别去调 —— 见 supportsSchema 的说明
         if (!supportsSchema) {
             return com.litertchat.plugin.UiSchema(
-                intro = "这个插件是用旧版 SDK（v$pluginApi）构建的，没有提供界面。\n" +
-                    "插件功能本身不受影响，只是少了这一页。"
+                // 两句话合成一条资源：英文里 "only this page is missing"
+                // 跟在前一句后面，拆成两段拼接会让语序对不上
+                intro = getString(R.string.s_696, pluginApi)
             )
         }
         return try {
@@ -744,7 +756,7 @@ class PluginConnection(
             // 版本对得上却还失败 → 插件自己的实现问题（或进程刚死）
             Log.w(TAG, "[$packageName] 读取界面数据失败", t)
             com.litertchat.plugin.UiSchema(
-                intro = "读取插件界面失败：${t.javaClass.simpleName}"
+                intro = getString(R.string.s_698, t.javaClass.simpleName)
             )
         }
     }
@@ -873,13 +885,13 @@ class PluginConnection(
 
     /** 给 UI 用的阶段名（本地化） */
     fun stageName(stage: Int): String = when (stage) {
-        Stage.LOADING -> "加载模型"
-        Stage.TEXT_ENCODE -> "处理文本"
-        Stage.DECODE -> "生成语音"
-        Stage.AUDIO_DECODE -> "合成波形"
-        Stage.DONE -> "完成"
-        Stage.CANCELLED -> "已取消"
-        Stage.FAILED -> "失败"
-        else -> "空闲"
+        Stage.LOADING -> getString(R.string.s_473)
+        Stage.TEXT_ENCODE -> getString(R.string.s_740)
+        Stage.DECODE -> getString(R.string.s_741)
+        Stage.AUDIO_DECODE -> getString(R.string.s_742)
+        Stage.DONE -> getString(R.string.s_743)
+        Stage.CANCELLED -> getString(R.string.s_479)
+        Stage.FAILED -> getString(R.string.s_587)
+        else -> getString(R.string.s_746)
     }
 }

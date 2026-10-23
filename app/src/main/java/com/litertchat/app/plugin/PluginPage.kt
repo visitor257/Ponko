@@ -21,6 +21,7 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.litertchat.app.PonkoTheme
+import com.litertchat.app.R
 import com.litertchat.plugin.Capability
 import com.litertchat.plugin.ErrCode
 import com.litertchat.plugin.PluginConst
@@ -57,6 +58,19 @@ class PluginPage(
     }
 
     private val session = PluginSession(act)
+
+    /**
+     * 取本地化字符串。
+     *
+     * `PluginPage` 不是 `Context`（它是个普通类，只持有 `act`），所以没有
+     * `getString` 可继承 —— 2026-10-23 接 i18n 时加的这个转发。
+     *
+     * 走 `act.getString` 而不是 `context.resources.getString`：
+     * Activity 的 context 已经带好当前配置（含语言），
+     * `createConfigurationContext` 那种固定语言的 context 不能用来取文案。
+     */
+    private fun getString(id: Int, vararg args: Any): String =
+        if (args.isEmpty()) act.getString(id) else act.getString(id, *args)
 
     /** 每次重建视图时换一个容器引用，回调里往它里面画 */
     private var listHost: LinearLayout? = null
@@ -255,9 +269,9 @@ class PluginPage(
         val holdsPerm = PluginDiscovery.holdsBindPermission(act)
         val selfSign = PluginDiscovery.selfSignerShort(act)
         root.addView(TextView(act).apply {
-            text = "环境自检：" +
-                (if (holdsPerm) "插件权限 已持有" else "插件权限 未持有 ⚠") +
-                " · Ponko 签名 " + selfSign.ifEmpty { "读取失败" }
+            text = getString(R.string.s_474) +
+                (if (holdsPerm) getString(R.string.s_475) else getString(R.string.s_476)) +
+                getString(R.string.s_477) + selfSign.ifEmpty { getString(R.string.s_478) }
             textSize = 11f
             setTextColor(if (holdsPerm) pal.hint else pal.err)
             setPadding(0, dp(6), 0, 0)
@@ -268,9 +282,9 @@ class PluginPage(
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        val btnRefresh = smallButton("重新扫描") { refresh() }
+        val btnRefresh = smallButton(getString(R.string.s_479)) { refresh() }
         toolbar.addView(btnRefresh)
-        val btnHelp = smallButton("怎么装插件") { showInstallHelp() }
+        val btnHelp = smallButton(getString(R.string.s_480)) { showInstallHelp() }
         toolbar.addView(btnHelp, wrapWrap().apply { leftMargin = dp(8) })
         root.addView(toolbar, matchWrap().apply { topMargin = dp(12) })
 
@@ -287,7 +301,7 @@ class PluginPage(
             gravity = Gravity.CENTER_VERTICAL
         }
         val searchInput = EditText(act).apply {
-            hint = "搜索插件（名称 / 包名）"
+            hint = getString(R.string.s_481)
             // Kotlin 里要用 setSingleLine()，`singleLine` 那个是 XML 属性
             setSingleLine(true)
             inputType = android.text.InputType.TYPE_CLASS_TEXT
@@ -300,7 +314,7 @@ class PluginPage(
         // 清空按钮：只在有输入时出现。
         // 不做成输入框内的 X 图标，是因为那要往 EditText 里塞 drawable，
         // 还得管点击区域和深浅色 —— 一个按钮更直白，也更好点。
-        val btnClear = smallButton("清空") {
+        val btnClear = smallButton(getString(R.string.s_482)) {
             searchInput.setText("")
             searchQuery = ""
             applyFilter()
@@ -341,18 +355,18 @@ class PluginPage(
             setPadding(dp(14), dp(4), dp(14), dp(14))
             background = rounded(pal.surface, 12)
         }
-        aboutCard.addView(pageTitle("关于插件"), matchWrap().apply { topMargin = dp(10) })
+        aboutCard.addView(pageTitle(getString(R.string.s_483)), matchWrap().apply { topMargin = dp(10) })
         // 色条图例。收起状态只剩名字，颜色就是唯一的状态信号 ——
         // 不解释一下，用户会以为那只是装饰
         aboutCard.addView(colorLegend(), matchWrap().apply { topMargin = dp(6) })
         aboutCard.addView(hintText(
-            "· 点卡片标题可以展开 / 收起。\n" +
-                "· 卡片上的按钮：**启用**（让 Ponko 连上它）、" +
-                "**激活**（系统不让连时点一下，不会跳出界面）、" +
-                "**进入**（打开它自己的界面，功能按钮在里面）、" +
-                "**卸载**（跳到系统的应用页，在那边点卸载）。\n" +
-                "· 插件与 Ponko 必须**同签名**，否则系统会拒绝连接（这是安全机制，不是 bug）。\n" +
-                "· 插件有自己的进程：它崩了不会拖死 Ponko，但推理期间请别强杀它。"
+            getString(R.string.s_614) +
+                getString(R.string.s_485) +
+                getString(R.string.s_486) +
+                getString(R.string.s_487) +
+                getString(R.string.s_615) +
+                getString(R.string.s_616) +
+                getString(R.string.s_490)
         ))
         root.addView(aboutCard, matchWrap().apply { topMargin = dp(16) })
 
@@ -382,11 +396,11 @@ class PluginPage(
                 // 这里不处理的话「试听」会一直灰着，变成新的死路。
                 if (stage == Stage.CANCELLED) {
                     finishRequest()
-                    setUiHint("已取消")
+                    setUiHint(getString(R.string.s_491))
                     return
                 }
                 val conn = session.connectionOf(pkg)
-                val name = conn?.stageName(stage) ?: "处理中"
+                val name = conn?.stageName(stage) ?: getString(R.string.s_492)
                 setUiHint(if (label != null) "$name · $label" else name)
             }
 
@@ -395,10 +409,10 @@ class PluginPage(
                 // 状态提示统一由 storeAudio 出（它知道文件到底写没写成），
                 // 这里只留诊断信息
                 setDiag(pkg, buildString {
-                    append("model/采样率：").append(result.sampleRate).append(" Hz / ")
+                    append(getString(R.string.s_493)).append(result.sampleRate).append(" Hz / ")
                     append(result.channelCount).append(" ch\n")
-                    append("音频时长：").append(result.durationMs).append(" ms\n")
-                    append("实际耗时：").append(result.elapsedMs).append(" ms")
+                    append(getString(R.string.s_494)).append(result.durationMs).append(" ms\n")
+                    append(getString(R.string.s_495)).append(result.elapsedMs).append(" ms")
                     if (result.debugInfo.isNotBlank()) {
                         append("\n— debugInfo —\n").append(result.debugInfo)
                     }
@@ -410,7 +424,7 @@ class PluginPage(
                 // 取消不是失败：用户自己按的，静默收尾
                 if (err.code == ErrCode.CANCELLED) {
                     finishRequest()
-                    setUiHint("已取消")
+                    setUiHint(getString(R.string.s_491))
                     return
                 }
                 // 「引擎尚未加载」不该是死路：插件重连后引擎可能已经不在了，
@@ -418,14 +432,14 @@ class PluginPage(
                 if (err.code == ErrCode.NOT_READY && pkg == openUiPkg && !previewRetryUsed) {
                     previewRetryUsed = true
                     previewRetryPkg = pkg
-                    setUiHint("引擎未就绪，正在重新加载…")
+                    setUiHint(getString(R.string.s_496))
                     session.connectionOf(pkg)?.loadEngine()
                     return
                 }
                 finishRequest()
-                setUiHint("失败：${err.message}")
+                setUiHint(getString(R.string.s_591, err.message))
                 setDiag(pkg, buildString {
-                    append("错误码：").append(err.code).append("（").append(errName(err.code)).append("）\n")
+                    append(getString(R.string.s_497)).append(err.code).append("（").append(errName(err.code)).append("）\n")
                     append("message：").append(err.message)
                     if (err.retryable) append("\nretryable = true")
                     if (err.detail.isNotBlank()) {
@@ -441,13 +455,23 @@ class PluginPage(
                     currentUiPage?.setActionEnabled(com.litertchat.plugin.HostActionId.ENGINE, !speaking)
                     if (!speaking) {
                         setUiHint(
-                            "引擎已加载：${info.sampleRate} Hz" +
-                                if (info.modelBytes > 0) {
-                                    "，占用 ${"%.1f".format(info.modelBytes / 1024.0 / 1024.0)} MB" +
-                                        "，耗时 ${"%.1f".format(info.loadElapsedMs / 1000.0)} 秒"
-                                } else {
-                                    "，耗时 ${"%.1f".format(info.loadElapsedMs / 1000.0)} 秒"
-                                }
+                            // 拆成两条资源而不是拼字符串：带上体积和不带体积
+                            // 在英文里语序不同（", using 1.2 GB, took 8.0 s"），
+                            // 不能靠中文的拼接顺序照搬
+                            if (info.modelBytes > 0) {
+                                getString(
+                                    R.string.s_588,
+                                    info.sampleRate,
+                                    "%.1f".format(info.modelBytes / 1024.0 / 1024.0),
+                                    "%.1f".format(info.loadElapsedMs / 1000.0),
+                                )
+                            } else {
+                                getString(
+                                    R.string.s_589,
+                                    info.sampleRate,
+                                    "%.1f".format(info.loadElapsedMs / 1000.0),
+                                )
+                            }
                         )
                     }
                 }
@@ -494,13 +518,13 @@ class PluginPage(
                     null
                 }
                 if (bmp == null) {
-                    setUiHint("插件送了图，但解码失败")
+                    setUiHint(getString(R.string.s_498))
                     return
                 }
                 // 声明里的宽高只是提示；以实际解码结果为准 ——
                 // 插件算错尺寸比不传更常见，信它反而会画出变形的图
                 currentUiPage?.setImage(bmp, key)
-                setUiHint("已收到结果图 ${bmp.width}×${bmp.height}")
+                setUiHint(getString(R.string.s_592, bmp.width, bmp.height))
             }
 
             /** v12：插件要求滚到某个控件。界面没开着就丢（和 selectTab 同理） */
@@ -531,7 +555,7 @@ class PluginPage(
                 }
                 if (speaking) {
                     // 不排队：用户连点两下不该跑两遍一分钟的推理
-                    setUiHint("正在合成中，等这次结束再点")
+                    setUiHint(getString(R.string.s_499))
                     return
                 }
                 testSpeak(pkg, openUiIsTts)
@@ -705,10 +729,10 @@ class PluginPage(
                         // 现在只合成不播放，点几次都是同一个动作，改名就没有理由了。
                         label = session.actionLabel(pkg, actionLabels.REASONING),
                         help = if (item.isTest)
-                            "这是测试插件：会生成一段琶音，用来验证音频链路是否通畅（不自动播放）"
+                            getString(R.string.s_500)
                         else
-                            "用上面填的参数合成一段音频，生成完点「播放」试听。" +
-                                "手机上 5 秒语音约需 1~2 分钟",
+                            getString(R.string.s_501) +
+                                getString(R.string.s_502),
                         enabled = !speaking,
                         run = { testSpeak(pkg, isTts) },
                     )
@@ -876,18 +900,19 @@ class PluginPage(
             host.addView(
                 if (q.isEmpty()) {
                     emptyCard(
-                        "没有找到插件",
-                        "如果你已经装了插件，检查两件事：\n" +
-                            "1. 插件是否被系统停用（设置 → 应用）\n" +
-                            "2. 插件和 Ponko 的签名是否一致"
+                        getString(R.string.s_503),
+                        getString(R.string.s_617) +
+                            getString(R.string.s_618) +
+                            getString(R.string.s_506)
                     )
                 } else {
                     // 有查询却说"没有找到插件"会让人以为扫描坏了，
                     // 必须说清是**这个搜索词**没结果，并且告诉他一共有几个
                     emptyCard(
-                        "没有匹配「$q」的插件",
-                        "已装的 ${allItems.size} 个插件里没有名称或包名含这个词的。" +
-                            "\n换个词试试，或点上面的「清空」。"
+                        getString(R.string.s_593, q),
+                        // 总插件数作为参数传进去，不拼字符串 ——
+                        // 中文是"已装的 N 个插件里…"，英文语序是 "None of the N …"
+                        getString(R.string.s_594, allItems.size)
                     )
                 }
             )
@@ -1006,15 +1031,15 @@ class PluginPage(
         if (!caps.isNullOrEmpty()) {
             val capText = caps.joinToString(" · ") { cap ->
                 when (cap) {
-                    Capability.TTS -> "语音合成"
-                    Capability.ASR -> "语音识别"
-                    Capability.IMG -> "图像生成"
-                    Capability.TEST -> "测试"
+                    Capability.TTS -> getString(R.string.s_508)
+                    Capability.ASR -> getString(R.string.s_509)
+                    Capability.IMG -> getString(R.string.s_510)
+                    Capability.TEST -> getString(R.string.s_511)
                     else -> cap
                 }
             }
             detail.addView(TextView(act).apply {
-                text = "能力：$capText"
+                text = getString(R.string.s_595, capText)
                 textSize = 12f
                 setTextColor(pal.subText)
                 setPadding(0, dp(2), 0, 0)
@@ -1024,7 +1049,7 @@ class PluginPage(
         // 签名指纹（让用户能看出「是不是同一个人做的」）
         if (item.found.signerShort.isNotEmpty()) {
             detail.addView(TextView(act).apply {
-                text = "签名 ${item.found.signerShort}…"
+                text = getString(R.string.s_596, item.found.signerShort)
                 textSize = 11f
                 setTextColor(pal.hint)
                 setPadding(0, dp(2), 0, 0)
@@ -1035,8 +1060,12 @@ class PluginPage(
         // 不说的话用户只会觉得"为什么别人的插件有界面我没有"
         if (item.isOlderSdk) {
             detail.addView(TextView(act).apply {
-                text = "插件 SDK v${item.apiVersion}（当前 v${com.litertchat.plugin.PluginConst.API_VERSION}）" +
-                    " · 功能可用，但缺插件界面。更新插件可获得"
+                // 版本号和后半句合成一条资源：英文语序不同（"current v12" 在括号里），
+                // 靠两段拼接会让英文读起来是散的
+                text = getString(
+                    R.string.s_599, item.apiVersion,
+                    com.litertchat.plugin.PluginConst.API_VERSION
+                )
                 textSize = 11f
                 setTextColor(pal.warn)
                 setPadding(0, dp(4), 0, 0)
@@ -1048,8 +1077,7 @@ class PluginPage(
         // 已经是最新的插件，然后发现怎么都没用。
         if (item.newerThanHost) {
             detail.addView(TextView(act).apply {
-                text = "插件 SDK v${item.apiVersion}，比当前 Ponko（v${com.litertchat.plugin.PluginConst.API_VERSION}）新" +
-                    " · 功能可用，新增的界面元素可能显示不出来。更新 Ponko 可获得完整功能"
+                text = getString(R.string.s_620, item.apiVersion, com.litertchat.plugin.PluginConst.API_VERSION)
                 textSize = 11f
                 setTextColor(pal.warn)
                 setPadding(0, dp(4), 0, 0)
@@ -1072,17 +1100,17 @@ class PluginPage(
             setPadding(0, dp(10), 0, 0)
         }
         if (item.enabled) {
-            actions.addView(smallButton("停用") {
+            actions.addView(smallButton(getString(R.string.s_514)) {
                 session.setEnabled(item.found.packageName, false)
                 refresh()
             })
         } else {
-            actions.addView(smallButton("启用") {
+            actions.addView(smallButton(getString(R.string.s_515)) {
                 session.setEnabled(item.found.packageName, true)
                 // 如果刚才是因为 stopped 而自动拉起了插件的激活页，说一句 ——
                 // 否则用户只看到屏幕闪了一下、状态没变，会以为没反应
                 if (session.consumePendingActivation() != null) {
-                    toast("正在激活插件…")
+                    toast(getString(R.string.s_516))
                 }
                 refresh()
             })
@@ -1094,12 +1122,12 @@ class PluginPage(
         // 直接返回 false。解除方式只有「包自己的 Activity 被启动一次」。
         // 点「启用」时已经自动做过一次，这里是**手动补救入口**：
         // 被系统强停过、或自动激活被 ROM 拦掉时，用户还能自己点一下。
-        actions.addView(smallButton("激活") { activatePlugin(item) },
+        actions.addView(smallButton(getString(R.string.s_517)) { activatePlugin(item) },
             wrapWrap().apply { leftMargin = dp(8) })
 
         // 「进入」：进插件的界面（配置项 + 宿主提供的功能按钮）。
         // 「试听」不是卡片上的按钮 —— 那是**功能**，在插件界面里。
-        actions.addView(smallButton("进入") { enterPlugin(item) },
+        actions.addView(smallButton(getString(R.string.s_518)) { enterPlugin(item) },
             wrapWrap().apply { leftMargin = dp(8) })
 
         // 「关于」：弹窗显示插件自己写的关于文档（纯文本，可复制）。
@@ -1111,7 +1139,7 @@ class PluginPage(
         // 内容来自插件的 manifest（`ponko.about`，见 PluginDiscovery.aboutOf），
         // **不走 AIDL** —— 插件连不上（stopped / 失败）时也必须能看，
         // 而那正是用户最想翻"这插件是什么"的时候。
-        actions.addView(smallButton("关于") { showPluginAbout(item) },
+        actions.addView(smallButton(getString(R.string.s_519)) { showPluginAbout(item) },
             wrapWrap().apply { leftMargin = dp(8) })
 
         // 「卸载」：跳系统的应用信息页，由用户在那边点「卸载」。
@@ -1122,7 +1150,7 @@ class PluginPage(
         // ⚠ 这一步本身并不会卸载任何东西 —— 只是打开设置页，
         //   系统那边还要用户自己确认一次。所以它和「进入」挨着放是安全的，
         //   误点的代价仅是多看一页设置。
-        actions.addView(dangerButton("卸载") { openSystemAppInfo(item) },
+        actions.addView(dangerButton(getString(R.string.s_520)) { openSystemAppInfo(item) },
             wrapWrap().apply { leftMargin = dp(8) })
 
         detail.addView(actions)
@@ -1134,8 +1162,8 @@ class PluginPage(
             (item.found.stopped || item.state == PluginConnection.State.FAILED)
         ) {
             detail.addView(TextView(act).apply {
-                text = "插件还没被系统「放行」，点上面的「激活」即可。" +
-                    "激活时不会跳出任何界面，点完会自动重连。"
+                text = getString(R.string.s_521) +
+                    getString(R.string.s_522)
                 textSize = 11f
                 setTextColor(pal.warn)
                 setPadding(0, dp(8), 0, 0)
@@ -1151,21 +1179,21 @@ class PluginPage(
         val pkg = item.found.packageName
         if (!item.found.hasLauncher) {
             // 没有可启动的组件就没法清——只能靠用户卸载重装
-            toast("这个插件没有激活组件，只能到系统设置里卸载后重装")
+            toast(getString(R.string.s_523))
             return
         }
         if (session.openPluginOnce(pkg)) {
-            toast("正在激活…")
+            toast(getString(R.string.s_524))
         } else {
-            toast("激活失败：系统不允许启动该插件")
+            toast(getString(R.string.s_525))
         }
     }
 
     /** 点「进入」：进插件界面。相关前置条件在这里一次性说清 */
     private fun enterPlugin(item: PluginSession.Item) {
         when {
-            !item.enabled -> toast("先在卡片上点「启用」")
-            !item.supportsSchema -> toast("这个插件由旧版 SDK 构建，没有可打开的界面")
+            !item.enabled -> toast(getString(R.string.s_526))
+            !item.supportsSchema -> toast(getString(R.string.s_527))
             else -> openPluginUi(item)
         }
     }
@@ -1205,7 +1233,7 @@ class PluginPage(
 
         // 先把"去哪里、点什么"说清楚 —— 系统页是通用界面，
         // 不说的话用户不知道该在那儿做什么
-        toast("已打开「$name」的系统设置，点「卸载」即可")
+        toast(getString(R.string.s_597, name))
 
         val details = android.content.Intent(
             android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
@@ -1219,10 +1247,10 @@ class PluginPage(
                 android.provider.Settings.ACTION_APPLICATION_SETTINGS
             )
             if (!startSafely(list)) {
-                toast("打不开系统设置，请手动到「设置 → 应用」里卸载")
+                toast(getString(R.string.s_528))
                 return
             }
-            toast("已打开应用列表，请找到「$name」后卸载")
+            toast(getString(R.string.s_598, name))
         }
         // 回来后重扫：真卸载了的话条目会消失
         refresh()
@@ -1255,27 +1283,27 @@ class PluginPage(
     }
 
     private fun statusText(item: PluginSession.Item): Pair<String, Int> = when {
-        !item.found.installed -> "被系统停用了（设置 → 应用 → 找到该插件 → 启用）" to pal.err
-        !item.found.resolvable -> "插件服务被禁用或找不到（多半是系统的后台限制）" to pal.err
+        !item.found.installed -> getString(R.string.s_529) to pal.err
+        !item.found.resolvable -> getString(R.string.s_530) to pal.err
         item.state == PluginConnection.State.FAILED -> {
             val head = item.detail?.lineSequence()?.firstOrNull { it.isNotBlank() }
-            ("连接失败：" + (head ?: "原因未知")) to pal.err
+            (getString(R.string.s_531) + (head ?: getString(R.string.s_532))) to pal.err
         }
-        item.state == PluginConnection.State.BINDING -> "连接中…" to pal.warn
+        item.state == PluginConnection.State.BINDING -> getString(R.string.s_533) to pal.warn
         item.enabled && item.state == PluginConnection.State.CONNECTED -> {
             // 三种"连上了"要分开说，否则测试插件会被说成"没有语音合成能力"，
             // 听起来像坏了
             val text = when {
-                item.isTest -> "已就绪（测试插件，不参与朗读）"
-                item.canSpeak -> "已就绪，可以使用"
-                else -> "已连接，但这个插件没有提供可用的功能"
+                item.isTest -> getString(R.string.s_534)
+                item.canSpeak -> getString(R.string.s_535)
+                else -> getString(R.string.s_536)
             }
             text to (if (item.isTest || item.canSpeak) pal.ok else pal.warn)
         }
         // 装好后从没启动过：还没点启用时也先提醒，省得点完才报错
-        item.found.stopped -> "装好后还没启动过，需要先打开一次" to pal.warn
-        item.enabled -> "已启用，等待连接" to pal.warn
-        else -> "未启用" to pal.subText
+        item.found.stopped -> getString(R.string.s_537) to pal.warn
+        item.enabled -> getString(R.string.s_538) to pal.warn
+        else -> getString(R.string.s_539) to pal.subText
     }
 
     /**
@@ -1286,7 +1314,7 @@ class PluginPage(
      *
      * 文案切换靠 [PluginSession.engineReady]，它在点击前后各问一次插件。
      * 插件那边 `closeEngine` 是异步的（走 worker），所以卸载后稍微延迟一点再问，
-     * 否则读到的还是"就绪"，按钮会白闪一下。
+     * 否则读到的还是"未启用"，按钮会白闪一下。
      */
     private fun toggleEngine(pkg: String) {
         val up = session.engineReady(pkg)
@@ -1295,7 +1323,7 @@ class PluginPage(
             // 不另写一套说法 —— 插件把按钮叫「释放模型」时，
             // 这里还说"正在卸载引擎"会让人以为是两件事
             setUiHint(
-                "正在${session.actionLabel(pkg, com.litertchat.plugin.ActionLabel.ENGINE_UNLOAD)}，释放内存…"
+                getString(R.string.s_601, session.actionLabel(pkg, com.litertchat.plugin.ActionLabel.ENGINE_UNLOAD))
             )
             // 卸载期间先禁掉按钮：避免用户连点出「卸载 → 又加载」
             currentUiPage?.setActionEnabled(com.litertchat.plugin.HostActionId.ENGINE, false)
@@ -1304,8 +1332,9 @@ class PluginPage(
         } else {
             val p = params(pkg)
             setUiHint(
-                "正在${session.actionLabel(pkg, com.litertchat.plugin.ActionLabel.ENGINE_LOAD)}" +
-                    "（${if (p.useGpu) "GPU" else "CPU"}，${if (p.threads == 0) "自动线程" else "${p.threads} 线程"}）…"
+                getString(R.string.s_602, session.actionLabel(pkg, com.litertchat.plugin.ActionLabel.ENGINE_LOAD)) +
+                    getString(R.string.s_621, if (p.useGpu) "GPU" else "CPU",
+                        if (p.threads == 0) getString(R.string.s_622) else getString(R.string.s_605, p.threads))
             )
             session.toggleEngine(pkg, load = true, threads = p.threads, useGpu = p.useGpu)
         }
@@ -1352,9 +1381,9 @@ class PluginPage(
                 currentUiPage?.setActionEnabled(com.litertchat.plugin.HostActionId.ENGINE, !speaking)
                 refreshEngineLabel(pkg)
                 setUiHint(
-                    if (done) "引擎已卸载，内存已释放"
+                    if (done) getString(R.string.s_540)
                     // 超时不是失败，只是慢：说清楚还能做什么，别让用户卡在疑惑里
-                    else "引擎释放超时（${ENGINE_POLL_TIMEOUT_MS / 1000} 秒），可以再点一次或停用插件"
+                    else getString(R.string.s_603, ENGINE_POLL_TIMEOUT_MS / 1000)
                 )
             }
         }
@@ -1399,17 +1428,17 @@ class PluginPage(
             // 只说"不能为空"是不够的：用户不一定知道那个框在哪（插件自己的
             // schema 可能很长，文本区被挤到很上面）。直接把焦点给过去 ——
             // 输入框拿到焦点会自动滚进视野，而且能立刻开始打字
-            setUiHint("先在「文本」里填要合成的内容，再点合成")
+            setUiHint(getString(R.string.s_541))
             focusSpeakText()
             return
         }
         val tts = openUiIsTts
         if (tts && p.needsTranscript && p.transcript.isBlank()) {
-            setUiHint("极致克隆必须填逐字稿（参考音频里说了什么）")
+            setUiHint(getString(R.string.s_542))
             return
         }
         if (tts && p.needsReference && !p.hasReference) {
-            setUiHint("克隆模式要先选一段参考音频")
+            setUiHint(getString(R.string.s_543))
             return
         }
 
@@ -1417,7 +1446,7 @@ class PluginPage(
         if (tts && p.needsReference) {
             fd = openReference(p)
             if (fd == null) {
-                setUiHint("读不到参考音频：授权可能已过期，重新选一次")
+                setUiHint(getString(R.string.s_544))
                 return
             }
         }
@@ -1429,7 +1458,7 @@ class PluginPage(
         currentUiPage?.setActionEnabled(com.litertchat.plugin.HostActionId.STOP, true)
 
         setUiHint(
-            "正在合成…（手机上 5 秒语音约需 1~2 分钟，可随时点" +
+            getString(R.string.s_545) +
                 "「${session.actionLabel(pkg, com.litertchat.plugin.ActionLabel.STOP)}」）"
         )
         val id = session.speakTo(
@@ -1446,19 +1475,19 @@ class PluginPage(
             closeRefFd()
             currentUiPage?.setActionEnabled(com.litertchat.plugin.HostActionId.REASONING, true)
             currentUiPage?.setActionEnabled(com.litertchat.plugin.HostActionId.STOP, false)
-            setUiHint("发起失败")
+            setUiHint(getString(R.string.s_546))
         }
     }
 
     /** 用户点「停止」。插件那边是真打断（音频循环每块都查取消标志） */
     private fun stopPreview() {
         if (!session.isSpeaking()) {
-            setUiHint("当前没有在生成")
+            setUiHint(getString(R.string.s_547))
             return
         }
         // 先给个反馈，再等插件的 onError(CANCELLED) 收尾 ——
         // 有些插件要几百毫秒才走到检查点，不给反馈用户会以为按钮没生效
-        setUiHint("正在停止…")
+        setUiHint(getString(R.string.s_548))
         session.stopSpeaking()
     }
 
@@ -1535,7 +1564,7 @@ class PluginPage(
             if (persist) PreviewParams.save(act, pkg, next)
         }
 
-        box.addView(smallSection("合成参数"), matchWrap())
+        box.addView(smallSection(getString(R.string.s_549)), matchWrap())
 
         // ---- 文本 ----
         //
@@ -1546,7 +1575,7 @@ class PluginPage(
         // 能做的、该做的只是把耗时**告诉**用户 —— 下面那行实时估算。
         // 它同样是估算（按中文 ~4.5 字/秒、RTF 10~30），所以措辞用"约"，
         // 并且不做任何强制。
-        box.addView(fieldLabel("文本（要合成的内容）"), wrapWrap())
+        box.addView(fieldLabel(getString(R.string.s_550)), wrapWrap())
         val estimate = TextView(act).apply {
             textSize = 11f
             setTextColor(pal.hint)
@@ -1555,19 +1584,20 @@ class PluginPage(
         }
         fun refreshEstimate(s: String) {
             estimate.text = if (s.isBlank()) {
-                "输入文本后这里会显示预计耗时"
+                getString(R.string.s_551)
             } else {
                 // 中文按 4.5 字/秒估语音时长；非中文按字符数近似（英文平均更短）
                 val sec = (s.length / 4.5).coerceAtLeast(0.5)
                 val lo = sec * 10
                 val hi = sec * 30
-                "约 ${"%.1f".format(sec)} 秒语音 · 按当前插件速度估算需 " +
-                    "${fmtDur(lo)} ~ ${fmtDur(hi)}（仅供参考）"
+                // 三个占位符：秒数、时长下限、上限。用位置参数是因为
+                // 英文语序和中文不同（"about 3.2 s of speech, estimated 1.0 min ~ 3.0 min"）
+                getString(R.string.s_590, "%.1f".format(sec), fmtDur(lo), fmtDur(hi))
             }
         }
         val textInput = EditText(act).apply {
             setText(cur.text)
-            hint = "在这里输入要合成的文字"
+            hint = getString(R.string.s_552)
             inputType = android.text.InputType.TYPE_CLASS_TEXT or
                 android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
             setSingleLine(false)
@@ -1592,13 +1622,13 @@ class PluginPage(
 
         if (isTts) {
             // ---- 模式 ----
-            box.addView(fieldLabel("模式"), wrapWrap().apply { topMargin = dp(10) })
+            box.addView(fieldLabel(getString(R.string.s_553)), wrapWrap().apply { topMargin = dp(10) })
             box.addView(
                 chipRow(
                     listOf(
-                        PluginConst.MODE_PLAIN to "纯 TTS",
-                        PluginConst.MODE_CLONE to "克隆",
-                        PluginConst.MODE_CONTINUATION to "极致克隆",
+                        PluginConst.MODE_PLAIN to getString(R.string.s_554),
+                        PluginConst.MODE_CLONE to getString(R.string.s_555),
+                        PluginConst.MODE_CONTINUATION to getString(R.string.s_556),
                     ),
                     cur.mode,
                 ) { v ->
@@ -1615,7 +1645,7 @@ class PluginPage(
                 setPadding(0, dp(10), 0, 0)
             }
             val refText = TextView(act).apply {
-                text = if (cur.hasReference) "已选择：${cur.refName}" else "还没选参考音频"
+                text = if (cur.hasReference) getString(R.string.s_604, cur.refName) else getString(R.string.s_557)
                 textSize = 12f
                 setTextColor(if (cur.hasReference) pal.text else pal.hint)
                 setLineSpacing(dp(2).toFloat(), 1f)
@@ -1626,7 +1656,7 @@ class PluginPage(
                 LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             )
             ref.addView(
-                smallButton("选择音频") { pickReference(pkg) },
+                smallButton(getString(R.string.s_558)) { pickReference(pkg) },
                 wrapWrap().apply { leftMargin = dp(8) }
             )
             refRow = ref
@@ -1637,10 +1667,10 @@ class PluginPage(
                 orientation = LinearLayout.VERTICAL
                 setPadding(0, dp(10), 0, 0)
             }
-            trBox.addView(fieldLabel("逐字稿（参考音频里说了什么）"), wrapWrap())
+            trBox.addView(fieldLabel(getString(R.string.s_559)), wrapWrap())
             val trInput = EditText(act).apply {
                 setText(cur.transcript)
-                hint = "极致克隆必填；克隆模式可留空"
+                hint = getString(R.string.s_560)
                 inputType = android.text.InputType.TYPE_CLASS_TEXT or
                     android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
                 setSingleLine(false)
@@ -1656,7 +1686,7 @@ class PluginPage(
 
             // ---- 种子 ----
             box.addView(
-                fieldLabel("种子（0 = 随机；固定可复现同一段）"),
+                fieldLabel(getString(R.string.s_561)),
                 wrapWrap().apply { topMargin = dp(10) }
             )
             val seedInput = EditText(act).apply {
@@ -1673,24 +1703,24 @@ class PluginPage(
 
         // ---- 线程数（对任何插件都有意义：它是引擎加载参数）----
         box.addView(
-            fieldLabel("推理线程（下次加载引擎生效）"),
+            fieldLabel(getString(R.string.s_562)),
             wrapWrap().apply { topMargin = dp(10) }
         )
         box.addView(
             chipRow(
-                PreviewParams.THREAD_CHOICES.map { if (it == 0) 0 to "自动" else it to "$it 线程" },
+                PreviewParams.THREAD_CHOICES.map { if (it == 0) 0 to getString(R.string.s_563) else it to getString(R.string.s_605, it) },
                 cur.threads,
             ) { v ->
                 remember(cur.copy(threads = v), persist = true)
                 setUiHint(
-                    if (session.isSpeaking()) "已记下：等这次生成结束、插件重新加载引擎后生效"
-                    else "已记下：插件下次加载引擎时生效"
+                    if (session.isSpeaking()) getString(R.string.s_564)
+                    else getString(R.string.s_565)
                 )
             },
             matchWrap()
         )
         box.addView(
-            hintText("自动 = 核数-1（最多 6）。占满全部核心会让系统 UI 卡顿"),
+            hintText(getString(R.string.s_566)),
             wrapWrap()
         )
 
@@ -1707,7 +1737,7 @@ class PluginPage(
             ?.contains(com.litertchat.plugin.Capability.GPU) == true
         if (supportsGpu) {
             box.addView(
-                fieldLabel("推理后端（下次加载引擎生效）"),
+                fieldLabel(getString(R.string.s_567)),
                 wrapWrap().apply { topMargin = dp(10) }
             )
             box.addView(
@@ -1717,14 +1747,14 @@ class PluginPage(
                 ) { v ->
                     remember(cur.copy(useGpu = v == 1), persist = true)
                     setUiHint(
-                        if (session.isSpeaking()) "已记下：等这次生成结束、插件重新加载引擎后生效"
-                        else "已记下：插件下次加载引擎时生效"
+                        if (session.isSpeaking()) getString(R.string.s_564)
+                        else getString(R.string.s_565)
                     )
                 },
                 matchWrap()
             )
             box.addView(
-                hintText("GPU 后端在部分机型/驱动上不可用，插件会回退 CPU 并在状态里说明"),
+                hintText(getString(R.string.s_568)),
                 wrapWrap()
             )
         }
@@ -1797,7 +1827,7 @@ class PluginPage(
         }
         if (!ok) {
             pendingRefPkg = null
-            toast("打不开文件选择器")
+            toast(getString(R.string.s_569))
         }
     }
 
@@ -1836,15 +1866,15 @@ class PluginPage(
             )
         }.onFailure { android.util.Log.w("PonkoPluginPage", "持久化 Uri 授权失败", it) }
 
-        val name = displayNameOf(uri) ?: uri.lastPathSegment ?: "已选择的音频"
+        val name = displayNameOf(uri) ?: uri.lastPathSegment ?: getString(R.string.s_570)
         val next = params(pkg).copy(refUri = uri.toString(), refName = name)
         paramsCache[pkg] = next
         PreviewParams.save(act, pkg, next)
         refLabel?.apply {
-            text = "已选择：$name"
+            text = getString(R.string.s_604, name)
             setTextColor(pal.text)
         }
-        toast("参考音频：$name")
+        toast(getString(R.string.s_607, name))
         return true
     }
 
@@ -1888,7 +1918,7 @@ class PluginPage(
         if (!ok) {
             pendingModelPkg = null
             pendingModelRole = null
-            toast("打不开文件选择器")
+            toast(getString(R.string.s_569))
         }
     }
 
@@ -1918,27 +1948,27 @@ class PluginPage(
             -1L
         }
 
-        toast("正在把「$name」交给插件…")
+        toast(getString(R.string.s_608, name))
         // 开 FD 和转发都要快，但 openFileDescriptor 可能碰网络盘，放后台
         Thread {
             var fd: android.os.ParcelFileDescriptor? = null
             try {
                 fd = res.openFileDescriptor(uri, "r")
                 if (fd == null) {
-                    act.runOnUiThread { toast("读不到这个文件") }
+                    act.runOnUiThread { toast(getString(R.string.s_571)) }
                     return@Thread
                 }
                 val ready = fd
                 act.runOnUiThread {
                     // importModel 内部会关掉这份 FD（Binder 已 dup 一份给插件）
                     session.importModel(pkg, role, ready, name, size)
-                    toast("已交给插件：$name")
+                    toast(getString(R.string.s_609, name))
                 }
             } catch (t: Throwable) {
                 android.util.Log.w("PonkoPluginPage", "转发模型文件失败：$name", t)
                 runCatching { fd?.close() }
                 act.runOnUiThread {
-                    toast("转发失败：${t.message ?: t.javaClass.simpleName}")
+                    toast(getString(R.string.s_610, t.message ?: t.javaClass.simpleName))
                 }
             }
         }.start()
@@ -1946,7 +1976,7 @@ class PluginPage(
 
     private fun deleteModelOf(pkg: String, role: String) {
         session.deleteModel(pkg, role)
-        toast("已请求插件清除")
+        toast(getString(R.string.s_572))
     }
 
 
@@ -1986,12 +2016,12 @@ class PluginPage(
      * 估算可能算到几十分钟（用户粘了一整篇文章），所以必须处理跨越分钟的显示。
      */
     private fun fmtDur(sec: Double): String = when {
-        sec < 60 -> "${sec.toInt().coerceAtLeast(1)} 秒"
-        sec < 3600 -> "${"%.1f".format(sec / 60)} 分钟"
+        sec < 60 -> getString(R.string.s_623, sec.toInt().coerceAtLeast(1))
+        sec < 3600 -> getString(R.string.s_624, "%.1f".format(sec / 60))
         else -> {
             val h = (sec / 3600).toInt()
             val m = ((sec % 3600) / 60).toInt()
-            if (m == 0) "$h 小时" else "$h 小时 $m 分"
+            if (m == 0) getString(R.string.s_611, h) else getString(R.string.s_612, h, m)
         }
     }
 
@@ -2057,7 +2087,7 @@ class PluginPage(
             }
         }
         if (bytes == null || bytes.isEmpty()) {
-            setUiHint("插件返回了空音频")
+            setUiHint(getString(R.string.s_573))
             return
         }
         try {
@@ -2078,7 +2108,7 @@ class PluginPage(
                 pkg, com.litertchat.plugin.ActionLabel.PLAY
             )
             setUiHint(
-                "已生成 %.1f 秒音频（耗时 %.1f 秒），点「%s」试听".format(
+                getString(R.string.s_613, 
                     result.durationMs / 1000.0,
                     result.elapsedMs / 1000.0,
                     playLabel,
@@ -2086,7 +2116,7 @@ class PluginPage(
             )
         } catch (t: Throwable) {
             // 这里失败的是**写文件**，不是播放 —— 报"播放失败"会把人引向错误方向
-            setUiHint("音频保存失败：${t.javaClass.simpleName}")
+            setUiHint(getString(R.string.s_625, t.javaClass.simpleName))
         }
     }
 
@@ -2332,7 +2362,7 @@ class PluginPage(
         // 插件可以把这个按钮叫成别的（见 ActionLabel.SAVE）
         val saveLabel = openUiPkg?.let {
             session.actionLabel(it, com.litertchat.plugin.ActionLabel.SAVE)
-        } ?: "保存"
+        } ?: getString(R.string.s_574)
         try {
             // 一开播就先把"逐条播放器"停掉：用户点了顶部的「播放」，
             // 下面某条历史还在响就成了两段声音叠着
@@ -2341,12 +2371,12 @@ class PluginPage(
             player = android.media.MediaPlayer().apply {
                 setDataSource(f.absolutePath)
                 setOnCompletionListener {
-                    setUiHint("播放完毕（点「$saveLabel」可存进音乐库）")
+                    setUiHint(getString(R.string.s_626, saveLabel))
                     // 播完了：播放条的 ▶ 要复原，进度停在末尾
                     currentUiPage?.refreshAudio()
                 }
                 setOnErrorListener { _, what, extra ->
-                    setUiHint("播放失败（$what/$extra）")
+                    setUiHint(getString(R.string.s_627, what, extra))
                     true
                 }
                 prepare()
@@ -2355,7 +2385,7 @@ class PluginPage(
             // 开播了：播放条要从 ▶ 变 ⏸，并开始走
             currentUiPage?.refreshAudio()
         } catch (t: Throwable) {
-            setUiHint("播放失败：${t.javaClass.simpleName}")
+            setUiHint(getString(R.string.s_628, t.javaClass.simpleName))
         }
     }
 
@@ -2385,7 +2415,7 @@ class PluginPage(
     private fun saveAudio() {
         val f = lastAudioFile
         if (f == null || !f.exists()) {
-            setUiHint("没有可保存的音频（先合成一次）")
+            setUiHint(getString(R.string.s_575))
             return
         }
         saveAudioFile(f)
@@ -2400,7 +2430,7 @@ class PluginPage(
     private fun saveAudioOf(pkg: String, key: String) {
         val f = fileOf(pkg, key)
         if (f == null || !f.exists()) {
-            setUiHint("这一条还没有音频")
+            setUiHint(getString(R.string.s_576))
             return
         }
         saveAudioFile(f)
@@ -2409,7 +2439,7 @@ class PluginPage(
     /** 把一份音频复制进系统音乐库（`音乐/Ponko`） */
     private fun saveAudioFile(f: java.io.File) {
         if (android.os.Build.VERSION.SDK_INT < 29) {
-            setUiHint("已保存在：${f.absolutePath}")
+            setUiHint(getString(R.string.s_629, f.absolutePath))
             return
         }
         try {
@@ -2430,7 +2460,7 @@ class PluginPage(
             val uri = resolver.insert(
                 android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values
             ) ?: run {
-                setUiHint("保存失败：系统拒绝创建媒体条目")
+                setUiHint(getString(R.string.s_577))
                 return
             }
             val ok = runCatching {
@@ -2440,16 +2470,16 @@ class PluginPage(
             }.getOrDefault(false)
             if (!ok) {
                 runCatching { resolver.delete(uri, null, null) }
-                setUiHint("保存失败：写不进音乐库")
+                setUiHint(getString(R.string.s_578))
                 return
             }
             values.clear()
             values.put(android.provider.MediaStore.Audio.Media.IS_PENDING, 0)
             resolver.update(uri, values, null, null)
-            setUiHint("已保存到「音乐/Ponko」")
+            setUiHint(getString(R.string.s_579))
         } catch (t: Throwable) {
             android.util.Log.e("PonkoPluginPage", "保存音频失败", t)
-            setUiHint("保存失败：${t.javaClass.simpleName}")
+            setUiHint(getString(R.string.s_630, t.javaClass.simpleName))
         }
     }
 
@@ -2473,7 +2503,7 @@ class PluginPage(
         // 用 ScrollView 包住：关于文档可能很长（作者会写模型许可、变更记录），
         // 直接塞进弹窗会顶满屏幕、按钮都露不出来
         val body = TextView(act).apply {
-            this.text = text ?: "无"
+            this.text = text ?: getString(R.string.s_580)
             textSize = 13f
             setTextColor(if (text != null) pal.text else pal.hint)
             setLineSpacing(dp(3).toFloat(), 1f)
@@ -2491,20 +2521,22 @@ class PluginPage(
         val builder = android.app.AlertDialog.Builder(
             act, android.R.style.Theme_DeviceDefault_Dialog_Alert
         )
-            .setTitle("关于「${item.found.label}」")
+            .setTitle(getString(R.string.s_631, item.found.label))
             .setView(scroll)
-            .setPositiveButton("关闭", null)
+            .setPositiveButton(getString(R.string.s_581), null)
 
         // 只有真有内容才给「复制」——对着一个"无"提供复制按钮很荒唐
         if (text != null) {
-            builder.setNeutralButton("复制") { _, _ ->
+            builder.setNeutralButton(getString(R.string.s_582)) { _, _ ->
                 val cm = act.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
                         as? android.content.ClipboardManager
                 if (cm != null) {
                     cm.setPrimaryClip(
-                        android.content.ClipData.newPlainText("关于${item.found.label}", text)
+                        android.content.ClipData.newPlainText(
+                            getString(R.string.s_632, item.found.label), text
+                        )
                     )
-                    toast("已复制")
+                    toast(getString(R.string.s_583))
                 }
             }
         }
@@ -2525,9 +2557,9 @@ class PluginPage(
         android.app.AlertDialog.Builder(
             act, android.R.style.Theme_DeviceDefault_Dialog_Alert
         )
-            .setTitle("怎么装插件")
+            .setTitle(getString(R.string.s_480))
             .setMessage(msg)
-            .setPositiveButton("知道了", null)
+            .setPositiveButton(getString(R.string.s_584), null)
             .show()
     }
 
@@ -2555,10 +2587,10 @@ class PluginPage(
             gravity = Gravity.CENTER_VERTICAL
         }
         val entries = listOf(
-            pal.ok to "就绪",
-            pal.warn to "待处理",
-            pal.err to "失败",
-            pal.hint to "未启用",
+            pal.ok to getString(R.string.s_585),
+            pal.warn to getString(R.string.s_586),
+            pal.err to getString(R.string.s_587),
+            pal.hint to getString(R.string.s_539),
         )
         entries.forEachIndexed { i, (color, label) ->
             // 小色块做成和卡片色条一样的细竖条，视觉上能对上号
@@ -2708,7 +2740,7 @@ class PluginPage(
                 } catch (t: Throwable) {
                     // 不能让异常静默消失 —— 那正是"点了没反应"最难查的形态
                     android.util.Log.e("PonkoPluginPage", "卸载流程异常", t)
-                    toast("出了点问题：${t.javaClass.simpleName}")
+                    toast(getString(R.string.s_633, t.javaClass.simpleName))
                 }
             }
         }
