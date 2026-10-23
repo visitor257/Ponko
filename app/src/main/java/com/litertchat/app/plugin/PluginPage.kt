@@ -62,6 +62,26 @@ class PluginPage(
     private var listHost: LinearLayout? = null
 
     /**
+     * 搜索框的输入内容。空串 = 不过滤。
+     *
+     * 存成字段而不是只读控件里的文本：`onPluginsChanged` 会拿新的插件列表
+     * 重新渲染，那时要按**当前的**查询再过滤一遍。只看控件的话，
+     * 重建视图之后搜索就悄悄失效了。
+     */
+    private var searchQuery: String = ""
+
+    /** 搜索框本身，给「清空」和后续可能的"聚焦"用 */
+    private var searchInputRef: EditText? = null
+
+    /**
+     * 最近一次扫描到的完整插件列表（**未过滤**）。
+     *
+     * 输入时不必重新扫描磁盘，直接从这份里筛 —— 扫描要走 PackageManager、
+     * 读签名、读 manifest，每敲一个字跑一遍是不可接受的。
+     */
+    private var allItems: List<PluginSession.Item> = emptyList()
+
+    /**
      * 试听 / 播放的状态文本。
      *
      * 显示位置在**插件界面的功能区**（`PluginUiPage.setActionHint`），不在卡片上 ——
@@ -224,10 +244,10 @@ class PluginPage(
         }
 
         root.addView(pageTitle("Ponko-EX"))
-        root.addView(hintText(
-            "插件是独立的 APK，安装后在这里启用。装插件时系统会弹「未知来源」提示，" +
-                "这是 Android 的强制要求，无法省略。"
-        ))
+
+        // 这一行原来有一段解释（"插件是独立的 APK，安装后在这里启用…"）。
+        // 2026-10-23 删：它讲的事，第一次用的人点一下「怎么装插件」就能看到，
+        // 而每次进这一页都要先读过一段话才能看到按钮。页面上不再留前情提要。
 
         // ---- 环境自检 ----
         // 放在最显眼处。出 SecurityException 时，用户第一眼就能分清是
@@ -253,6 +273,58 @@ class PluginPage(
         val btnHelp = smallButton("怎么装插件") { showInstallHelp() }
         toolbar.addView(btnHelp, wrapWrap().apply { leftMargin = dp(8) })
         root.addView(toolbar, matchWrap().apply { topMargin = dp(12) })
+
+        // ---- 搜索框 ----
+        //
+        // 单独一行，不和上面两个按钮挤在一起：插件多了之后
+        // 「重新扫描 / 怎么装插件 / 搜索框」三个抢一行，搜索框会窄到只能
+        // 显示两三个字，hint 都看不全。
+        //
+        // 空查询时列表原样显示（不做任何过滤），所以没装几个插件的人
+        // 不会因为多了一个框而多看见任何东西。
+        val searchRow = LinearLayout(act).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val searchInput = EditText(act).apply {
+            hint = "搜索插件（名称 / 包名）"
+            // Kotlin 里要用 setSingleLine()，`singleLine` 那个是 XML 属性
+            setSingleLine(true)
+            inputType = android.text.InputType.TYPE_CLASS_TEXT
+            imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
+            styleField(this)
+            // 页面可能被重建（主题切换等），而 [searchQuery] 是实例字段、会留着。
+            // 不把文本填回去的话，就会出现"框是空的、列表却被过滤了"的矛盾状态
+            if (searchQuery.isNotEmpty()) setText(searchQuery)
+        }
+        // 清空按钮：只在有输入时出现。
+        // 不做成输入框内的 X 图标，是因为那要往 EditText 里塞 drawable，
+        // 还得管点击区域和深浅色 —— 一个按钮更直白，也更好点。
+        val btnClear = smallButton("清空") {
+            searchInput.setText("")
+            searchQuery = ""
+            applyFilter()
+            // 光标回到输入框：清空通常是为了接着输入下一个词，
+            // 焦点留在这里键盘就不会收起来
+            searchInputRef?.requestFocus()
+        }.apply { visibility = if (searchQuery.isEmpty()) View.GONE else View.VISIBLE }
+
+        searchInput.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+            override fun afterTextChanged(s: android.text.Editable?) {
+                val q = s?.toString().orEmpty()
+                if (q == searchQuery) return
+                searchQuery = q
+                btnClear.visibility = if (q.isEmpty()) View.GONE else View.VISIBLE
+                applyFilter()
+            }
+        })
+        searchInputRef = searchInput
+
+        searchRow.addView(searchInput, LinearLayout.LayoutParams(0, wrapWrap().height, 1f))
+        searchRow.addView(btnClear, wrapWrap().apply { leftMargin = dp(8) })
+        root.addView(searchRow, matchWrap().apply { topMargin = dp(10) })
 
         // ---- 列表容器 ----
         val host = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL }
@@ -770,20 +842,70 @@ class PluginPage(
     }
 
     private fun renderList(items: List<PluginSession.Item>) {
+        // 记住完整列表（未过滤），输入时从这里筛，不用重新扫描
+        allItems = items
+        applyFilter()
+    }
+
+    /**
+     * 按 [searchQuery] 过滤并重画列表。
+     *
+     * ## 匹配什么
+     *
+     * 显示名（`label`）、包名、插件自报的名字（`manifest.displayName`）——
+     * 三者任一包含查询串即命中，不区分大小写。
+     *
+     * 不匹配 `about` 全文和 `detail`（诊断信息）：那些可能很长，
+     * 搜"model"会命中一堆无关插件，看起来像搜索坏了。
+     *
+     * ## 为什么每次输入都整片重画
+     *
+     * 卡片是现建的（`itemCard`），没有稳定 id 也没有 view holder。
+     * 插件数量是个位数，重建开销远小于维护"增量更新"的复杂度。
+     * 折叠状态存在 [expandedMap] 里（按包名），所以重画不会把用户
+     * 展开过的卡片收起来。
+     */
+    private fun applyFilter() {
         val host = listHost ?: return
         host.removeAllViews()
 
-        if (items.isEmpty()) {
-            host.addView(emptyCard(
-                "没有找到插件",
-                "如果你已经装了插件，检查两件事：\n" +
-                    "1. 插件是否被系统停用（设置 → 应用）\n" +
-                    "2. 插件和 Ponko 的签名是否一致"
-            ))
+        val q = searchQuery.trim()
+        val shown = if (q.isEmpty()) allItems else allItems.filter { matches(it, q) }
+
+        if (shown.isEmpty()) {
+            host.addView(
+                if (q.isEmpty()) {
+                    emptyCard(
+                        "没有找到插件",
+                        "如果你已经装了插件，检查两件事：\n" +
+                            "1. 插件是否被系统停用（设置 → 应用）\n" +
+                            "2. 插件和 Ponko 的签名是否一致"
+                    )
+                } else {
+                    // 有查询却说"没有找到插件"会让人以为扫描坏了，
+                    // 必须说清是**这个搜索词**没结果，并且告诉他一共有几个
+                    emptyCard(
+                        "没有匹配「$q」的插件",
+                        "已装的 ${allItems.size} 个插件里没有名称或包名含这个词的。" +
+                            "\n换个词试试，或点上面的「清空」。"
+                    )
+                }
+            )
             return
         }
 
-        items.forEach { item -> host.addView(itemCard(item), matchWrap().apply { topMargin = dp(8) }) }
+        shown.forEach { item ->
+            host.addView(itemCard(item), matchWrap().apply { topMargin = dp(8) })
+        }
+    }
+
+    /** 一个插件是否命中查询串。三者任一包含即算命中 */
+    private fun matches(item: PluginSession.Item, q: String): Boolean {
+        val needle = q.lowercase()
+        fun hit(s: String?) = s != null && s.lowercase().contains(needle)
+        return hit(item.found.label) ||
+            hit(item.found.packageName) ||
+            hit(item.manifest?.displayName)
     }
 
     private fun itemCard(item: PluginSession.Item): View {
