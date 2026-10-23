@@ -243,6 +243,22 @@ abstract class PonkoPluginService : Service() {
      */
     @Volatile private var engineLoaded = false
 
+    /**
+     * 宿主最近一次传进来的模型包与配置（v12.1）。
+     *
+     * ## 为什么必须缓存
+     *
+     * [requestEngineLoad] 是插件自己调用的，那一刻手上没有 `models` ——
+     * 那是宿主在 `loadEngine` 里传进来的参数。不缓存的话，插件按钮发起的加载
+     * 只能传 `null`，于是**用户已经导入的模型会被忽略**，插件去自管模型、
+     * 或者直接加载失败。
+     *
+     * 只缓存**非 null** 的值：宿主明确传 null 时（比如模型被删了）
+     * 不能拿旧值顶上 —— 那种情况下插件本来就该收到 null。
+     */
+    @Volatile private var lastHostModels: ModelBundle? = null
+    @Volatile private var lastHostConfig: EngineConfig? = null
+
     /** 只允许一个任务在跑；用 CAS 保证**在投递到 worker 之前**就占住 */
     private val busy = AtomicBoolean(false)
     private val loading = AtomicBoolean(false)
@@ -330,6 +346,167 @@ abstract class PonkoPluginService : Service() {
         internal fun matches(id: String?) = id == requestId
     }
 
+    // ==================== 插件自己控制引擎（v12.1）====================
+
+    /**
+     * 插件自己的按钮要加载引擎时，**调这个**，别直接调 [loadEngineBlocking]。
+     *
+     * ## 为什么不能直接调 loadEngineBlocking（这是个真缺口）
+     *
+     * [loadEngineBlocking] 是 `protected` 的，看起来"插件能调"，但它只是
+     * **纯阻塞实现** —— 状态机、前台服务、回调全在别处：
+     *
+     * · `state` 停在 `UNLOADED`，`getStatus()` / `isEngineReady()` 永远说没加载
+     * · 宿主那行「引擎」一直显示"未加载"
+     * · 宿主 `startPreview` 里 `isEngineReady()` 为 false → **自己再加载一遍**
+     *   并**补发一次合成** → 同一个请求跑两次
+     * · 没有 `onEngineLoaded` 回调，前台服务通知也不会挂在"加载中"
+     *
+     * binder 是 `private val`，插件根本拿不到，所以以前除了直接调
+     * `loadEngineBlocking` 没有别的路。**这个方法就是那条缺失的路。**
+     *
+     * ## 和宿主发起的加载完全同一套逻辑
+     *
+     * 和 binder 里的 `loadEngine` 共用一份实现（[doLoadEngine]）：
+     * 幂等、转 worker 线程、维护状态机、回调 `onEngineLoaded` / `onEngineError`、
+     * 失败时释放前台服务。
+     *
+     * @return true = 这次真的发起了加载；false = 已加载或正在加载，什么都没做
+     */
+    protected fun requestEngineLoad(
+        models: ModelBundle? = null,
+        config: EngineConfig? = null,
+    ): Boolean = doLoadEngine(
+        // 不传就用宿主最近一次给的那份 —— 插件按钮点下去那一刻手上没有 models，
+        // 传 null 会把用户已经导入的模型丢掉。见 [lastHostModels]
+        models ?: lastHostModels,
+        config ?: lastHostConfig ?: EngineConfig(),
+    )
+
+    /**
+     * 插件自己的按钮要释放引擎时调这个，别直接调 [closeEngineBlocking]。
+     *
+     * 同样的理由：直接调 `closeEngineBlocking` 只 free 了内存，
+     * 而 `state` 还停在 `READY`，宿主会以为引擎还在、继续把合成请求发过来。
+     *
+     * 和 binder 里的 `closeEngine` 同一份实现（[doCloseEngine]）：
+     * 先取消正在跑的任务、窗口期用 `closing` 让合成回 `NOT_READY`（不是 `BUSY`）、
+     * 收尾时清状态并撤前台服务。
+     *
+     * @return true = 这次真的发起了卸载；false = 本来就没加载，什么都没做
+     */
+    protected fun requestEngineClose(): Boolean {
+        if (state == EngineState.UNLOADED && !engineLoaded) return false
+        doCloseEngine()
+        return true
+    }
+
+    /**
+     * 当前引擎状态，给插件自己画界面用（v12.1）。
+     *
+     * 返回 [EngineState] 的整型常量：`UNLOADED` / `LOADING` / `READY` / `RUNNING`。
+     *
+     * 以前插件看不到这个值，只能再维护一份自己的 —— 两份必然不同步，
+     * 而宿主的判断以**基类这份**为准，于是插件界面显示的和宿主认为的对不上。
+     *
+     * O(1) 的 volatile 读，随便调（但别在耗时循环里每帧调来刷 UI）。
+     */
+    protected val pluginEngineState: Int get() = state
+
+    /**
+     * 加载引擎的**唯一**实现。
+     *
+     * 从 binder 里提取出来的 —— 原来 `loadEngine` 的整套状态机写在
+     * `object : IPonkoPlugin.Stub()` 内部，而 binder 是 private，
+     * 插件够不着，只能绕过去直接调 `loadEngineBlocking`，状态机就永远不更新。
+     *
+     * 提取到外围之后，宿主发起的加载和插件自己发起的加载**走同一份代码**，
+     * 不存在"两条路径慢慢走岔"的问题。
+     *
+     * @return 是否真的发起了加载
+     */
+    private fun doLoadEngine(models: ModelBundle?, config: EngineConfig?): Boolean {
+        val cfg = config ?: EngineConfig()
+        // 幂等：已在加载 / 已加载 → 直接忽略
+        if (state == EngineState.READY || state == EngineState.RUNNING) return false
+        if (!loading.compareAndSet(false, true)) return false
+
+        // 记下宿主给的这份，供 requestEngineLoad() 无参调用时复用。
+        // 只存非 null：宿主明确传 null 时不能让旧值复活
+        if (models != null) lastHostModels = models
+        if (config != null) lastHostConfig = config
+
+        state = EngineState.LOADING
+        // 立刻挂一条通知，让用户知道"在准备"，也顺便让进程稳定下来
+        goForeground(Stage.LOADING, null)
+
+        worker.execute {
+            val t0 = SystemClock.elapsedRealtime()
+            try {
+                val info = loadEngineBlocking(models, cfg)
+                val elapsed = info.loadElapsedMs.takeIf { it > 0 }
+                    ?: (SystemClock.elapsedRealtime() - t0)
+                modelBytes = info.modelBytes
+                loadedAt = SystemClock.elapsedRealtime()
+                engineLoaded = true
+                state = EngineState.READY
+                safeCallback { it.onEngineLoaded(info.copy(loadElapsedMs = elapsed)) }
+                Log.i(TAG, "引擎加载成功: ${info.modelBytes}B / ${elapsed}ms")
+            } catch (t: Throwable) {
+                engineLoaded = false
+                state = EngineState.UNLOADED
+                modelBytes = 0L
+                loadedAt = 0L
+                safeCallback { it.onEngineError(toPluginError(t, null)) }
+                Log.e(TAG, "引擎加载失败", t)
+                stopForegroundAndWakeLock()
+            } finally {
+                loading.set(false)
+            }
+        }
+
+        return true
+    }
+
+    private fun doCloseEngine() {
+        // 用一个**独立**的 closing 标志，而不是借用 busy。
+        //
+        // ## 为什么不能用 busy（踩过）
+        //
+        // 原来写的是 `if (!busy.compareAndSet(false, true)) { cancelFlag = true }` ——
+        // 空闲时 CAS **会成功**，busy 就变成 true 了，而它要等 worker 里的
+        // finally 才复位。于是这段窗口（free 几 GB 可能几百毫秒，正在推理时更久）
+        // 里调 synthesize 会命中"已有任务在跑"的分支，回：
+        //   BUSY「上一段语音还在生成，请稍候」
+        // 而实际上什么都没在生成 —— 用户只是刚点了卸载。
+        //
+        // 这段窗口的正确语义是"引擎正在关闭，现在不能合成"，也就是 NOT_READY。
+        // 宿主对 NOT_READY 有现成的处理：自动重载引擎 + 补发这次请求，
+        // 语义正好对上；对 BUSY 则只会把"上一段还在生成"显示给用户。
+        closing = true
+        if (!busy.compareAndSet(false, true)) {
+            // 有任务在跑 → 先取消，让 worker 自己收尾
+            cancelFlag = true
+        }
+        worker.execute {
+            try {
+                cancelFlag = true
+                runCatching { closeEngineBlocking() }
+                    .onFailure { Log.e(TAG, "closeEngine 异常", it) }
+            } finally {
+                engineLoaded = false
+                state = EngineState.UNLOADED
+                modelBytes = 0L
+                loadedAt = 0L
+                cancelFlag = false
+                busy.set(false)
+                closing = false
+                stopForegroundAndWakeLock()
+            }
+        }
+    }
+
+
     // ==================== Binder ====================
 
     private val binder = object : IPonkoPlugin.Stub() {
@@ -344,77 +521,11 @@ abstract class PonkoPluginService : Service() {
         }
 
         override fun loadEngine(models: ModelBundle?, config: EngineConfig?) {
-            val cfg = config ?: EngineConfig()
-            // 幂等：已在加载 / 已加载 → 直接忽略
-            if (state == EngineState.READY || state == EngineState.RUNNING) return
-            if (!loading.compareAndSet(false, true)) return
-
-            state = EngineState.LOADING
-            // 立刻挂一条通知，让用户知道"在准备"，也顺便让进程稳定下来
-            goForeground(Stage.LOADING, null)
-
-            worker.execute {
-                val t0 = SystemClock.elapsedRealtime()
-                try {
-                    val info = loadEngineBlocking(models, cfg)
-                    val elapsed = info.loadElapsedMs.takeIf { it > 0 }
-                        ?: (SystemClock.elapsedRealtime() - t0)
-                    modelBytes = info.modelBytes
-                    loadedAt = SystemClock.elapsedRealtime()
-                    engineLoaded = true
-                    state = EngineState.READY
-                    safeCallback { it.onEngineLoaded(info.copy(loadElapsedMs = elapsed)) }
-                    Log.i(TAG, "引擎加载成功: ${info.modelBytes}B / ${elapsed}ms")
-                } catch (t: Throwable) {
-                    engineLoaded = false
-                    state = EngineState.UNLOADED
-                    modelBytes = 0L
-                    loadedAt = 0L
-                    safeCallback { it.onEngineError(toPluginError(t, null)) }
-                    Log.e(TAG, "引擎加载失败", t)
-                    stopForegroundAndWakeLock()
-                } finally {
-                    loading.set(false)
-                }
-            }
+            doLoadEngine(models, config)
         }
 
         override fun closeEngine() {
-            // 用一个**独立**的 closing 标志，而不是借用 busy。
-            //
-            // ## 为什么不能用 busy（踩过）
-            //
-            // 原来写的是 `if (!busy.compareAndSet(false, true)) { cancelFlag = true }` ——
-            // 空闲时 CAS **会成功**，busy 就变成 true 了，而它要等 worker 里的
-            // finally 才复位。于是这段窗口（free 几 GB 可能几百毫秒，正在推理时更久）
-            // 里调 synthesize 会命中"已有任务在跑"的分支，回：
-            //   BUSY「上一段语音还在生成，请稍候」
-            // 而实际上什么都没在生成 —— 用户只是刚点了卸载。
-            //
-            // 这段窗口的正确语义是"引擎正在关闭，现在不能合成"，也就是 NOT_READY。
-            // 宿主对 NOT_READY 有现成的处理：自动重载引擎 + 补发这次请求，
-            // 语义正好对上；对 BUSY 则只会把"上一段还在生成"显示给用户。
-            closing = true
-            if (!busy.compareAndSet(false, true)) {
-                // 有任务在跑 → 先取消，让 worker 自己收尾
-                cancelFlag = true
-            }
-            worker.execute {
-                try {
-                    cancelFlag = true
-                    runCatching { closeEngineBlocking() }
-                        .onFailure { Log.e(TAG, "closeEngine 异常", it) }
-                } finally {
-                    engineLoaded = false
-                    state = EngineState.UNLOADED
-                    modelBytes = 0L
-                    loadedAt = 0L
-                    cancelFlag = false
-                    busy.set(false)
-                    closing = false
-                    stopForegroundAndWakeLock()
-                }
-            }
+            doCloseEngine()
         }
 
         // O(1)：只读 volatile，不加锁、不调原生（方法在宿主 Binder 线程上同步等返回）

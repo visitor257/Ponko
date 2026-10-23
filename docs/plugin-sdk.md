@@ -1798,6 +1798,63 @@ notifyUiPatch("progress", "42")
 > 同一帧可能触发多次，也可能在内容变化前就跑过（`isLaidOut` 为 true 但高度
 > 还是旧值）。拿它判断"尺寸是否最新"会得到错误结论。
 
+### v12.1 补充：插件自己的按钮要控制引擎（2026-10-23）
+
+插件侧报的缺口，**是真的**，而且后果比"界面显示不对"严重。
+
+#### 缺口
+
+`loadEngine` / `closeEngine` / `getStatus` / `isEngineReady` 全都写在
+`private val binder = object : IPonkoPlugin.Stub() { … }` 里面。binder 是
+private，**插件一个都拿不到**。
+
+而 `loadEngineBlocking()` 是 `protected` 的，看起来"能调"。于是插件自绘一个
+「加载模型」按钮时，唯一能走的路就是直接调它 —— 但它只是**纯阻塞实现**，
+状态机在别处：
+
+| 后果 | 表现 |
+|---|---|
+| `state` 停在 `UNLOADED` | `getStatus()` / `isEngineReady()` 永远说没加载 |
+| 宿主那行「引擎」 | 一直显示"未加载" |
+| 宿主 `startPreview` | 判 `NOT_READY` → **自己再加载一遍**，加载完 **补发一次合成** |
+| `onEngineLoaded` | 从不回调，前台服务通知也不会挂在"加载中" |
+
+最后两条合起来就是：**同一次合成跑了两遍**。用户等 1~2 分钟，出来两份结果。
+
+#### 做法（纯新增，不改 AIDL）
+
+把 `loadEngine` / `closeEngine` 的函数体从 binder 里**提取**成
+`doLoadEngine()` / `doCloseEngine()`，然后：
+
+| 新出口 | 作用 |
+|---|---|
+| `protected fun requestEngineLoad(models = null, config = null): Boolean` | 加载。true = 真的发起了；false = 已加载/正在加载 |
+| `protected fun requestEngineClose(): Boolean` | 卸载。true = 真的发起了；false = 本来就没加载 |
+| `protected val pluginEngineState: Int` | 当前状态（`EngineState.UNLOADED` 等），给插件自己画界面用 |
+
+**关键点：宿主发起的和插件发起的走同一份实现**（`doLoadEngine` / `doCloseEngine`），
+不是两条路径。幂等、转 worker、状态机、`onEngineLoaded` / `onEngineError`、
+失败释放前台服务、`closing` 窗口期回 `NOT_READY` —— 全都一致。
+
+#### 顺带修掉的一个陷阱
+
+`requestEngineLoad()` 的 `models` 参数默认是 `null`，但插件按钮点下去那一刻
+手上**没有** `models`（那是宿主在 `loadEngine` 里传进来的）。直接传 null 会把
+用户已经导入的模型丢掉。
+
+所以基类现在缓存宿主最近一次给的非 null `ModelBundle` / `EngineConfig`，
+`requestEngineLoad()` 不传参时复用它们。**只缓存非 null** —— 宿主明确传 null 时
+（比如模型被删了）不能让旧值复活。
+
+#### 对宿主的意义
+
+这条修好之后，宿主侧那套「NOT_READY → 自动重载 + 补发」的保护逻辑
+**不该再被触发**。如果还在触发，说明插件仍在直接调 `loadEngineBlocking` ——
+那是插件侧要改的（换成 `requestEngineLoad`）。
+
+> 保护逻辑本身保留：它兜的是"插件进程被杀后引擎丢了"这种真实情况，
+> 不能因为这次的缺口就删掉。
+
 #### 边界：结构全自由，样式零自由
 
 | 归插件 | 归宿主 |
