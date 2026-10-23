@@ -710,6 +710,94 @@ abstract class PonkoPluginService : Service() {
     }
 
     /**
+     * 送结果图并**指明贴到哪个 `IMAGE` 控件**（v11）。
+     *
+     * ## 什么时候该用它
+     *
+     * 页面上只有一张图 → [notifyImage] 就够了（宿主能唯一确定）。
+     * 有两张以上（原图/结果对比、多方案预览）→ **必须**用它，
+     * 否则宿主不知道贴哪张，会直接丢弃并留一行日志。
+     *
+     * ```kotlin
+     * notifyImage("before", file)     // 贴到 key="before" 那张
+     * ```
+     *
+     * @param key 目标 `UiItem(type = UiType.IMAGE, key = …)` 的 key
+     */
+    protected fun notifyImage(key: String, file: java.io.File, mime: String? = "image/png") {
+        val fd = try {
+            android.os.ParcelFileDescriptor.open(
+                file, android.os.ParcelFileDescriptor.MODE_READ_ONLY
+            )
+        } catch (t: Throwable) {
+            Log.w(TAG, "打开结果图失败：$file", t)
+            return
+        }
+        // 尺寸从文件头读：插件只知道文件时不该被迫先 decode 一遍
+        val (w, h) = runCatching {
+            val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            android.graphics.BitmapFactory.decodeFile(file.absolutePath, o)
+            o.outWidth to o.outHeight
+        }.getOrDefault(0 to 0)
+        sendImageWithKey(key, fd, w, h, mime)
+    }
+
+    /**
+     * 送 Bitmap 并指定目标。**最常用的一行调用**。
+     *
+     * 内部先压成 PNG 落到自己的 `cacheDir`，再把 FD 交给宿主，然后删掉临时文件。
+     * 走 FD 是因为 Binder 事务有 1MB 配额，几 MB 的位图直接塞 transaction 会
+     * 抛 `TransactionTooLargeException`。
+     */
+    protected fun notifyImage(key: String, bitmap: android.graphics.Bitmap) {
+        val f = java.io.File(cacheDir, "ponko_img_${System.nanoTime()}.png")
+        try {
+            java.io.FileOutputStream(f).use { out ->
+                bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "写临时图片失败", t)
+            return
+        }
+        try {
+            notifyImage(key, f, "image/png")
+        } finally {
+            // 宿主读完就不需要了；FD 已在宿主侧持有，删文件不影响已打开的描述符
+            runCatching { f.delete() }
+        }
+    }
+
+    /**
+     * 底层出口：带 key 的 onImage。
+     *
+     * **老宿主上没有 `onImageWithKey`** —— 它的 Stub 会抛
+     * `RemoteException`（未知事务码）。这里捕获后**退回** [onImage]：
+     * 那个能贴到"唯一的图片控件"，总比什么都贴不上好。
+     *
+     * 用 try/catch 而不是版本判断：SDK 侧拿不到宿主版本号，
+     * 而"调用失败"本身就是最准确的探测。
+     */
+    private fun sendImageWithKey(
+        key: String,
+        fd: android.os.ParcelFileDescriptor,
+        width: Int,
+        height: Int,
+        mime: String?,
+    ) {
+        val cb = callback ?: run {
+            runCatching { fd.close() }      // 没连上就别泄漏 FD
+            return
+        }
+        try {
+            cb.onImageWithKey(key, fd, width, height, mime)
+        } catch (t: Throwable) {
+            Log.w(TAG, "带 key 送图失败（老宿主？），退回不带 key 的 onImage", t)
+            runCatching { cb.onImage(fd, width, height, mime) }
+                .onFailure { runCatching { fd.close() } }
+        }
+    }
+
+    /**
      * 请宿主**用当前参数**合成一次（v7）。
      *
      * ## 什么时候用
