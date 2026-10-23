@@ -244,4 +244,29 @@ oneway interface IPonkoCallback {
      */
     void onImageWithKey(in String key, in ParcelFileDescriptor fd, int width, int height,
                         in @nullable String mime);
+
+    // ==================== v12：插件控制滚动位置 ====================
+
+    /**
+     * 让宿主滚到某个 item（v12）。
+     *
+     * ## 为什么需要它
+     *
+     * 宿主曾经自己"记住重画前的滚动位置、重画后放回去"。那是宿主替页面作者
+     * 决定停在哪 —— 而重画后停在哪，本该是插件说了算：
+     * 它可能想让用户看到刚算出来的结果，也可能想留在参数区。
+     *
+     * 现在宿主**不自动滚动**。要滚就调这个。
+     *
+     * ```kotlin
+     * notifySchemaChanged()        // 重画（比如结果页多了一块）
+     * notifyScrollTo("result")     // 然后明确要求滚过去
+     * ```
+     *
+     * 不调的话位置由 Android 自己保持（同一帧内重建，`mScrollY` 不重置）——
+     * 也就是"什么都不发生"，这对多数场景已经是对的。
+     *
+     * @param key 目标 item 的 key。找不到时宿主**不猜**，只留一行日志
+     */
+    void onScrollTo(in String key);
 }

@@ -350,6 +350,18 @@ class PluginUiPage(
     private var lastBitmap: android.graphics.Bitmap? = null
 
     /**
+     * item.key → 它渲染出来的最外层 View（v12）。
+     *
+     * 用来支持 `notifyScrollTo(key)` —— 插件说"滚到这一项"，宿主得有办法
+     * 从 key 找回 View。**只在 key 非空时登记**：空 key 定位不到，
+     * 登记进去只会让"多个空 key 互相覆盖"。
+     *
+     * 每次 [render] 清空（视图全换了，旧引用必须丢 ——
+     * 这是这个文件里反复出现的同一个坑）。
+     */
+    private val keyedViews = HashMap<String, View>()
+
+    /**
      * 点结果图时全屏查看。由 [PluginPage] 注入（复用它已有的 ZoomImageView）。
      *
      * 不在这里自己写一套缩放逻辑：宿主已经有一份（全屏看图），
@@ -522,21 +534,6 @@ class PluginUiPage(
     private fun render() {
         val host = host ?: return
 
-        // ---- 先记住用户在哪儿，重画完再放回去 ----
-        //
-        // ## 不记会怎样
-        //
-        // `host.removeAllViews()` 之后旧子 View 的焦点状态全没了，
-        // ScrollView 会把 scrollY 收回到它自己认为有效的位置（常常是 0）。
-        // 表现就是用户报的那句：**点一下「加载」，页面"唰"地跳走了**。
-        //
-        // 之前一直没处理，是因为这个跳动的方向和"日志框抢滚动"很像，
-        // 都归到那一类去修了 —— 但根因不同：这里是**重建丢状态**，
-        // 那里是**焦点冒泡**。
-        //
-        // 记的是 [self]（外层整页 ScrollView）的位置，不是某个子控件的。
-        val keepScrollY = self?.scrollY ?: 0
-
         // 控件全要重建，这些索引指向的对象立刻作废。
         // **不清的话 patch 会写进已经脱离视图树的老控件** ——
         // 表现是"日志在涨，但屏幕上不动"，极难查。
@@ -546,6 +543,7 @@ class PluginUiPage(
         patchableBars.clear()
         imageViews.clear()
         imagePlaceholders.clear()
+        keyedViews.clear()
         audioBars.clear()
         hostSlotConsumed = false
         hostSlotTaken.clear()
@@ -701,6 +699,9 @@ class PluginUiPage(
                     // DIVIDER / SPACER 自带尺寸，别让 place 用 WRAP_CONTENT 覆盖
                     val keep = item.type == UiType.DIVIDER || item.type == UiType.SPACER
                     place(target.last(), v, keepSize = keep)
+                    // 登记给 scrollTo(key) 用。空 key 不登记：定位不到，
+                    // 而且多个空 key 会互相覆盖
+                    if (item.key.isNotBlank()) keyedViews[item.key] = v
                 }
             }
         }
@@ -737,18 +738,24 @@ class PluginUiPage(
         refreshAudioBars()
         startAudioTicker()
 
-        // ---- 把滚动位置放回去 ----
+        // 这里**不**恢复滚动位置（2026-10-23 删）。
         //
-        // 放回而不是"跳到底"或"跳到顶"：用户重画前在哪儿，重画后还在哪儿。
-        // 这是宿主**不做决定**的做法 —— 决定权在用户手上。
+        // 曾经有一段 `post { scrollTo(0, keepScrollY) }`，想修"点按钮后页面跳走"。
+        // 那是个错误的方向，两个理由：
         //
-        // `post` 是必须的：此刻新加的子 View 还没测量，ScrollView 的最大
-        // 滚动范围仍是旧值，直接 `scrollTo` 会被夹到 0。
+        // 1. **时机不可靠**：`post` 只保证"下一帧的消息队列"，不保证
+        //    measure/layout 已经完成。那一刻子 View 高度还是 0，
+        //    `scrollTo` 会被 clamp 到 0，反而把位置改错了 —— 用户看到的
+        //    "跳到加载按钮那里"就是它干的。
+        // 2. **更根本：这不归宿主管**。重画之后停在哪，是页面作者的决定；
+        //    宿主替它选一个位置，就是替它做决定。
         //
-        // 内容变短时目标值会超出范围，`scrollTo` 自己会夹到上限，不用我处理。
-        if (keepScrollY > 0) {
-            self?.post { self?.scrollTo(0, keepScrollY) }
-        }
+        // 删掉之后反而正确：`removeAllViews()` 只 requestLayout 不立即
+        // layout，同一帧内 `addView` 完内容已恢复，帧末 layout 时
+        // `mScrollY` 保持原值 —— **Android 自己就把位置保住了**，
+        // 不需要我干预。
+        //
+        // 插件若确实要控制滚动，用 `notifyScrollTo(key)` 明说（v12）。
     }
 
     // ==================== 功能区（宿主提供）====================
@@ -2006,14 +2013,11 @@ class PluginUiPage(
                         androidx.viewpager.widget.ViewPager.SimpleOnPageChangeListener() {
                         override fun onPageSelected(position: Int) {
                             if (position == current) return
-                            // 切走前记住日志框位置，切回来放回去（见 saveLogScrolls）
-                            saveLogScrolls()
                             current = position
                             // 滑动切页也要记账，否则重画后回到旧页
                             keys.getOrNull(position)?.takeIf { it.isNotBlank() }
                                 ?.let { tabSelected[stateKey] = it }
                             styleChips()
-                            settleCurrentPage()
                         }
                     })
                 }
@@ -2138,14 +2142,18 @@ class PluginUiPage(
                 view.setPadding(0, 0, 0, 0)
                 // ⚠ pager 的高度还是要算 —— 这种情况下 pagesHost 仍然是 pager，
                 // 不给定高它就是 0dp，用户看到一整块空白
-                pager?.post { stretchToTallestPage() }
+                //
+                // 用 afterLayout 而不是 post：要给各页 measure 定高，
+                // 必须先有真实宽度（post 时 pager.width 可能还是 0）
+                pager?.let { afterLayout(it) { stretchToTallestPage() } }
                 return
             }
             // restoreIndex 用 keys 查，此时已是完整列表
             val want = restoreIndex()
-            if (want != current) select(want) else settleCurrentPage()
-            // pager 的高度要在所有页都建完之后算（此时才知道哪页最高）
-            pager?.post { stretchToTallestPage() }
+            if (want != current) select(want)
+            // pager 的高度要在所有页都建完之后算（此时才知道哪页最高），
+            // 而且要有真实宽度才能 measure —— 见 afterLayout 的说明
+            pager?.let { afterLayout(it) { stretchToTallestPage() } }
         }
 
         private fun buildChip(label: String, idx: Int): TextView = TextView(act).apply {
@@ -2161,11 +2169,9 @@ class PluginUiPage(
 
         private fun select(idx: Int) {
             if (idx !in pages.indices) return
-            if (idx != current) saveLogScrolls()
             current = idx
             applySelection()
             keys.getOrNull(idx)?.takeIf { it.isNotBlank() }?.let { tabSelected[stateKey] = it }
-            settleCurrentPage()
         }
 
         /**
@@ -2183,11 +2189,9 @@ class PluginUiPage(
             val i = keys.indexOf(tabKey)
             if (i < 0) return false
             if (i == current) return true          // 已经在那一页，什么都不用做
-            saveLogScrolls()
             current = i
             applySelection(smooth)
             tabSelected[stateKey] = tabKey
-            settleCurrentPage()
             return true
         }
 
@@ -2234,72 +2238,18 @@ class PluginUiPage(
             }
         }
 
-        /**
-         * 切页前后保住每个日志框的位置（2026-10-23 重写）。
-         *
-         * ## 原来是"切回来就滚到底"
-         *
-         * 理由是对的：隐藏期间（`GONE`）View 没被测量，`height` 是 0，
-         * 所以 `isAtBottom` 读到的是错的；不处理的话切回来会停在半路。
-         *
-         * 但做法是错的 —— 它**无条件**滚到底。用户翻到日志中间看报错，
-         * 切到别的页再切回来，就被拽到末尾了。那是个宿主替用户做的决定。
-         *
-         * ## 现在是"记下来、放回去"
-         *
-         * 切走前记两件事：滚动位置、以及**当时是不是在底部**。
-         * 切回来后：之前在底部就仍到底（日志在跟着长，用户期望看到最新），
-         * 否则回到原来的 scrollY。**用户的位置被保留。**
-         *
-         * 用 [logScrollMemo] 按 View 存，不用 key —— 插件可能不给日志框写 key，
-         * 那种情况下也得能被记住。
-         */
-        private fun saveLogScrolls() {
-            logScrollMemo.clear()
-            pages.forEach { p -> collectLogScrolls(p) }
-        }
-
-        private fun restoreLogScrolls() {
-            pages.getOrNull(current)?.let { restoreIn(it) }
-        }
-
-        private fun collectLogScrolls(root: View) {
-            walkLogs(root) { v ->
-                logScrollMemo[v] = v.scrollY to isAtBottom(v)
-            }
-        }
-
-        private fun restoreIn(root: View) {
-            walkLogs(root) { v ->
-                val memo = logScrollMemo[v] ?: return@walkLogs
-                val (y, atBottom) = memo
-                if (atBottom) scrollToBottom(v) else v.scrollTo(0, y)
-            }
-        }
-
-        private fun walkLogs(root: View, onLog: (android.widget.ScrollView) -> Unit) {
-            val stack = ArrayDeque<View>()
-            stack.addLast(root)
-            while (stack.isNotEmpty()) {
-                when (val v = stack.removeLast()) {
-                    is android.widget.ScrollView ->
-                        if (v.tag == LOG_SCROLL_TAG) onLog(v)
-                    is ViewGroup ->
-                        for (i in 0 until v.childCount) stack.addLast(v.getChildAt(i))
-                }
-            }
-        }
-
-        /**
-         * 切页收尾。
-         *
-         * 现在只做"恢复位置"，不再做"粘到底" —— 见 [saveLogScrolls]。
-         * `post` 仍然必须：等这一帧布局完成，`height` 才是真实值。
-         */
-        private fun settleCurrentPage() {
-            val page = pages.getOrNull(current) ?: return
-            page.post { restoreIn(page) }
-        }
+        // 这里**不**保存/恢复日志框的滚动位置（2026-10-23 删）。
+        //
+        // 曾经有两版实现：
+        //   v1  切页后无条件把所有日志框滚到底
+        //   v2  记 scrollY + 是否在底部，切回来放回去
+        //
+        // 两版都是宿主替用户决定"该停在哪儿"。而且 v2 的 `post` 时机不可靠
+        // （只保证下一帧消息，不保证 layout 完成），反而会造成跳位。
+        //
+        // 现在交给 Android 自己的行为：`GONE` 期间没测量，切回来时
+        // ScrollView 会 clamp 到有效范围 —— 这是**框架的默认语义**，
+        // 不是宿主额外加的东西。插件若要控制，用 `notifyScrollTo(key)`（v12）。
 
         /**
          * 渲染期间往哪一页加内容 = **最后开始的那一页**。
@@ -2354,17 +2304,8 @@ class PluginUiPage(
         }
     }
 
-    /** 给日志框的 ScrollView 打的标记，[walkLogs] 靠它认出来 */
+    /** 给日志框的 ScrollView 打的标记 */
     private val LOG_SCROLL_TAG = "ponko:log"
-
-    /**
-     * 切页前记下的日志框位置：`scrollY to 是否在底部`。
-     *
-     * 用 View 本身做键而不是 item.key —— 插件可以不写 key，
-     * 那种日志框同样需要被记住位置。
-     */
-    private val logScrollMemo =
-        java.util.WeakHashMap<android.widget.ScrollView, Pair<Int, Boolean>>()
 
     /**
      * 建一组标签页。
@@ -2494,6 +2435,134 @@ class PluginUiPage(
         val child = scroll.getChildAt(0) ?: return
         val target = (child.height - scroll.height).coerceAtLeast(0)
         scroll.scrollTo(0, target)
+    }
+
+    /**
+     * **等这一帧布局完成**再执行 —— 需要"最新尺寸/坐标"的地方必须用它。
+     *
+     * ## 为什么 `post` 不够（踩过两次）
+     *
+     * `View.post` 只保证"在下一轮消息队列里执行"，**不保证 measure/layout 跑过**。
+     * 那一刻 `height` 还是 0、子 View 的 `top` 还没算出来。依赖这些的计算会拿到
+     * 错值，而且**看起来能用**（不报错、不崩），只是位置不对。
+     *
+     * 实际踩到的两处：
+     * · 恢复外层滚动位置 → `scrollTo` 被 clamp 到 0，用户看到页面跳走
+     * · 日志滚到底 → `child.height` 是 0，滚不动
+     *
+     * 都表现为"偶尔不生效"，极难复现。
+     *
+     * ## 为什么不用 `OnGlobalLayoutListener`
+     *
+     * 也想过用它，但它的语义是"**发生了一次**全局布局"。同一帧里可能触发多次，
+     * 也可能在内容变化前就已经跑过（`isLaidOut` 为 true 但高度是旧值）——
+     * 用它判断"尺寸是否最新"会得到错误结论。
+     *
+     * `OnPreDrawListener` 的时机是**布局完成、绘制之前**，此时所有 View 的
+     * 尺寸和位置都已更新，是唯一能保证"读到的是最新值"的点。
+     *
+     * ## `invalidate()` 为什么必要
+     *
+     * `onPreDraw` 只在真的要绘制时触发。如果内容没变、没有新帧要画，
+     * 挂上去就永远等不到 —— 那就成了静默不执行。主动 `invalidate()`
+     * 制造一次绘制，保证回调必来。
+     *
+     * 视图不可见（`GONE`）时不会有绘制，那时退回 `post`：至少不会留下
+     * 一个永远不摘的 listener。
+     */
+    private fun afterLayout(v: View, block: () -> Unit) {
+        // ① 还没 attach 到窗口（render 在 build() 里跑，这时整个页面都还没挂上去）
+        //    → 等 attach 再重新进来。**不能**在这里用 post：
+        //    post 会跑在 attach 之前，那时尺寸全是 0
+        if (!v.isAttachedToWindow) {
+            v.addOnAttachStateChangeListener(
+                object : View.OnAttachStateChangeListener {
+                    override fun onViewAttachedToWindow(view: View) {
+                        view.removeOnAttachStateChangeListener(this)
+                        afterLayout(view, block)
+                    }
+
+                    override fun onViewDetachedFromWindow(view: View) = Unit
+                }
+            )
+            return
+        }
+        // ② attach 了但不可见（GONE）→ 不会有绘制，挂 preDraw 会永远等不到。
+        //    退回 post：至少不会留下一个永不摘掉的 listener
+        if (!v.isShown) {
+            v.post(block)
+            return
+        }
+        // ③ 正常情况：等这一帧布局完成、绘制之前
+        val vt = v.viewTreeObserver
+        if (!vt.isAlive) {
+            block()
+            return
+        }
+        vt.addOnPreDrawListener(
+            object : android.view.ViewTreeObserver.OnPreDrawListener {
+                override fun onPreDraw(): Boolean {
+                    // 先摘再执行：留着会在后续每一帧都跑，
+                    // 反复设置滚动位置会让画面抖
+                    if (v.viewTreeObserver.isAlive) {
+                        v.viewTreeObserver.removeOnPreDrawListener(this)
+                    }
+                    block()
+                    return true
+                }
+            }
+        )
+        // 保证一定会有一次 draw → 一定会走到 onPreDraw
+        v.invalidate()
+    }
+
+    /**
+     * 滚到某个 item（v12，插件通过 `notifyScrollTo(key)` 调用）。
+     *
+     * ## 为什么由插件调，而不是宿主自动做
+     *
+     * 2026-10-23 之前宿主自己"记住重画前的滚动位置再放回去"。那是宿主
+     * 替页面作者决定停在哪 —— 而重画后停在哪本该是插件的事：
+     * 它可能想让用户看到新出现的结果、也可能想留在参数区。
+     *
+     * 所以：**宿主不自动滚动**，要滚就显式说。
+     * 不调这个方法的插件，重画后位置由 Android 自己保持（同一帧内重建，
+     * `mScrollY` 不会被重置），也就是"什么都不发生"。
+     *
+     * ## 滚动目标的算法
+     *
+     * 用"目标在当前窗口的 y" 减 "ScrollView 在窗口的 y" 再加上当前 scrollY，
+     * 得到目标在**内容坐标系**里的偏移。不能直接用 `target.top` ——
+     * 那是相对父容器的，中间隔了几层容器就对不上。
+     *
+     * ## 为什么必须等布局
+     *
+     * 刚 `render()` 完时子 View 还没测量，`getLocationInWindow` 拿到的是
+     * 旧坐标（或者 0）。这就是之前"恢复滚动位置"执行太早、反而跳位的根因。
+     * 见 [afterLayout]。
+     *
+     * @param key 目标 item 的 key。找不到就打日志（不猜）
+     * @param smooth true = 平滑滚动；false = 直接跳
+     */
+    fun scrollTo(key: String, smooth: Boolean = true) {
+        val target = keyedViews[key]
+        if (target == null) {
+            android.util.Log.w(
+                "PonkoPluginUi",
+                "scrollTo: 找不到 key='$key' 的控件（已有：${keyedViews.keys}）"
+            )
+            return
+        }
+        val sv = self ?: return
+        afterLayout(sv) {
+            val t = IntArray(2)
+            target.getLocationInWindow(t)
+            val s = IntArray(2)
+            sv.getLocationInWindow(s)
+            // 目标在内容坐标系里的 y
+            val y = (t[1] - s[1] + sv.scrollY).coerceAtLeast(0)
+            if (smooth) sv.smoothScrollTo(0, y) else sv.scrollTo(0, y)
+        }
     }
 
     /**
@@ -2806,7 +2875,10 @@ class PluginUiPage(
         // 只有原本就在底部才跟随。用户翻上去看历史时把他拽回底部，
         // 是日志框最招人烦的行为之一。
         if (follow && scroll != null) {
-            scroll.post { scrollToBottom(scroll) }
+            // afterLayout 而不是 post：`scrollToBottom` 要读 child.height，
+            // 刚 setText 完那一刻还没重排，读到的是旧高度（可能滚不到底）。
+            // 这就是"日志偶尔不跟随"的原因 —— 时好时坏，极难复现
+            afterLayout(scroll) { scrollToBottom(scroll) }
         }
         // 锁外层位置**只在 follow 时**做（2026-10-23 收窄）。
         //
@@ -2815,7 +2887,8 @@ class PluginUiPage(
         // 那一次 `requestChildRectangleOnScreen` 可能把父级一并带走。
         // 用户没在跟随时，我们本来就不碰任何滚动，没有要保险的东西。
         if (follow && outer != null) {
-            outer.post { if (outer.scrollY != outerY) outer.scrollTo(0, outerY) }
+            // 同上：要在布局之后才知道滚动范围变没变
+            afterLayout(outer) { if (outer.scrollY != outerY) outer.scrollTo(0, outerY) }
         }
     }
 

@@ -168,6 +168,11 @@ oneway interface IPonkoCallback {
     /** 送图并指明贴到哪个 IMAGE 控件（onImage 没 key，多图时必须用这个） */
     void onImageWithKey(in String key, in ParcelFileDescriptor fd, int width, int height,
                         in @nullable String mime);
+
+    // ---- v12：滚动位置 ----
+
+    /** 滚到某个 item（key 找不到时宿主只留日志，不猜） */
+    void onScrollTo(in String key);
 }
 ```
 
@@ -1690,6 +1695,64 @@ UiItem(type = UiType.ROW_END)
 
 所以现在的规则统一成：**能唯一定位就做，不能就丢弃 + 说清楚**。
 
+### v12 补充：滚动位置由插件决定（`onScrollTo`）
+
+#### 上一版做错了什么
+
+v11 里我去掉了"日志无条件滚到底"，但换成了一套**宿主自己记住重画前
+滚动位置、重画后放回去**的逻辑。两个问题：
+
+**1. 时机不对** —— 恢复动作是用 `View.post` 排的。`post` 只保证
+"下一轮消息队列执行"，**不保证 measure/layout 已经跑过**。那一刻子 View
+高度还是 0，`scrollTo` 被 clamp 到 0，于是不但没恢复，反而把位置改错了。
+用户看到的就是"点一下加载，页面跳到加载按钮那儿"。
+
+**2. 更根本：这不该宿主做** —— 重画之后停在哪，是页面作者的决定。
+宿主替它选一个位置，就是替它做决定。上一轮刚清掉六个"顺手"的行为，
+转头又加了一个同类的。
+
+#### 现在的规则
+
+**宿主不保存、也不恢复任何滚动位置。** 不调用 `onScrollTo` 就什么都不发生 ——
+而"什么都不发生"其实已经是对的：`removeAllViews()` 只 requestLayout 不立即
+layout，同一帧内 `addView` 完内容已恢复，帧末 layout 时 `mScrollY` 保持原值。
+**Android 自己就把位置保住了**，我原来那层干预纯属多余。
+
+要滚，就明说：
+
+```kotlin
+// 结果出来了：重画 + 滚到结果区
+notifySchemaChanged()
+notifyScrollTo("result")
+
+// 只改某个值：什么都不用做，位置自然保持
+notifyUiPatch("progress", "42")
+```
+
+| 情况 | 做法 |
+|---|---|
+| 想让用户看到新出现的区块 | `notifyScrollTo("那里的key")` |
+| 想留在原地 | **不调用**（默认行为） |
+| key 写错 / 控件不存在 | 宿主不猜，留一行日志列出已有 key |
+
+#### 顺带修掉的同类时机问题
+
+同一个 `post` 陷阱还藏着三处，一并改成"等这一帧布局完成"：
+
+| 位置 | 原来错在哪 |
+|---|---|
+| 标签页定高（`stretchToTallestPage`） | `post` 时 pager 宽度可能还是 0，measure 出来的高度是错的 |
+| 日志跟随（`patch(append)`） | 刚 `setText` 完还没重排，`child.height` 是旧值，滚不到底 |
+| 日志跟随时的外层位置锁 | 同上，不知道滚动范围变没变 |
+
+正确做法是 `ViewTreeObserver.OnPreDrawListener`：它的时机是**布局完成、
+绘制之前**，此时所有尺寸坐标都是最新的。挂上去之后再 `invalidate()` 一次，
+保证一定有绘制、回调一定会来（否则内容没变化时会静默不执行）。
+
+> 注：`OnGlobalLayoutListener` 不能用 —— 它的语义是"发生了一次全局布局"，
+> 同一帧可能触发多次，也可能在内容变化前就跑过（`isLaidOut` 为 true 但高度
+> 还是旧值）。拿它判断"尺寸是否最新"会得到错误结论。
+
 #### 边界：结构全自由，样式零自由
 
 | 归插件 | 归宿主 |
@@ -2021,7 +2084,7 @@ AIDL 调用遇到对方不认识的方法时，行为**不保证抛异常**：
 `API_VERSION` 是编译期写死进插件二进制的。所以"旧插件报 1、新插件报 2"这件事
 自动成立，不需要插件作者做任何事。
 
-### 现状（v11 = 2026-10-23）
+### 现状（v12 = 2026-10-23）
 
 | 版本 | 引入 | 宿主能否连接 |
 |---|---|---|
@@ -2036,6 +2099,7 @@ AIDL 调用遇到对方不认识的方法时，行为**不保证抛异常**：
 | v9 | `HostActionId` —— `ACTION` 的 `value` 可点名宿主动作，按钮位置由插件定 | ✅ 支持 |
 | v10 | 布局容器 `ROW_START/END`、`GRID_START/END` + `DIVIDER`、`SPACER` | ✅ 支持 |
 | v11 | `onImageWithKey` —— 送图时指定目标控件 | ✅ 支持 |
+| v12 | `onScrollTo` —— 插件控制滚动位置（宿主不再自动恢复） | ✅ 支持 |
 
 **「能否连接」和「能力是否齐」是两件事。** 上表问的是前者，答案永远是"能"——
 只要 `apiVersion >= API_MIN_SUPPORTED`（现在是 1）就会绑定。
@@ -2052,18 +2116,20 @@ AIDL 调用遇到对方不认识的方法时，行为**不保证抛异常**：
 | v8 | 缺「按钮位置自由」（5 个功能按钮只能在顶部） |
 | v9 | 缺「横向 / 网格布局」——只能纵向单列 |
 | v10 | 缺「送图指定目标」—— 页面上多张图时宿主只能猜 |
-| v11 | 全部功能 |
-| v12+（未来） | 老功能照常，新控件降级成文字块，新回调被丢弃 |
+| v11 | 缺「控制滚动位置」—— 宿主自己猜位置，而且经常猜错 |
+| v12 | 全部功能 |
+| v13+（未来） | 老功能照常，新控件降级成文字块，新回调被丢弃 |
 
 宿主自己的 `API_MAX_SUPPORTED` 只影响最后一行的**提示文案**，不影响能否连接。
 
-- `API_VERSION = 11`，`API_WITH_SCHEMA = 2`，`API_WITH_ACTION_LABELS = 3`，
+- `API_VERSION = 12`，`API_WITH_SCHEMA = 2`，`API_WITH_ACTION_LABELS = 3`，
   `API_WITH_RICH_UI = 4`，`API_WITH_TABS = 5`，`API_WITH_MODEL_IMPORT = 6`，
   `API_WITH_SYNTH_REQUEST = 7`（v7 的三项共用这一个版本号 —— 常量名沿用最先落地的那个，
   判断写 `api >= API_WITH_SYNTH_REQUEST` 即可），`API_WITH_TAB_SELECT = 8`，
   `API_WITH_HOST_ACTION_ITEMS = 9`（v9 只加了 `HostActionId` 常量 + 宿主渲染，
   AIDL 一行没加 —— 但它是个「能和不能」的区分，所以照样升版本），
-  `API_WITH_LAYOUT_CONTAINERS = 10`，`API_WITH_IMAGE_KEY = 11`
+  `API_WITH_LAYOUT_CONTAINERS = 10`，`API_WITH_IMAGE_KEY = 11`，
+  `API_WITH_SCROLL_TO = 12`
 - 宿主兼容下限 `API_MIN_SUPPORTED = 1` → **v1–v10 老插件照常连接、照常合成**，
   只是拿不到对应版本才有的能力：
   · v1 插件没有插件界面，卡片上不显示「进入」，并提示"插件 SDK v1（当前 v7）"
@@ -2078,8 +2144,9 @@ AIDL 调用遇到对方不认识的方法时，行为**不保证抛异常**：
   · v1–v9 插件没有 `ROW_START` / `GRID_START`，只能纵向单列
     （在老宿主上这两个类型会降级成"未知控件"文字块，所以要用先判版本）
   · v1–v10 插件送图不能指定目标（`onImageWithKey`），多图时只能贴到第一张
-- `API_MAX_SUPPORTED = 11` 是**认识上限**，不是拒绝阈值。
-  `api > 11` 的插件仍会连接，只是新控件降级、新回调被丢弃
+  · v1–v11 插件不能控制滚动（`onScrollTo`）
+- `API_MAX_SUPPORTED = 12` 是**认识上限**，不是拒绝阈值。
+  `api > 12` 的插件仍会连接，只是新控件降级、新回调被丢弃
 - `API_MIN_SUPPORTED` **一直是 1** —— 至今所有改动都是扩展，没有破坏性改动
 
 ### v3 的 `getActionLabels()`：为什么是一个方法，不是 manifest 的字段

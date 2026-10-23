@@ -768,6 +768,43 @@ abstract class PonkoPluginService : Service() {
     }
 
     /**
+     * 让宿主滚到某个 item（v12）。
+     *
+     * ## 什么时候用
+     *
+     * 宿主**不会**自己动滚动位置 —— 重画之后停在哪由你决定：
+     *
+     * ```kotlin
+     * // 结果出来了：重画 + 滚到结果区
+     * notifySchemaChanged()
+     * notifyScrollTo("result")
+     *
+     * // 只是改了某个值：什么都不用做，位置自然保持
+     * notifyUiPatch("progress", "42")
+     * ```
+     *
+     * 不调用就是"不发生任何滚动"，这对多数场景已经是对的
+     * （同一帧内重建，Android 自己保持 `scrollY`）。
+     *
+     * ## 时机
+     *
+     * 可以和 `notifySchemaChanged()` 连着调 —— 宿主会等布局完成再滚，
+     * 不需要你延时。
+     *
+     * @param key 目标 `UiItem.key`。找不到时宿主只留日志，不猜
+     */
+    protected fun notifyScrollTo(key: String) {
+        val cb = callback ?: return
+        try {
+            cb.onScrollTo(key)
+        } catch (t: Throwable) {
+            // 老宿主没有这个方法（v12 追加），抛 RemoteException。
+            // 滚动是锦上添花，失败不影响功能，所以只记一条日志
+            Log.w(TAG, "notifyScrollTo 失败（老宿主？）key='$key'", t)
+        }
+    }
+
+    /**
      * 底层出口：带 key 的 onImage。
      *
      * **老宿主上没有 `onImageWithKey`** —— 它的 Stub 会抛

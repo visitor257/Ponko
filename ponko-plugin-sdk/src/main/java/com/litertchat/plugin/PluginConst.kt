@@ -109,7 +109,7 @@ object PluginConst {
      * Binder 的事务码按声明顺序分配。在中间插入会让后面所有方法的事务码整体后移，
      * 老插件收到的码对不上 → **调用串味**（本该调 A 却执行了 B），比直接报错更糟。
      */
-    const val API_VERSION = 11
+    const val API_VERSION = 12
 
     /**
      * 从这一版起，插件支持「界面」那组方法（`getSettingsSchema` 等）。
@@ -218,9 +218,23 @@ object PluginConst {
      */
     const val API_WITH_IMAGE_KEY = 11
 
+    /**
+     * 从这一版起，插件可以**让宿主滚到某一项**（`onScrollTo`）。
+     *
+     * ## 为什么是"插件说"而不是"宿主自动"
+     *
+     * 宿主曾经自己记住重画前的滚动位置、重画后放回去。那是宿主替页面作者
+     * 决定停在哪 —— 而重画后停在哪本该是插件的事：可能想让用户看到刚算出的
+     * 结果，也可能想留在参数区。
+     *
+     * 现在宿主**不自动滚动**（不调用就什么都不发生，Android 自己保持位置）。
+     * 要滚就显式说。
+     */
+    const val API_WITH_SCROLL_TO = 12
+
     /** 宿主兼容区间：允许老插件继续跑，所以下限保持 1 */
     const val API_MIN_SUPPORTED = 1
-    const val API_MAX_SUPPORTED = 11
+    const val API_MAX_SUPPORTED = 12
 
     // ---- 插件 Action（宿主靠它发现插件）----
     const val ACTION_PLUGIN = "com.litertchat.ponko.PLUGIN"
