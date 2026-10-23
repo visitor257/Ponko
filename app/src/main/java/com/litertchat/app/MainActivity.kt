@@ -708,6 +708,15 @@ class MainActivity : Activity() {
     private lateinit var appBarTitle: TextView
 
     /**
+     * 顶栏标题左边的 ◀（返回插件列表）。
+     *
+     * 只在**插件界面打开时**可见 —— 在 Ponko-EX 的列表页它没有去处。
+     * 显隐由 [com.litertchat.app.plugin.PluginPage.onUiVisibilityChanged] 推过来，
+     * 切换 tab 时由 [switchTab] 再兜一次（切走再切回来，插件界面可能仍开着）。
+     */
+    private lateinit var appBarBack: TextView
+
+    /**
      * 顶栏标题下面那行「状态点 + 状态文字」。
      *
      * 它显示的是**宿主自己的引擎/模型状态**，所以在 Ponko-EX 页要藏掉 ——
@@ -991,6 +1000,17 @@ class MainActivity : Activity() {
             onZoomImage = { bmp -> showImageFullscreen(bmp) },
         ).also { pluginPage = it }
         ppg.setPalette(pal)
+        // 插件界面开/关 → 顶栏那个 ◀ 跟着显隐。
+        // 走回调而不是让 MainActivity 去轮询：开/关发生在 PluginPage 内部
+        // （点「进入」、点「‹ 返回」、按系统返回键三条路都会走到那里）。
+        ppg.onUiVisibilityChanged = { open ->
+            runOnUiThread {
+                if (::appBarBack.isInitialized) {
+                    appBarBack.visibility =
+                        if (open && currentTab == 3) View.VISIBLE else View.GONE
+                }
+            }
+        }
         tabPlugin = ppg.build()
         // 绘图模型就绪 → 进入绘图模式（对话页输入即正面提示词）
         dpg.onPipelineReady = {
@@ -1120,6 +1140,38 @@ class MainActivity : Activity() {
         }
         appBarMenu = iconButton("☰") { openDrawer() }
         r1.addView(appBarMenu, wrapWrap())
+
+        // ---- 标题左边的 ◀（只在插件界面里显示）----
+        //
+        // 用途：从插件自己的界面回到 Ponko-EX 的**插件列表**。
+        // 不是"返回上一层网页"那种语义，就是退出插件界面的一个显眼入口。
+        //
+        // 为什么放在系统标题栏而不是插件页内部：
+        // · 插件页自己的「‹ 返回」在正文顶部，内容一长就滚没了
+        // · 标题栏是固定的，且就在「Ponko-EX」字样旁边，位置一目了然
+        //
+        // 为什么在列表页隐藏：在列表页它没有去处（那已经是 Ponko-EX 自己的页面），
+        // 常驻一个点了没反应的箭头比不显示更让人困惑。
+        appBarBack = TextView(this).apply {
+            text = "◀"
+            textSize = 14f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            // 白色半透明圆底：蓝色栏上纯白箭头够亮，但需要一个热区轮廓
+            background = rounded(Color.parseColor("#33FFFFFF"), 99)
+            // 图标按钮必须自己撑点击区域，14sp 字形本身不到 20dp 宽
+            setPadding(dp(7), dp(5), dp(7), dp(5))
+            isClickable = true
+            // 纯图标，屏幕阅读器读不出任何东西
+            contentDescription = getString(R.string.s_747)
+            visibility = View.GONE
+            setOnClickListener {
+                // 只在真的开着插件界面时才动作，避免状态错位时误清视图
+                val pp = pluginPage
+                if (pp != null && pp.isShowingPluginUi()) pp.backToList()
+            }
+        }
+        r1.addView(appBarBack, wrapWrap().apply { rightMargin = dp(6) })
 
         val titleBox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -2289,6 +2341,13 @@ class MainActivity : Activity() {
         // 标题跟着页走：Ponko-EX 页要让人知道这是另一套东西（插件工程）
         if (::appBarTitle.isInitialized) {
             appBarTitle.text = if (index == 3) "Ponko-EX" else "Ponko"
+        }
+        // ◀ 只在「Ponko-EX 页 + 正开着插件界面」时出现。
+        // 这里要再判一次而不只靠回调：切到别的 tab 再切回来，插件界面可能
+        // 一直开着（切 tab 不销毁它），而回调不会因为切 tab 再触发一次。
+        if (::appBarBack.isInitialized) {
+            val inPluginUi = index == 3 && pluginPage?.isShowingPluginUi() == true
+            appBarBack.visibility = if (inPluginUi) View.VISIBLE else View.GONE
         }
         // 状态行只说宿主自己的引擎/模型，在 Ponko-EX 页没有意义（还会被误读成插件状态）
         if (::appBarStatusRow.isInitialized) {
