@@ -22,6 +22,7 @@ All inference runs on-device: apart from the optional in-app LoRA download, no f
 | **Drawing** | stable-diffusion.cpp; text-to-image / image-to-image / LCM-LoRA speed-up; optional TAESD and Vulkan |
 | **Tagging** | Fully offline ONNX (WD14 family); tags can be sent to T2I / I2I |
 | **API server** | Serves loaded models over OpenAI-compatible endpoints; chat 8080 / drawing 8081, fully independent |
+| **Plugins (Ponko-EX)** | Speech synthesis and similar live in separate APKs; the protocol is public, so third-party plugins work and you can write your own |
 | **Local-first** | No telemetry, no account; no network needed except the manual LoRA download |
 
 ## Contents
@@ -30,6 +31,7 @@ All inference runs on-device: apart from the optional in-app LoRA download, no f
 - [Drawing](#drawing)
 - [API server (use the phone as a server)](#api-server-use-the-phone-as-a-server)
 - [Tagging (Tagger)](#tagging-tagger)
+- [Plugins (Ponko-EX)](#plugins-ponko-ex)
 - [Permissions](#permissions)
 - [Languages](#languages)
 - [Building](#building)
@@ -141,6 +143,45 @@ Serves the **already loaded** drawing model over an OpenAI-compatible text-to-im
 - A loaded tagger can also be called as a **tool by chat models that cannot see images** (the model emits a `<tag>` command, the app tags the image, the tags are sent back and the model answers from them) - see the Chat section
 - Backend follows the Models/API page run mode: CPU, or NNAPI when GPU is selected
 
+## Plugins (Ponko-EX)
+
+Ponko itself is "local inference plus a host UI". **The specific capability** — speech
+synthesis, speech recognition, image generation and so on — **can be supplied by a
+plugin** instead of being stuffed into the main APK, so different needs can grow
+separately while the core stays small.
+
+- A plugin is a **separate APK**. Install it, then open the fourth tab **Ponko-EX**,
+  hit "Enable" and then "Open"
+- A plugin runs in **its own process**: if it crashes Ponko survives, but avoid
+  force-stopping it mid-inference
+- Official samples and the development repo:
+  [**visitor257/Ponko-EX**](https://github.com/visitor257/Ponko-EX)
+
+> **That is one place to get plugins, not the only one.** The protocol is public and
+> anyone can write a plugin. Plugins built by other people work just as well, as long
+> as they follow the protocol and are signed consistently (see below).
+> Ponko-EX is primarily the **development and documentation** repo (a bilingual plugin
+> guide plus official samples), and it doubles as a starting point for your own plugin.
+
+### The one hard constraint: same signing key
+
+**A plugin must be signed with the same key as Ponko**, or Android refuses the
+connection (`SecurityException`). This is Android's signature-level permission
+mechanism, not a lock Ponko added — the benefit is that **no other app can impersonate
+a plugin** and read your models and input.
+
+So a third-party plugin usually has to be **re-signed by you** before it will install.
+When signatures differ, the Ponko-EX page states exactly why
+("Signature mismatch: Ponko=…, plugin=…") instead of leaving you guessing.
+
+### Writing your own
+
+See the [Ponko-EX plugin guide](https://github.com/visitor257/Ponko-EX/blob/main/doc/plugin-guide.en.md):
+capability declarations, the UI schema (the host renders it, the plugin only supplies
+data), the AIDL protocol, localisation, and a release checklist. Host/SDK version
+compatibility is checked **in both directions** (a newer or older plugin is flagged,
+but both keep working).
+
 ## Permissions
 
 Taking a photo, picking an image and saving to the gallery require **no storage access permission at all**; apart from the entries below the app declares no other permissions.
@@ -162,8 +203,11 @@ Taking a photo, picking an image and saving to the gallery require **no storage 
 ## Languages
 
 All UI strings are externalized (`res/values` = English, `res/values-zh` = Chinese) and **follow the system language** automatically - no setting needed.
+**The plugin page is included**, including plugin-supplied text; the host also passes
+its current language to plugins as `hostLocaleTag`, so a plugin may use it — though
+simply following Android's own resource fallback is already enough.
 
-The fourth tab is an **About** page with two collapsible sections: **Settings** (the three-position theme slider: Light / Follow system / Dark) and **About** (version and install time, app intro, notes on the thinking mode, license and third-party component list, author and project link).
+The fifth tab is an **About** page with two collapsible sections: **Settings** (the three-position theme slider: Light / Follow system / Dark) and **About** (version and install time, app intro, notes on the thinking mode, license and third-party component list, author and project link).
 
 ## Building
 
