@@ -189,7 +189,8 @@ class PluginPage(
     private val expandedMap = HashMap<String, Boolean>()
 
     /** 列表与插件界面之间的容器（build 时创建） */
-    private var pageRoot: android.widget.FrameLayout? = null
+    /** 整页的根（垂直：顶部返回条 + 内容区）。注意插件界面要加到 [uiBody]，不是这里 */
+    private var pageRoot: LinearLayout? = null
 
     /**
      * 标题左边那个 ◀（返回插件列表）。
@@ -198,7 +199,29 @@ class PluginPage(
      * 但显示/隐藏要跟着 [currentUiPage] 走，所以留住引用
      * （`openPluginUi` / `closePluginUi` 各改一次）。
      */
-    private var backToPluginList: TextView? = null
+    /**
+     * 顶部「◀ Ponko-EX」那条（返回插件列表）。
+     *
+     * 类型是 `View` 而不是 `TextView` —— 它现在整条是个 LinearLayout
+     * （箭头 + 标题），只用来控制显隐。
+     */
+    private var backToPluginList: View? = null
+
+    /**
+     * 内容区（列表与插件界面叠在这里）。
+     *
+     * 和 [pageRoot] 分开：`pageRoot` 是垂直容器（顶部返回条 + 内容区），
+     * 而插件界面只该往**内容区**里叠，不能加到返回条上面去。
+     */
+    private var uiBody: android.widget.FrameLayout? = null
+
+    /**
+     * 当前叠在内容区里的插件界面视图。
+     *
+     * 存引用是为了 `closePluginUi` 能**精确移除**它，不依赖"最后一个子视图"
+     * 这种位置假设（返回条也在这个容器家族里，按位置取容易删错）。
+     */
+    private var uiPageView: View? = null
     /** 列表那一层。打开插件界面时把它藏起来，而不是销毁 —— 回来要保住滚动位置 */
     private var listLayer: View? = null
     /** 当前正在显示的插件界面；null = 在列表 */
@@ -266,41 +289,7 @@ class PluginPage(
             setBackgroundColor(pal.bg)
         }
 
-        // ---- 顶部：◀ + 标题 ----
-        //
-        // 「Ponko-EX」这个标题在**列表层外面**（listLayer 是下面那个 container
-        // 里的 ScrollView），所以打开插件界面之后它仍然在顶部 —— 正好拿来做
-        // 固定的返回入口。
-        //
-        // 为什么需要它：PluginUiPage 自己那个「‹ 返回」在**正文顶部**，
-        // 插件界面内容一长，滚下去就看不见了，用户得一路滚回顶部才能退出。
-        // 这一行的 ◀ 不跟着内容滚，随时能回列表。
-        //
-        // 只在插件界面打开时显示：在列表页它没有去处（那已经是 Ponko-EX
-        // 自己的页面），常驻一个点了没反应的按钮比不显示更糟。
-        val header = LinearLayout(act).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        val back = TextView(act).apply {
-            text = "◀"
-            textSize = 13f
-            setTextColor(pal.primary)
-            gravity = Gravity.CENTER
-            // 图标按钮必须自己撑点击区域。文字只有 13sp 宽，
-            // 不给内边距的话热区不到 20dp，拇指点不准
-            setPadding(dp(8), dp(6), dp(8), dp(6))
-            isClickable = true
-            // 图标没有文字，屏幕阅读器读不出来 —— 必须给
-            contentDescription = getString(R.string.s_747)
-            setOnClickListener { closePluginUi() }
-            // build() 可能被重新调用（换主题），状态要以 currentUiPage 为准
-            visibility = if (currentUiPage != null) View.VISIBLE else View.GONE
-        }
-        header.addView(back, wrapWrap().apply { rightMargin = dp(2) })
-        header.addView(pageTitle("Ponko-EX"), wrapWrap())
-        root.addView(header, matchWrap())
-        backToPluginList = back
+        root.addView(pageTitle("Ponko-EX"))
 
         // 这一行原来有一段解释（"插件是独立的 APK，安装后在这里启用…"）。
         // 2026-10-23 删：它讲的事，第一次用的人点一下「怎么装插件」就能看到，
@@ -636,13 +625,59 @@ class PluginPage(
         }
         listLayer = listScroll
 
-        // 外层容器：列表和插件界面叠在一起，靠 visibility 切换。
-        // 不用新 Activity 的理由：主题/配色/标题栏会自动一致，
-        // 也不用在 Manifest 里多声明一个 Activity。
-        val container = android.widget.FrameLayout(act).apply {
+        // 外层容器 = 顶部返回条 + 内容区（垂直）
+        //
+        // ⚠ 这里踩过两次，别再改回去：
+        //
+        // ① 一开始把 ◀ 加进 `root`（"Ponko-EX" 那一行）。**看不到** ——
+        //    `root` 整个被包在 `listScroll` 里，而打开插件界面时隐藏的正是
+        //    `listScroll`，于是标题和 ◀ 一起没了。
+        //
+        // ② 改成在 container 里浮一个 (8dp, 8dp) 的覆盖层。**会重叠** ——
+        //    `PluginUiPage` 自己的「‹ 返回」在 (16dp, 12dp)，两个按钮压在一起。
+        //
+        // 现在是垂直结构：返回条**占位**，插件界面在它下面，天然不重叠。
+        //
+        // 返回条只在插件界面打开时出现 —— 列表页保持原样（标题仍在滚动区里，
+        // 和以前完全一致），不要在列表页改变任何已有的视觉。
+        val bar = LinearLayout(act).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(8), dp(6), dp(16), 0)
+            visibility = if (currentUiPage != null) View.VISIBLE else View.GONE
+        }
+        val back = TextView(act).apply {
+            text = "◀"
+            textSize = 13f
+            setTextColor(pal.primary)
+            gravity = Gravity.CENTER
+            // 图标按钮必须自己撑点击区域：13sp 字形本身不到 20dp 宽，
+            // 不给内边距拇指点不准
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            isClickable = true
+            // 纯图标，屏幕阅读器读不出任何东西 —— 必须给
+            contentDescription = getString(R.string.s_747)
+            setOnClickListener { closePluginUi() }
+        }
+        bar.addView(back, wrapWrap())
+        bar.addView(pageTitle("Ponko-EX"), wrapWrap().apply { leftMargin = dp(2) })
+        backToPluginList = bar
+
+        val body = android.widget.FrameLayout(act).apply {
             setBackgroundColor(pal.bg)
             addView(listScroll, FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        }
+        uiBody = body
+
+        val container = LinearLayout(act).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(pal.bg)
+            addView(bar, matchWrap())
+            // weight=1 + height=0：内容区吃掉剩余高度，
+            // 这样返回条是实打实占位的，不是浮在内容上面
+            addView(body, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
         }
         pageRoot = container
         return container
@@ -718,8 +753,10 @@ class PluginPage(
      * 插件没提供任何项时就是一个空页面 —— 这是合法状态，不是错误。
      */
     private fun openPluginUi(item: PluginSession.Item) {
-        // 先把列表收到最外层，再叠上插件界面
-        val root = pageRoot ?: return
+        // 先把列表收到最外层，再叠上插件界面。
+        // 注意这里用 uiBody（内容区）而不是 pageRoot —— 后者是垂直容器，
+        // 顶部那条返回栏也是它的子视图，插件界面加进去会跑到返回栏下面去
+        val root = uiBody ?: return
         closePluginUi()
 
         val pkg = item.found.packageName
@@ -840,29 +877,32 @@ class PluginPage(
         diagCache[pkg]?.let { page.setDiagnostics(it) }
         root.addView(v, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        // 存引用，关闭时按引用移除（不依赖"最后一个子视图"的位置假设）
+        uiPageView = v
         listLayer?.visibility = View.GONE
-        // 标题左边那个 ◀ 跟着出现 —— 插件界面的正文可能很长，
-        // 内部那个「‹ 返回」会滚出屏幕，这个不会
+        // 顶部返回条出现：它**占位**在内容区上方，和插件界面不重叠
         backToPluginList?.visibility = View.VISIBLE
     }
 
     private fun closePluginUi() {
-        val root = pageRoot ?: return
+        val body = uiBody ?: return
         // 输入框里的内容可能还没落盘（边打字边写会在输入法预测时刷很多次，
         // 所以只在特定时机存），这里补一次
         openUiPkg?.let { pkg -> paramsCache[pkg]?.let { PreviewParams.save(act, pkg, it) } }
         val page = currentUiPage
         if (page != null) {
-            val v = root.getChildAt(root.childCount - 1)
-            if (v != null && v !== listLayer) root.removeView(v)
+            // 按引用移除。原来取 `getChildAt(childCount - 1)` ——
+            // 容器结构一变（多一个返回条）那种写法就会删错对象
+            uiPageView?.let { body.removeView(it) }
         }
+        uiPageView = null
         currentUiPage = null
         openUiPkg = null
         refLabel = null
         // 这个引用指向即将被移除的视图，留着只会让 focusSpeakText 摸到死控件
         speakTextInput = null
         listLayer?.visibility = View.VISIBLE
-        // 回到列表了，◀ 没有去处（这就是 Ponko-EX 自己的页面），收起来
+        // 回到列表了，返回条没有去处（这就是 Ponko-EX 自己的页面），收起来
         backToPluginList?.visibility = View.GONE
     }
 
@@ -897,8 +937,10 @@ class PluginPage(
         openUiPkg = null
         listLayer = null
         pageRoot = null
+        uiBody = null
         // 视图要销毁了，引用留着会指向死控件（下一次 build() 会重新赋值）
         backToPluginList = null
+        uiPageView = null
     }
 
     // ==================== 内部 ====================
