@@ -14,6 +14,7 @@ import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
 import com.litertchat.app.PonkoTheme
+import com.litertchat.app.R
 import com.litertchat.plugin.UiItem
 import com.litertchat.plugin.UiSchema
 import com.litertchat.plugin.UiType
@@ -142,6 +143,17 @@ class PluginUiPage(
     }
 
     /** 所有共用槽位（目前只有「开始/停止」这一对） */
+    /**
+     * 取本地化字符串。
+     *
+     * `PluginUiPage` 和 `PluginPage` 一样不是 `Context`，只持有 `act`，
+     * 所以没有继承来的 `getString` —— 2026-10-23 接 i18n 时加的转发。
+     *
+     * 走 `act.getString`：Activity 的 context 已带当前配置（含语言）。
+     */
+    private fun getString(id: Int, vararg args: Any): String =
+        if (args.isEmpty()) act.getString(id) else act.getString(id, *args)
+
     private val actionSlots = mutableListOf<ActionSlot>()
 
 
@@ -463,7 +475,7 @@ class PluginUiPage(
             gravity = Gravity.CENTER_VERTICAL
         }
         top.addView(TextView(act).apply {
-            text = "‹ 返回"
+            text = getString(R.string.s_640)
             textSize = 13f
             setTextColor(pal.primary)
             setPadding(0, dp(4), dp(12), dp(4))
@@ -565,7 +577,7 @@ class PluginUiPage(
         val schema = try {
             session.schemaOf(pkg)
         } catch (t: Throwable) {
-            UiSchema(intro = "读取界面失败：${t.javaClass.simpleName}")
+            UiSchema(intro = getString(R.string.s_641, t.javaClass.simpleName))
         }
 
         // 预扫一遍：这一帧是分段模式吗？（见 segmentMode 的说明）
@@ -586,8 +598,8 @@ class PluginUiPage(
             // 不填的话这个插件会一个按钮都没有，彻底不可用
             rebuildTopActionRow()
             host.addView(emptyBlock(
-                "这个插件没有可配置项",
-                "插件作者还没有为它提供界面内容。\n功能仍然可以通过上面的按钮直接使用。"
+                getString(R.string.s_642),
+                getString(R.string.s_643)
             ), matchWrap().apply { topMargin = dp(12) })
             return
         }
@@ -1025,7 +1037,7 @@ class PluginUiPage(
                     action.run()
                 } catch (t: Throwable) {
                     android.util.Log.e("PonkoPluginUi", "功能动作失败：${action.id}", t)
-                    setActionHint("出错了：${t.javaClass.simpleName}")
+                    setActionHint(getString(R.string.s_644, t.javaClass.simpleName))
                 }
             }
         }
@@ -1110,7 +1122,7 @@ class PluginUiPage(
         val actions = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL }
 
         val titleView = TextView(act).apply {
-            text = "功能"
+            text = getString(R.string.s_645)
             textSize = 13f
             setTextColor(pal.subText)
             typeface = Typeface.DEFAULT_BOLD
@@ -1169,7 +1181,7 @@ class PluginUiPage(
         // 这些信息以前只进 logcat，而普通用户装不了 adb。
         val diag = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL }
         val diagHead = TextView(act).apply {
-            text = if (diagOpen) "诊断信息 \u25be" else "诊断信息 \u25b8"
+            text = if (diagOpen) getString(R.string.s_646) else getString(R.string.s_647)
             textSize = 11f
             setTextColor(pal.subText)
             setPadding(0, dp(10), 0, 0)
@@ -1188,7 +1200,7 @@ class PluginUiPage(
         }
         diagHead.setOnClickListener {
             diagOpen = !diagOpen
-            diagHead.text = if (diagOpen) "诊断信息 \u25be" else "诊断信息 \u25b8"
+            diagHead.text = if (diagOpen) getString(R.string.s_646) else getString(R.string.s_647)
             diagBody.visibility = if (diagOpen) View.VISIBLE else View.GONE
         }
         diagHeadView = diagHead
@@ -1585,7 +1597,7 @@ class PluginUiPage(
             alpha = 0.75f
         }
         box.addView(TextView(act).apply {
-            text = item.label.ifBlank { "（未命名项）" }
+            text = item.label.ifBlank { getString(R.string.s_649) }
             textSize = 12f
             setTextColor(pal.subText)
         }, matchWrap())
@@ -1597,7 +1609,7 @@ class PluginUiPage(
                 setPadding(0, dp(3), 0, 0)
             }, matchWrap())
         }
-        box.addView(smallHint("这个控件需要更新 Ponko 才能显示（类型 ${item.type}）"), matchWrap())
+        box.addView(smallHint(getString(R.string.s_650, item.type)), matchWrap())
         return box
     }
 
@@ -1649,7 +1661,7 @@ class PluginUiPage(
             setTextColor(pal.text)
         }, matchWrap())
         val stateTv = TextView(act).apply {
-            text = item.value.ifBlank { "未导入" }
+            text = item.value.ifBlank { getString(R.string.s_651) }
             textSize = 11f
             setTextColor(if (item.value.isBlank()) pal.hint else pal.primary)
             setPadding(0, dp(2), 0, 0)
@@ -1664,7 +1676,7 @@ class PluginUiPage(
             return box
         }
 
-        val importBtn = slotButton("导入", primary = item.value.isBlank()) {
+        val importBtn = slotButton(getString(R.string.s_652), primary = item.value.isBlank()) {
             modelPicker?.invoke(role)
         }
         row.addView(importBtn, wrapWrap())
@@ -1672,7 +1684,7 @@ class PluginUiPage(
         // 已经导入了才显示「清除」—— 空槽位上摆个删除按钮没有意义，
         // 而且容易误点（用户会以为那个按钮是"导入"）
         if (item.value.isNotBlank()) {
-            val clearBtn = slotButton("清除", primary = false) {
+            val clearBtn = slotButton(getString(R.string.s_653), primary = false) {
                 confirmDeleteModel(role, item.label.ifBlank { role })
             }
             row.addView(clearBtn, wrapWrap().apply { leftMargin = dp(8) })
@@ -1715,10 +1727,10 @@ class PluginUiPage(
      */
     private fun confirmDeleteModel(role: String, name: String) {
         android.app.AlertDialog.Builder(act)
-            .setTitle("清除模型文件")
-            .setMessage("「$name」的文件会被删掉，下次要重新导入。")
-            .setPositiveButton("清除") { _, _ -> modelDeleter?.invoke(role) }
-            .setNegativeButton("取消", null)
+            .setTitle(getString(R.string.s_654))
+            .setMessage(getString(R.string.s_655, name))
+            .setPositiveButton(getString(R.string.s_653)) { _, _ -> modelDeleter?.invoke(role) }
+            .setNegativeButton(getString(R.string.s_657), null)
             .show()
     }
 
@@ -2104,7 +2116,7 @@ class PluginUiPage(
                 idx = pages.size - 1
             }
 
-            val chip = buildChip(item.label.ifBlank { "页 " + (idx + 1) }, idx)
+            val chip = buildChip(item.label.ifBlank { getString(R.string.s_658, idx + 1) }, idx)
             // 权重相同 → 均分。标签多了会自动挤窄，配合单行省略号
             bar.addView(chip, LinearLayout.LayoutParams(
                 0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
@@ -2696,7 +2708,7 @@ class PluginUiPage(
             }
         }
         val ph = TextView(act).apply {
-            text = item.value.ifBlank { "还没有图片" }
+            text = item.value.ifBlank { getString(R.string.s_659) }
             textSize = 12f
             setTextColor(pal.hint)
             gravity = Gravity.CENTER
@@ -2766,7 +2778,7 @@ class PluginUiPage(
             setPadding(dp(10), 0, dp(4), 0)
         }
         val empty = TextView(act).apply {
-            text = "还没有可播放的音频"
+            text = getString(R.string.s_660)
             textSize = 12f
             setTextColor(pal.hint)
             setPadding(dp(10), dp(12), dp(10), dp(12))
@@ -2779,7 +2791,7 @@ class PluginUiPage(
         // 画一个点了没反应的按钮，比不画更让人困惑
         val save: TextView? = audioSaver?.let {
             TextView(act).apply {
-                text = "保存"
+                text = getString(R.string.s_661)
                 textSize = 11f
                 setTextColor(pal.primary)
                 setPadding(dp(10), dp(6), dp(2), dp(6))
@@ -3102,7 +3114,7 @@ class PluginUiPage(
         }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
 
         val state = TextView(act).apply {
-            text = if (on) "开" else "关"
+            text = if (on) getString(R.string.s_662) else getString(R.string.s_663)
             textSize = 12f
             gravity = Gravity.CENTER
             setTextColor(if (on) pal.primary else pal.subText)
@@ -3113,9 +3125,9 @@ class PluginUiPage(
 
         if (item.enabled) {
             row.setOnClickListener {
-                val next = !(state.text == "开")
+                val next = !(state.text == getString(R.string.s_662))
                 // 立刻改本地显示，不等插件确认 —— 开关必须跟手
-                state.text = if (next) "开" else "关"
+                state.text = if (next) getString(R.string.s_662) else getString(R.string.s_663)
                 state.setTextColor(if (next) pal.primary else pal.subText)
                 state.background = rounded(if (next) pal.primarySoft else pal.fieldBg, 9)
                 session.setSetting(pkg, item.key, if (next) "true" else "false")

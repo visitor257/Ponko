@@ -1,6 +1,7 @@
 // Ponko · (c) 2026 visitor257 · MIT License · github.com/visitor257/Ponko
 package com.litertchat.app.plugin
 
+import com.litertchat.app.R
 import android.content.Context
 import android.util.Log
 import com.litertchat.plugin.Capability
@@ -29,6 +30,16 @@ import java.util.concurrent.CopyOnWriteArrayList
  * v1 只用第一个**已连接且有 TTS 能力**的插件；多插件竞争留到以后。
  */
 class PluginSession(private val context: Context) {
+
+
+    /**
+     * 取本地化字符串（2026-10-23 接 i18n 时加）。
+     *
+     * 这个类不是 `Context`，只持有 `context` 字段，所以没有继承来的
+     * `getString`。走 `context.getString` —— 它带当前配置（含语言）。
+     */
+    private fun getString(id: Int, vararg args: Any): String =
+        if (args.isEmpty()) context.getString(id) else context.getString(id, *args)
 
     interface Listener {
         /** 扫描结果变化（列表要重画） */
@@ -516,7 +527,7 @@ class PluginSession(private val context: Context) {
                 "—",
                 PluginError(
                     code = com.litertchat.plugin.ErrCode.NOT_READY,
-                    message = "没有可用的朗读插件",
+                    message = getString(R.string.s_700),
                 )
             )
             return null
@@ -558,7 +569,7 @@ class PluginSession(private val context: Context) {
                 pkg,
                 PluginError(
                     code = com.litertchat.plugin.ErrCode.NOT_READY,
-                    message = "插件未连接",
+                    message = getString(R.string.s_691),
                 )
             )
             return null
@@ -570,7 +581,7 @@ class PluginSession(private val context: Context) {
                 pkg,
                 PluginError(
                     code = com.litertchat.plugin.ErrCode.UNSUPPORTED,
-                    message = "这个插件没有提供音频合成能力",
+                    message = getString(R.string.s_701),
                 )
             )
             return null
@@ -639,7 +650,7 @@ class PluginSession(private val context: Context) {
      */
     fun actionLabel(pkg: String, key: String): String =
         connections.firstOrNull { it.packageName == pkg }?.label(key)
-            ?: ActionLabels.resolve(key, emptyMap())
+            ?: ActionLabels.resolve(context, key, emptyMap())
 
     /**
      * 用户手动加载 / 卸载引擎。
@@ -667,9 +678,9 @@ class PluginSession(private val context: Context) {
      */
     fun schemaOf(pkg: String): com.litertchat.plugin.UiSchema {
         val c = connections.firstOrNull { it.packageName == pkg }
-            ?: return com.litertchat.plugin.UiSchema(intro = "插件未连接，请先在列表里启用它")
+            ?: return com.litertchat.plugin.UiSchema(intro = getString(R.string.s_702))
         if (c.currentState != PluginConnection.State.CONNECTED) {
-            return com.litertchat.plugin.UiSchema(intro = "插件还没连上（当前：${c.currentState}）")
+            return com.litertchat.plugin.UiSchema(intro = getString(R.string.s_703, c.currentState))
         }
         return c.settingsSchema()
     }
