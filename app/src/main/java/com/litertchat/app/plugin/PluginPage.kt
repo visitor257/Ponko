@@ -190,6 +190,15 @@ class PluginPage(
 
     /** 列表与插件界面之间的容器（build 时创建） */
     private var pageRoot: android.widget.FrameLayout? = null
+
+    /**
+     * 标题左边那个 ◀（返回插件列表）。
+     *
+     * 只在插件界面打开时可见 —— 文案层在 `build()` 里生成，
+     * 但显示/隐藏要跟着 [currentUiPage] 走，所以留住引用
+     * （`openPluginUi` / `closePluginUi` 各改一次）。
+     */
+    private var backToPluginList: TextView? = null
     /** 列表那一层。打开插件界面时把它藏起来，而不是销毁 —— 回来要保住滚动位置 */
     private var listLayer: View? = null
     /** 当前正在显示的插件界面；null = 在列表 */
@@ -257,7 +266,41 @@ class PluginPage(
             setBackgroundColor(pal.bg)
         }
 
-        root.addView(pageTitle("Ponko-EX"))
+        // ---- 顶部：◀ + 标题 ----
+        //
+        // 「Ponko-EX」这个标题在**列表层外面**（listLayer 是下面那个 container
+        // 里的 ScrollView），所以打开插件界面之后它仍然在顶部 —— 正好拿来做
+        // 固定的返回入口。
+        //
+        // 为什么需要它：PluginUiPage 自己那个「‹ 返回」在**正文顶部**，
+        // 插件界面内容一长，滚下去就看不见了，用户得一路滚回顶部才能退出。
+        // 这一行的 ◀ 不跟着内容滚，随时能回列表。
+        //
+        // 只在插件界面打开时显示：在列表页它没有去处（那已经是 Ponko-EX
+        // 自己的页面），常驻一个点了没反应的按钮比不显示更糟。
+        val header = LinearLayout(act).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val back = TextView(act).apply {
+            text = "◀"
+            textSize = 13f
+            setTextColor(pal.primary)
+            gravity = Gravity.CENTER
+            // 图标按钮必须自己撑点击区域。文字只有 13sp 宽，
+            // 不给内边距的话热区不到 20dp，拇指点不准
+            setPadding(dp(8), dp(6), dp(8), dp(6))
+            isClickable = true
+            // 图标没有文字，屏幕阅读器读不出来 —— 必须给
+            contentDescription = getString(R.string.s_747)
+            setOnClickListener { closePluginUi() }
+            // build() 可能被重新调用（换主题），状态要以 currentUiPage 为准
+            visibility = if (currentUiPage != null) View.VISIBLE else View.GONE
+        }
+        header.addView(back, wrapWrap().apply { rightMargin = dp(2) })
+        header.addView(pageTitle("Ponko-EX"), wrapWrap())
+        root.addView(header, matchWrap())
+        backToPluginList = back
 
         // 这一行原来有一段解释（"插件是独立的 APK，安装后在这里启用…"）。
         // 2026-10-23 删：它讲的事，第一次用的人点一下「怎么装插件」就能看到，
@@ -798,6 +841,9 @@ class PluginPage(
         root.addView(v, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         listLayer?.visibility = View.GONE
+        // 标题左边那个 ◀ 跟着出现 —— 插件界面的正文可能很长，
+        // 内部那个「‹ 返回」会滚出屏幕，这个不会
+        backToPluginList?.visibility = View.VISIBLE
     }
 
     private fun closePluginUi() {
@@ -816,6 +862,8 @@ class PluginPage(
         // 这个引用指向即将被移除的视图，留着只会让 focusSpeakText 摸到死控件
         speakTextInput = null
         listLayer?.visibility = View.VISIBLE
+        // 回到列表了，◀ 没有去处（这就是 Ponko-EX 自己的页面），收起来
+        backToPluginList?.visibility = View.GONE
     }
 
     /** Activity 真正销毁时调，解绑所有插件。切换 tab 时**不要**调（切回来要保留状态） */
@@ -849,6 +897,8 @@ class PluginPage(
         openUiPkg = null
         listLayer = null
         pageRoot = null
+        // 视图要销毁了，引用留着会指向死控件（下一次 build() 会重新赋值）
+        backToPluginList = null
     }
 
     // ==================== 内部 ====================
