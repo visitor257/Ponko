@@ -1139,28 +1139,17 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
         }
         appBarMenu = iconButton("☰") { openDrawer() }
-        r1.addView(appBarMenu, wrapWrap())
 
-        // ---- 标题左边的 ◀（只在插件界面里显示）----
-        //
-        // 用途：从插件自己的界面回到 Ponko-EX 的**插件列表**。
-        // 不是"返回上一层网页"那种语义，就是退出插件界面的一个显眼入口。
-        //
-        // 为什么放在系统标题栏而不是插件页内部：
-        // · 插件页自己的「‹ 返回」在正文顶部，内容一长就滚没了
-        // · 标题栏是固定的，且就在「Ponko-EX」字样旁边，位置一目了然
-        //
-        // 为什么在列表页隐藏：在列表页它没有去处（那已经是 Ponko-EX 自己的页面），
-        // 常驻一个点了没反应的箭头比不显示更让人困惑。
+        // 返回插件列表的 ◀（和 ☰ 共用位置，见下方 menuSlot 的注释）
         appBarBack = TextView(this).apply {
             text = "◀"
             textSize = 14f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
-            // 白色半透明圆底：蓝色栏上纯白箭头够亮，但需要一个热区轮廓
-            background = rounded(Color.parseColor("#33FFFFFF"), 99)
+            // 和 ☰ 同样的半透明底，替换时不突兀
+            background = rounded(Color.parseColor("#33FFFFFF"), 12)
             // 图标按钮必须自己撑点击区域，14sp 字形本身不到 20dp 宽
-            setPadding(dp(7), dp(5), dp(7), dp(5))
+            setPadding(dp(10), dp(4), dp(10), dp(4))
             isClickable = true
             // 纯图标，屏幕阅读器读不出任何东西
             contentDescription = getString(R.string.s_747)
@@ -1171,7 +1160,34 @@ class MainActivity : Activity() {
                 if (pp != null && pp.isShowingPluginUi()) pp.backToList()
             }
         }
-        r1.addView(appBarBack, wrapWrap().apply { rightMargin = dp(6) })
+
+        // ---- ☰ 和 ◀ 共用**同一个位置** ----
+        //
+        // 对话页显示 ☰（开抽屉），Ponko-EX 的插件界面里显示 ◀（回插件列表）。
+        // 两者叠在一个 FrameLayout 里、互相替换，**不并排** ——
+        // 并排会把标题往右挤，切页时「Ponko」/「Ponko-EX」会跳位置。
+        //
+        // 为什么能这样叠：`switchTab` 里本来就有一条
+        //   appBarMenu.visibility = if (isChat) VISIBLE else INVISIBLE
+        // 即非对话页时 ☰ 是 INVISIBLE（**占位但不可见**）。
+        // 所以 Ponko-EX 页上那个位置本来就是空的，◀ 正好放进去。
+        //
+        // ⚠ 宽度必须写死：两个字形不同宽（☰ 20sp / ◀ 14sp），
+        //   不统一的话容器会随"当前显示哪个"而变，标题照样会挪位置。
+        //
+        // 用 LayoutParams 而不是 minWidth：appBarMenu 声明成 `View`（它只需要
+        // visibility 和点击），View 上没有 minWidth。
+        val slotW = dp(44)
+        val slotH = dp(34)
+        val menuSlot = FrameLayout(this).apply {
+            addView(appBarMenu, FrameLayout.LayoutParams(slotW, slotH).apply {
+                gravity = Gravity.CENTER
+            })
+            addView(appBarBack, FrameLayout.LayoutParams(slotW, slotH).apply {
+                gravity = Gravity.CENTER
+            })
+        }
+        r1.addView(menuSlot, LinearLayout.LayoutParams(slotW, slotH))
 
         val titleBox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
