@@ -434,6 +434,12 @@ class PluginPage(
                 setUiHint("已收到结果图 ${bmp.width}×${bmp.height}")
             }
 
+            /** v12：插件要求滚到某个控件。界面没开着就丢（和 selectTab 同理） */
+            override fun onPluginScrollTo(pkg: String, key: String) {
+                if (openUiPkg != pkg) return
+                currentUiPage?.scrollTo(key)
+            }
+
             override fun onPluginUiPatch(pkg: String, key: String, value: String?, append: Boolean) {
                 if (openUiPkg != pkg) return
                 currentUiPage?.patch(key, value, append)

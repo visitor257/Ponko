@@ -75,6 +75,9 @@ class PluginConnection(
             onImage(bytes, width, height, mime)
         }
 
+        /** 插件要求滚到某个控件（v12） */
+        fun onScrollTo(key: String) {}
+
         /**
          * 插件要求**原地**改一个控件（v4）。不走整页重画。
          *
@@ -323,6 +326,12 @@ class PluginConnection(
             }
             if (bytes == null) return
             onBytes(bytes, width, height, mime)
+        }
+
+        override fun onScrollTo(key: String?) {
+            val k = key ?: ""
+            Log.i(TAG, "onScrollTo key='$k'")
+            post { listener?.onScrollTo(k) }
         }
 
         override fun onUiPatch(key: String, value: String?, append: Boolean) {

@@ -87,6 +87,9 @@ class PluginSession(private val context: Context) {
          */
         fun onPluginSelectTab(pkg: String, groupKey: String, tabKey: String) {}
 
+        /** 插件要求滚到某个控件（v12） */
+        fun onPluginScrollTo(pkg: String, key: String) {}
+
         /** 插件送图并指明目标（v11）。默认退化成 [onPluginImage] */
         fun onPluginImageWithKey(
             pkg: String, key: String, bytes: ByteArray, width: Int, height: Int, mime: String?,
@@ -419,6 +422,10 @@ class PluginSession(private val context: Context) {
 
         // 注意方法名：Listener 上叫 onSelectTab（宿主内部事件），
         // AIDL 的 Stub 上才叫 selectTab（插件侧调用）。两者不要混
+        override fun onScrollTo(key: String) {
+            listener?.onPluginScrollTo(pkg, key)
+        }
+
         override fun onImageWithKey(key: String, bytes: ByteArray, width: Int, height: Int, mime: String?) {
             listener?.onPluginImageWithKey(pkg, key, bytes, width, height, mime)
         }
