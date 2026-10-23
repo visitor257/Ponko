@@ -86,6 +86,13 @@ class PluginSession(private val context: Context) {
          * 插件要求切到某一页（v8）。宿主页开着才有效果。
          */
         fun onPluginSelectTab(pkg: String, groupKey: String, tabKey: String) {}
+
+        /** 插件送图并指明目标（v11）。默认退化成 [onPluginImage] */
+        fun onPluginImageWithKey(
+            pkg: String, key: String, bytes: ByteArray, width: Int, height: Int, mime: String?,
+        ) {
+            onPluginImage(pkg, bytes, width, height, mime)
+        }
     }
 
     /**
@@ -412,6 +419,10 @@ class PluginSession(private val context: Context) {
 
         // 注意方法名：Listener 上叫 onSelectTab（宿主内部事件），
         // AIDL 的 Stub 上才叫 selectTab（插件侧调用）。两者不要混
+        override fun onImageWithKey(key: String, bytes: ByteArray, width: Int, height: Int, mime: String?) {
+            listener?.onPluginImageWithKey(pkg, key, bytes, width, height, mime)
+        }
+
         override fun onSelectTab(groupKey: String, tabKey: String) {
             listener?.onPluginSelectTab(pkg, groupKey, tabKey)
         }

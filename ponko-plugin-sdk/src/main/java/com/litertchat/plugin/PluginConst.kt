@@ -109,7 +109,7 @@ object PluginConst {
      * Binder 的事务码按声明顺序分配。在中间插入会让后面所有方法的事务码整体后移，
      * 老插件收到的码对不上 → **调用串味**（本该调 A 却执行了 B），比直接报错更糟。
      */
-    const val API_VERSION = 10
+    const val API_VERSION = 11
 
     /**
      * 从这一版起，插件支持「界面」那组方法（`getSettingsSchema` 等）。
@@ -203,9 +203,24 @@ object PluginConst {
      */
     const val API_WITH_LAYOUT_CONTAINERS = 10
 
+    /**
+     * 从这一版起，插件送结果图时可以**指定贴到哪个 IMAGE 控件**
+     * （`IPonkoCallback.onImageWithKey`）。
+     *
+     * ## 为什么现在才补
+     *
+     * `onImage` 是 v4 定的，签名里没有 key。页面上只有一张图时宿主"贴第一个"
+     * 还能用，但两张以上（原图/结果对比）就完全不知道插件想更新哪张 ——
+     * 老行为的做法是贴到第一张，屏幕上看着像插件贴错了地方。
+     *
+     * **这是宿主替插件做决定**，和 v10 放开布局是同一个方向上的问题：
+     * 只要协议里缺一个"你说了算"的位置，宿主就不得不猜。
+     */
+    const val API_WITH_IMAGE_KEY = 11
+
     /** 宿主兼容区间：允许老插件继续跑，所以下限保持 1 */
     const val API_MIN_SUPPORTED = 1
-    const val API_MAX_SUPPORTED = 10
+    const val API_MAX_SUPPORTED = 11
 
     // ---- 插件 Action（宿主靠它发现插件）----
     const val ACTION_PLUGIN = "com.litertchat.ponko.PLUGIN"

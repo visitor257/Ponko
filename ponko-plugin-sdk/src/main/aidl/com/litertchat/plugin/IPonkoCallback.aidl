@@ -223,4 +223,25 @@ oneway interface IPonkoCallback {
      * 滥用会让标签页像自己会乱动。
      */
     void selectTab(in String groupKey, in String tabKey);
+
+    // ==================== v11：给结果图指定目标 ====================
+
+    /**
+     * 送一张结果图，**并指明贴到哪个 `IMAGE` 控件**（v11）。
+     *
+     * ## 为什么需要它
+     *
+     * [onImage] 的签名里没有 key（v4 定的）。页面上只有一张图时宿主还能猜，
+     * 但有两张（比如「原图 / 结果」对比）就完全不知道插件想更新哪张 ——
+     * 老宿主会贴到第一张，屏幕上看着就像是插件贴错了地方。
+     *
+     * ```kotlin
+     * notifyImage("out", bitmap)      // 明确贴到 key="out" 那个 IMAGE 控件
+     * ```
+     *
+     * @param key 目标 `UiItem(type = UiType.IMAGE, key = …)` 的 key。
+     *            对不上时宿主**什么都不做**，只留一行日志（不会乱贴）。
+     */
+    void onImageWithKey(in String key, in ParcelFileDescriptor fd, int width, int height,
+                        in @nullable String mime);
 }

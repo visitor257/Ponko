@@ -67,6 +67,15 @@ class PluginConnection(
         fun onImage(bytes: ByteArray, width: Int, height: Int, mime: String?) {}
 
         /**
+         * 插件送图并指明了目标控件（v11）。
+         *
+         * 默认实现**退化成 [onImage]** —— 只关心"收到图了"的调用方不用改。
+         */
+        fun onImageWithKey(key: String, bytes: ByteArray, width: Int, height: Int, mime: String?) {
+            onImage(bytes, width, height, mime)
+        }
+
+        /**
          * 插件要求**原地**改一个控件（v4）。不走整页重画。
          *
          * @param append true = 追加（日志）；false = 替换（进度、状态）
@@ -266,6 +275,40 @@ class PluginConnection(
          * 那已经不是"结果图"了，是插件在乱传数据。
          */
         override fun onImage(fd: android.os.ParcelFileDescriptor?, width: Int, height: Int, mime: String?) {
+            readImage(fd, width, height, mime) { bytes, w, h, m ->
+                post { listener?.onImage(bytes, w, h, m) }
+            }
+        }
+
+        /**
+         * v11：带 key 的图 —— 插件指明了贴到哪个 `IMAGE` 控件。
+         *
+         * 走同一条 `readImage` 读取逻辑，只是把 key 一起交给上层。
+         * 单独一个回调而不是给 [onImage] 加参数，是因为**改老方法签名会破坏
+         * 所有已发布插件**（Binder 事务码与参数列表都变）。AIDL 只能追加。
+         */
+        override fun onImageWithKey(
+            key: String?,
+            fd: android.os.ParcelFileDescriptor?,
+            width: Int,
+            height: Int,
+            mime: String?,
+        ) {
+            val k = key ?: ""
+            readImage(fd, width, height, mime) { bytes, w, h, m ->
+                Log.i(TAG, "onImageWithKey key='$k'")
+                post { listener?.onImageWithKey(k, bytes, w, h, m) }
+            }
+        }
+
+        /** 两个 onImage 回调共用的读取逻辑（读字节 + 限长） */
+        private fun readImage(
+            fd: android.os.ParcelFileDescriptor?,
+            width: Int,
+            height: Int,
+            mime: String?,
+            onBytes: (ByteArray, Int, Int, String?) -> Unit,
+        ) {
             if (fd == null) {
                 Log.w(TAG, "onImage 收到空 fd，忽略")
                 return
@@ -279,7 +322,7 @@ class PluginConnection(
                 null
             }
             if (bytes == null) return
-            post { listener?.onImage(bytes, width, height, mime) }
+            onBytes(bytes, width, height, mime)
         }
 
         override fun onUiPatch(key: String, value: String?, append: Boolean) {

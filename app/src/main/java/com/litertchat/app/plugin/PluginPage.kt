@@ -395,6 +395,23 @@ class PluginPage(
             }
 
             override fun onPluginImage(pkg: String, bytes: ByteArray, width: Int, height: Int, mime: String?) {
+                handlePluginImage(pkg, null, bytes)
+            }
+
+            /** v11：插件指明了贴到哪个 IMAGE 控件，不用宿主猜 */
+            override fun onPluginImageWithKey(
+                pkg: String, key: String, bytes: ByteArray, width: Int, height: Int, mime: String?,
+            ) {
+                handlePluginImage(pkg, key, bytes)
+            }
+
+            /**
+             * 两个送图回调共用的解码 + 落图逻辑。
+             *
+             * @param key 空 = 老协议（没指明目标），由 [PluginUiPage.setImage] 决定
+             *            能不能唯一确定；非空 = 插件点名要贴那个控件
+             */
+            private fun handlePluginImage(pkg: String, key: String?, bytes: ByteArray) {
                 if (openUiPkg != pkg) return
                 val bmp = try {
                     android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
@@ -413,7 +430,7 @@ class PluginPage(
                 }
                 // 声明里的宽高只是提示；以实际解码结果为准 ——
                 // 插件算错尺寸比不传更常见，信它反而会画出变形的图
-                currentUiPage?.setImage(bmp)
+                currentUiPage?.setImage(bmp, key)
                 setUiHint("已收到结果图 ${bmp.width}×${bmp.height}")
             }
 
