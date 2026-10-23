@@ -10,7 +10,10 @@
 <meta property="og:title" content="Ponko — 离线运行的 Android 本地 AI">
 <meta property="og:description" content="对话、绘图、打标，全部在手机上完成。无遥测、无账号，可通过插件扩展。">
 <meta property="og:type" content="website">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%232F6BFF'/><text x='50' y='72' font-size='62' font-family='system-ui' font-weight='700' fill='white' text-anchor='middle'>P</text></svg>">
+<meta property="og:image" content="https://visitor257.github.io/Ponko/icon.png">
+<!-- 图标就是 App 的 launcher icon（mipmap-xxxhdpi/ic_launcher.png 原图，未改动） -->
+<link rel="icon" type="image/png" href="icon.png">
+<link rel="apple-touch-icon" href="icon.png">
 <style>
 /* ============================================================
    配色取自 App 自己的主题（PonkoTheme.kt），浅深两套同源
@@ -103,12 +106,12 @@ header.scrolled { border-bottom-color: var(--border); }
   font-weight: 700; font-size: 17px; letter-spacing: -.01em;
   color: var(--text); text-decoration: none;
 }
+/* 用的是 App 的 launcher icon 原图。它本身是白底人像，
+   浅色页面上会和背景糊在一起，所以加一圈 1px 描边定出边界。 */
 .brand-mark {
-  width: 30px; height: 30px; border-radius: 9px;
-  background: var(--primary); color: #fff;
-  display: grid; place-items: center;
-  font-size: 16px; font-weight: 700; letter-spacing: -.02em;
-  box-shadow: 0 4px 12px -4px color-mix(in srgb, var(--primary) 70%, transparent);
+  width: 30px; height: 30px; border-radius: 8px;
+  display: block; object-fit: cover;
+  box-shadow: 0 0 0 1px var(--border), 0 2px 6px -2px rgba(16, 24, 40, .25);
 }
 
 .nav-links { display: flex; gap: 4px; margin-left: auto; align-items: center; }
@@ -303,7 +306,7 @@ footer {
 <header id="hdr">
   <div class="wrap nav">
     <a class="brand" href="#top">
-      <span class="brand-mark">P</span>
+      <img class="brand-mark" src="icon.png" alt="" width="30" height="30">
       <span>Ponko</span>
     </a>
     <nav class="nav-links">
