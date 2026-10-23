@@ -567,7 +567,6 @@
 <string name="s_548">Stopping…</string>
 <string name="s_549">Synthesis settings</string>
 <string name="s_550">Text (what to synthesise)</string>
-<string name="s_551">Estimated time appears here once you type</string>
 <string name="s_552">Type the text to synthesise</string>
 <string name="s_553">Mode</string>
 <string name="s_554">Plain TTS</string>
@@ -627,18 +626,13 @@ Try a different word, or tap Clear above.</string>
 <string name="s_608">Handing \"%1$s\" to the plugin…</string>
 <string name="s_609">Handed to the plugin: %1$s</string>
 <string name="s_610">Hand-off failed: %1$s</string>
-<string name="s_611">%1$d h</string>
-<string name="s_612">%1$d h %2$d min</string>
 <string name="s_613">Generated %1$.1f s of audio (took %2$.1f s); tap %3$s to listen</string>
 <string name="s_588">Engine loaded: %1$d Hz, using %2$s MB, took %3$s s</string>
 <string name="s_589">Engine loaded: %1$d Hz, took %2$s s</string>
-<string name="s_590">"about %1$s s of speech · at this plugin\'s speed roughly %2$s ~ %3$s (estimate only)"</string>
 <string name="s_599">Plugin SDK v%1$d (current v%2$s) · works, but has no plugin page. Update the plugin to get one</string>
 <string name="s_620">Plugin SDK v%1$d is newer than this Ponko (v%2$s) · works, but newer page elements may not render. Update Ponko for full functionality</string>
 <string name="s_621">" (%1$s, %2$s)…"</string>
 <string name="s_622">auto threads</string>
-<string name="s_623">%1$d s</string>
-<string name="s_624">%1$s min</string>
 <string name="s_625">Audio save failed: %1$s</string>
 <string name="s_626">Finished playing (tap \"%1$s\" to save it to the music library)</string>
 <string name="s_627">Playback failed (%1$s/%2$s)</string>

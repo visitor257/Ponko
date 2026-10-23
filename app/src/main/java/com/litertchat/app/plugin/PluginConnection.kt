@@ -221,6 +221,30 @@ class PluginConnection(
     @Volatile private var actionLabels: Map<String, String> = emptyMap()
 
     /**
+     * 宿主当前界面语言的 BCP 47 标签（`"zh-CN"` / `"en"` / `"ru"` …）。
+     *
+     * ## 为什么要"从 context 取"而不是 `Locale.getDefault()`
+     *
+     * `Locale.getDefault()` 是**进程级**的默认值，在 Android 13+ 有人给单个
+     * App 设过语言时，它和这个 App 实际在用的语言可能不一致。
+     * `context.resources.configuration.locales[0]` 拿到的才是**本 App 正在用的那个**，
+     * 也就是用户在界面上看到的语言 —— 传给插件时应该给这个。
+     *
+     * 取 `locales[0]` 而不是拼 `language + "-" + country`：标签可能是
+     * `zh-Hans-CN`、`sr-Latn` 这种带文字系统的，拼字符串会把它们截坏。
+     * 让 `toLanguageTag()` 生成，插件那边用 `Locale.forLanguageTag()` 解。
+     */
+    private fun currentLocaleTag(): String {
+        val loc = try {
+            context.resources.configuration.locales[0]
+        } catch (t: Throwable) {
+            // 极小概率拿不到（context 被回收等）→ 退回进程默认，不要因此不让绑定
+            java.util.Locale.getDefault()
+        }
+        return loc.toLanguageTag()
+    }
+
+    /**
      * 取按钮文字：插件覆盖过就用它的，没覆盖用宿主默认（走资源，跟随系统语言）。
      *
      * @param key 见 [com.litertchat.plugin.ActionLabel]
@@ -551,12 +575,19 @@ class PluginConnection(
         //   两条都 `return null` → bindService 返回 false，而且**打同一句日志**，
         //   普通应用又读不到 logcat。所以只试一种，等于把另一半原因藏起来了。
         //   实测过：改显式之后失败了、退回隐式却能连上（或反之）的情况都真实存在。
+        //
+        // 两个候选都带上**宿主当前界面语言**（v12.5）：插件基类在 onBind 里读它，
+        // 暴露成 `hostLocaleTag`。这是 Intent extra 而不是 AIDL 方法，
+        // 所以老插件（不读这个 key）行为完全不变，也不需要重编。
+        val hostLocale = currentLocaleTag()
         val candidates = buildList {
             if (!cls.isNullOrEmpty()) {
                 add(Intent(PluginConst.ACTION_PLUGIN)
-                    .setComponent(ComponentName(packageName, cls)) to getString(R.string.s_678))
+                    .setComponent(ComponentName(packageName, cls))
+                    .putExtra(PluginConst.EXTRA_HOST_LOCALE, hostLocale) to getString(R.string.s_678))
             }
-            add(Intent(PluginConst.ACTION_PLUGIN).setPackage(packageName) to getString(R.string.s_679))
+            add(Intent(PluginConst.ACTION_PLUGIN).setPackage(packageName)
+                .putExtra(PluginConst.EXTRA_HOST_LOCALE, hostLocale) to getString(R.string.s_679))
         }
 
         var lastError: String? = null

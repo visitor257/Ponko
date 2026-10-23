@@ -221,7 +221,87 @@ abstract class PonkoPluginService : Service() {
      */
     protected open fun buildActionLabels(): Map<String, String> = emptyMap()
 
+    // ==================== 宿主语言（v12.5）====================
+
+    /**
+     * 宿主当前的界面语言（BCP 47 标签，如 `"zh-CN"` / `"en"` / `"ru"`）。
+     *
+     * ## 插件要不要用它
+     *
+     * **优先用 Android 自己的资源限定符**（`values-xx/`），那套回落规则
+     * 已经覆盖了绝大多数情况：系统是中文 → 用 `values/` 或 `values-zh/`；
+     * 系统是俄文而你没做俄文 → 落到 `values/`。**不需要任何额外代码。**
+     *
+     * 这个字段用于资源解决不了的三类情况：
+     *
+     * 1. **译文不在资源里** —— 比如你把多语言文案放在 `assets/` 的 JSON、
+     *    或者放在模型配置里，那就得自己按语言标签挑
+     * 2. **系统语言 ≠ 宿主语言** —— Android 13+ 允许给单个 App 设语言
+     *    （`setApplicationLocales`）。那种情况下插件的资源仍跟**系统**走，
+     *    会和宿主界面对不上；用这个字段才能保证两边一致
+     * 3. **要按语言改变行为**，而不只是换字符（选音色、数字/日期格式、示例文本）
+     *
+     * ## 怎么用
+     *
+     * 最简单是让基类替你造一个"按宿主语言覆盖过 configuration"的 Context：
+     *
+     * ```kotlin
+     * val ctx = localizedContext()
+     * val label = ctx.getString(R.string.engine_label)   // 按宿主语言解析
+     * ```
+     *
+     * 自己挑（译文在 assets 里）：
+     *
+     * ```kotlin
+     * val pack = when (hostLocaleTag.substringBefore('-')) {
+     *     "zh" -> loadJson("zh")
+     *     "en" -> loadJson("en")
+     *     else -> loadJson(DEFAULT_LANG)   // 你的默认语言
+     * }
+     * ```
+     *
+     * ⚠ **不要忽略 `else` 分支。** 默认语言就是"其它所有语言都落到这里"，
+     * 缺了它，一个俄文用户会看到空白或崩溃。
+     *
+     * ## 什么时候更新
+     *
+     * 每次宿主绑定都会重新给一次（宿主在 bind Intent 里带过来），
+     * 所以系统语言变化 → 宿主重建 → 重新绑定 → 这个值跟着变。
+     * **不要在 `onCreate` 里把它抄进字段当常量用** —— 那之后就不再更新了。
+     *
+     * 宿主没传时（老宿主）返回系统默认语言，不会是空串。
+     */
+    protected val hostLocaleTag: String
+        get() = hostLocale ?: java.util.Locale.getDefault().toLanguageTag()
+
+    /**
+     * 按 [hostLocaleTag] 覆盖过 configuration 的 Context。
+     *
+     * 用它的 `getString()` 就等价于"按宿主语言解析资源"——
+     * 包括正常的多级回落（宿主语言没有的资源仍会落到 `values/`）。
+     *
+     * 只用于**取文案/读按语言区分的资源**；不要拿它去 `bindService`
+     * 或者申请权限（那种用 `this`）。
+     */
+    protected fun localizedContext(): Context {
+        val cfg = android.content.res.Configuration(resources.configuration)
+        val loc = java.util.Locale.forLanguageTag(hostLocaleTag)
+        cfg.setLocale(loc)
+        cfg.setLocales(android.os.LocaleList(loc))
+        return createConfigurationContext(cfg)
+    }
+
     // ==================== 内部状态 ====================
+
+    /**
+     * 宿主在 bind Intent 里带来的语言标签。
+     *
+     * 为什么走 Intent extra 而不是加一个 AIDL 方法：加 AIDL 就要升
+     * `API_VERSION`、重发 AAR、让所有插件重编，而这是**静态、单向、
+     * 每次绑定都会变**的信息 —— Intent extra 天然满足，且老插件完全不受影响
+     * （它们不读这个 key，行为不变）。
+     */
+    @Volatile private var hostLocale: String? = null
 
     private val worker by lazy { Executors.newSingleThreadExecutor { r -> Thread(r, "ponko-plugin-worker") } }
 
@@ -1079,12 +1159,19 @@ abstract class PonkoPluginService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder {
+        // 宿主把当前界面语言带在 bind Intent 里（v12.5）。
+        // 取不到就保持 null，[hostLocaleTag] 会退回系统默认语言 ——
+        // 不能在这里写死一个 "en"，否则老宿主上会突然变成英文。
+        intent?.getStringExtra(PluginConst.EXTRA_HOST_LOCALE)
+            ?.takeIf { it.isNotBlank() }
+            ?.let { hostLocale = it }
+
         // ⚠ Android 12+ 禁止后台启动前台服务。此刻宿主刚 bindService、还在前台，
         //   所以这里起一定能过；等到 synthesize 里再起就可能抛
         //   ForegroundServiceStartNotAllowedException。
         goForeground(Stage.LOADING, "准备中…")
         acquireWakeLock()
-        Log.i(TAG, "onBind: ${intent?.action}")
+        Log.i(TAG, "onBind: ${intent?.action} · hostLocale=${hostLocale ?: "(未提供)"}")
         return binder
     }
 

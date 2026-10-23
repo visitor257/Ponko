@@ -239,6 +239,19 @@ object PluginConst {
     // ---- 插件 Action（宿主靠它发现插件）----
     const val ACTION_PLUGIN = "com.litertchat.ponko.PLUGIN"
 
+    /**
+     * bind Intent 里携带**宿主当前界面语言**的 key（BCP 47，如 `"zh-CN"`）。
+     *
+     * 插件侧不用直接碰它 —— 基类会读出来，暴露成
+     * [PonkoPluginService.hostLocaleTag]。这里公开常量是给
+     * "不继承基类、自己实现 Service" 的插件用的（少数情况）。
+     *
+     * 为什么走 Intent extra 而不是 AIDL 方法：加 AIDL 要升 `API_VERSION`、
+     * 重发 AAR、让所有插件重编；而这个值静态、单向、每次绑定都会重给，
+     * extra 天然满足，且**老插件不受影响**（不读就不知道）。
+     */
+    const val EXTRA_HOST_LOCALE = "com.litertchat.ponko.extra.HOST_LOCALE"
+
     // ---- 宿主定义的 signature 级权限（只有同签名 APK 能 bind）----
     const val PERMISSION_BIND_PLUGIN = "com.litertchat.ponko.permission.BIND_PLUGIN"
 
