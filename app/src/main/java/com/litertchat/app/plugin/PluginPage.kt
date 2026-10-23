@@ -206,13 +206,8 @@ class PluginPage(
      */
     private val keyDurations = HashMap<String, Int>()
 
-    /**
-     * 上一次已经弹过的失败原因。
-     *
-     * 用来去重：`refresh()` 会对已启用插件自动重连，如果插件处于 stopped 状态，
-     * 每次扫描都会失败一次 —— 不去重就会连弹一串一模一样的 toast。
-     */
-    private var lastToasted: String? = null
+    // 这里原来有个 `lastToasted` 字段，用于给连接失败的 toast 去重。
+    // 2026-10-23 起失败不再弹 toast（原因见 onPluginStateChanged），字段一并删掉。
 
     /**
      * 构建整页。返回的是**自带滚动**的视图，可直接塞进底部菜单的内容区 ——
@@ -295,16 +290,18 @@ class PluginPage(
             }
 
             override fun onPluginStateChanged(pkg: String, state: PluginConnection.State, detail: String?) {
-                if (state == PluginConnection.State.FAILED && detail != null) {
-                    // toast 只给一句结论，完整诊断留在卡片里（多行，能贴给我）
-                    val head = detail.lineSequence().firstOrNull() ?: detail
-                    if (head != lastToasted) {
-                        lastToasted = head
-                        toast(head)
-                    }
-                } else if (state == PluginConnection.State.CONNECTED) {
-                    lastToasted = null
-                }
+                // ⚠ 这里**不弹** toast（2026-10-23 删）。
+                //
+                // 原来连接失败会 toast 一句结论。问题是宿主每次启动都会
+                // 自动重连所有已启用插件，而插件只要处于 stopped 状态
+                // （装完没激活过、或被系统清掉）就必然失败 ——
+                // **每次冷启动都会弹**，装了几个插件就弹几个。
+                //
+                // 而那些时候用户什么都没做，弹窗只是噪音；真正需要诊断的人
+                // 会在卡片上看到**完整多行原因**（下面 renderCard 里那段红字，
+                // 可长按复制）。toast 一秒就没了，本来也不够用。
+                //
+                // 所以：失败信息只留在卡片上，不再主动弹。
             }
 
             override fun onSpeakStage(pkg: String, stage: Int, label: String?) {
@@ -938,13 +935,14 @@ class PluginPage(
             })
         }
 
-        // ---- 按钮行：启用|停用 · 激活 · 进入 · 卸载 ----
+        // ---- 按钮行：启用|停用 · 激活 · 进入 · 关于 · 卸载 ----
         //
-        // 「启用」与「停用」互斥，按当前状态二选一；「激活」「进入」「卸载」常驻。
+        // 「启用」与「停用」互斥，按当前状态二选一；「激活」「进入」「关于」「卸载」常驻。
         // 每张卡片的按钮集合因此永远可预期，用户不用先"找按钮在哪"。
         //
-        // 一行排四个：正常字号下实测约 216dp，卡片内宽约 296dp（360dp 屏），
-        // 放得下。极窄屏 + 系统大字号时会挤，但按钮都是 wrap_content，
+        // 一行排五个：正常字号下实测约 270dp，卡片内宽约 296dp（360dp 屏），
+        // **已经接近上限**。再造按钮就得换行或收进菜单了 ——
+        // 极窄屏 + 系统大字号时会挤，但按钮都是 wrap_content，
         // 挤的后果是文字换行，不会错位或截断按钮 —— 可接受。
         val actions = LinearLayout(act).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -980,6 +978,18 @@ class PluginPage(
         // 「进入」：进插件的界面（配置项 + 宿主提供的功能按钮）。
         // 「试听」不是卡片上的按钮 —— 那是**功能**，在插件界面里。
         actions.addView(smallButton("进入") { enterPlugin(item) },
+            wrapWrap().apply { leftMargin = dp(8) })
+
+        // 「关于」：弹窗显示插件自己写的关于文档（纯文本，可复制）。
+        //
+        // 位置在「卸载」**左边**：卸载是这一行里唯一的破坏性按钮，
+        // 按惯例钉在最右（离拇指最远、也和其它按钮拉开视觉距离）。
+        // 关于是只读的信息入口，放在它前面，不会和卸载挨着误点。
+        //
+        // 内容来自插件的 manifest（`ponko.about`，见 PluginDiscovery.aboutOf），
+        // **不走 AIDL** —— 插件连不上（stopped / 失败）时也必须能看，
+        // 而那正是用户最想翻"这插件是什么"的时候。
+        actions.addView(smallButton("关于") { showPluginAbout(item) },
             wrapWrap().apply { leftMargin = dp(8) })
 
         // 「卸载」：跳系统的应用信息页，由用户在那边点「卸载」。
@@ -2319,6 +2329,64 @@ class PluginPage(
             android.util.Log.e("PonkoPluginPage", "保存音频失败", t)
             setUiHint("保存失败：${t.javaClass.simpleName}")
         }
+    }
+
+    /**
+     * 弹「关于」：插件自己写的纯文本文档，可复制。
+     *
+     * ## 为什么不用 setMessage
+     *
+     * `AlertDialog.setMessage` 显示的是不可选中的 `TextView` ——
+     * 长按选不了、复制不了。而这个弹窗的内容是**插件作者写的一段说明**
+     * （版本要求、模型许可、作者联系方式之类），用户经常需要复制其中一行
+     * 去搜、去贴。所以自己建一个可选中、可滚动的 TextView。
+     *
+     * ## 没有文档时显示"无"
+     *
+     * 不是错误、不弹提示条 —— 缺一个关于文档是正常情况（老插件都没有）。
+     */
+    private fun showPluginAbout(item: PluginSession.Item) {
+        val text = item.found.about?.trim()
+
+        // 用 ScrollView 包住：关于文档可能很长（作者会写模型许可、变更记录），
+        // 直接塞进弹窗会顶满屏幕、按钮都露不出来
+        val body = TextView(act).apply {
+            this.text = text ?: "无"
+            textSize = 13f
+            setTextColor(if (text != null) pal.text else pal.hint)
+            setLineSpacing(dp(3).toFloat(), 1f)
+            setPadding(dp(4), dp(6), dp(4), dp(6))
+            // 有内容才让它可选中 —— 空的"无"没什么好复制的，
+            // 而且 selectable 会让它抢焦点
+            if (text != null) setTextIsSelectable(true)
+        }
+        val scroll = android.widget.ScrollView(act).apply {
+            addView(body, ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+
+        val builder = android.app.AlertDialog.Builder(
+            act, android.R.style.Theme_DeviceDefault_Dialog_Alert
+        )
+            .setTitle("关于「${item.found.label}」")
+            .setView(scroll)
+            .setPositiveButton("关闭", null)
+
+        // 只有真有内容才给「复制」——对着一个"无"提供复制按钮很荒唐
+        if (text != null) {
+            builder.setNeutralButton("复制") { _, _ ->
+                val cm = act.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                        as? android.content.ClipboardManager
+                if (cm != null) {
+                    cm.setPrimaryClip(
+                        android.content.ClipData.newPlainText("关于${item.found.label}", text)
+                    )
+                    toast("已复制")
+                }
+            }
+        }
+        builder.show()
     }
 
     private fun showInstallHelp() {

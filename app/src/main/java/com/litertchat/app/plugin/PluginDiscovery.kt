@@ -81,6 +81,33 @@ object PluginDiscovery {
          * 加字段就得升 SDK、所有插件重编，代价和收益完全不成比例。
          */
         val actionWhitelist: List<String>?,
+
+        /**
+         * 插件自己写的「关于」文档（纯文本）。
+         *
+         * 来源是插件的 manifest，两种写法都支持（service 优先，其次
+         * `<application>`）：
+         *
+         * ```xml
+         * <!-- ① 短文本直接写 -->
+         * <meta-data android:name="ponko.about" android:value="…" />
+         * <!-- ② 长文档放 res/raw/about.txt -->
+         * <meta-data android:name="ponko.about" android:resource="@raw/about" />
+         * ```
+         *
+         * `null` = 没声明 → 卡片上那个「关于」弹窗显示"无"。
+         *
+         * ## 为什么走 manifest 而不是 AIDL
+         *
+         * 两个理由，第二个更重要：
+         *
+         * 1. 这是**静态文本**，跟着 APK 版本走，不需要跨进程协议；
+         *    加 AIDL 方法就得升 SDK、所有插件重编
+         * 2. **插件连不上时也要能看关于**。卡片上最需要"这是什么、谁做的"
+         *    的时刻，恰恰是插件处于 stopped / 连接失败的时候 ——
+         *    走 AIDL 的话那时候只能显示"无"
+         */
+        val about: String?,
     )
 
     fun scan(c: Context): List<Found> {
@@ -142,6 +169,7 @@ object PluginDiscovery {
                 stopped = (ai.flags and ApplicationInfo.FLAG_STOPPED) != 0,
                 hasLauncher = hasLauncher(pm, pkg),
                 actionWhitelist = actionsWhitelistOf(pm, pkg, serviceClass),
+                about = aboutOf(c, pkg, serviceClass),
             )
         } catch (t: Throwable) {
             // 包在扫描和读取之间被卸载了（竞态），跳过即可
@@ -200,6 +228,90 @@ object PluginDiscovery {
         return raw.split(',', ';', '\n')
             .map { it.trim().lowercase() }
             .filter { it.isNotEmpty() }
+    }
+
+    /**
+     * 读插件自己写的「关于」文档。
+     *
+     * ## 两种写法
+     *
+     * ```xml
+     * <meta-data android:name="ponko.about" android:value="一句话介绍" />
+     * <meta-data android:name="ponko.about" android:resource="@raw/about" />
+     * ```
+     *
+     * 短文本用 `value`，长的用 `resource`（放在 `res/raw/about.txt`）——
+     * 把几百字塞进 manifest 属性里既难写也难转义，`resource` 才是长文档该走的路。
+     *
+     * ## 为什么两处都读
+     *
+     * 和 `ponko.actions` 一样：写在 `<service>` 里最贴近插件本体，
+     * 写在 `<application>` 下也合理。**service 优先。**
+     *
+     * ## 返回值
+     *
+     * `null` = 没声明 / 读不出来。UI 那边显示"无"，
+     * **不弹错误** —— 缺一个关于文档不是故障。
+     */
+    private fun aboutOf(c: Context, pkg: String, serviceClass: String): String? {
+        val key = "ponko.about"
+        val pm = c.packageManager
+
+        fun bundleOf(): android.os.Bundle? {
+            fun fromService(): android.os.Bundle? = try {
+                @Suppress("DEPRECATION")
+                pm.getServiceInfo(
+                    android.content.ComponentName(pkg, serviceClass),
+                    PackageManager.GET_META_DATA
+                ).metaData
+            } catch (t: Throwable) {
+                null
+            }
+
+            fun fromApp(): android.os.Bundle? = try {
+                @Suppress("DEPRECATION")
+                pm.getApplicationInfo(pkg, PackageManager.GET_META_DATA).metaData
+            } catch (t: Throwable) {
+                null
+            }
+
+            // 同样用 `?:`：空串也是有效声明（"有关于，但内容为空" → 显示无）
+            return fromService()?.takeIf { it.containsKey(key) }
+                ?: fromApp()?.takeIf { it.containsKey(key) }
+        }
+
+        val md = bundleOf() ?: return null
+
+        // ① android:resource —— 读 res/raw 里的文件
+        //
+        // meta-data 用 resource 写法时，值以 int（资源 id）存在 bundle 里。
+        // 不能直接 getString，那样拿到的是资源 id 的十进制字符串，会显示成
+        // "2131689472" 这种东西。
+        run {
+            val resId = md.getInt(key, 0)
+            if (resId != 0) {
+                val text = try {
+                    c.createPackageContext(pkg, 0).resources
+                        .openRawResource(resId)
+                        .use { it.readBytes().toString(Charsets.UTF_8) }
+                } catch (t: Throwable) {
+                    android.util.Log.w(
+                        "PonkoPluginDiscovery",
+                        "[$pkg] 读 ponko.about 的 resource 失败：${t.javaClass.simpleName}"
+                    )
+                    null
+                }
+                if (text != null) return text.trim().ifEmpty { null }
+            }
+        }
+
+        // ② android:value —— 内联文本
+        val inline = try {
+            md.getString(key)
+        } catch (t: Throwable) {
+            null
+        }
+        return inline?.trim()?.ifEmpty { null }
     }
 
     /** 插件有没有可启动的激活组件 —— 有它才能清掉 stopped 状态 */

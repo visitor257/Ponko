@@ -1569,6 +1569,57 @@ TABS_END
 这是宿主内部排版，插件不需要也不会因此有任何感知 —— 但如果你是用
 `HostActionId` 把 `reasoning` **搬走**了，那 `stop` 会独占一格（不会留个空槽）。
 
+### v12.3 补充：卡片上的「关于」由插件提供（`ponko.about`）
+
+插件页每张卡片的按钮行里加了「关于」（在「卸载」左边），点开是一个弹窗，
+内容是插件自己写的**纯文本**，可长按选中、也可一键复制。内容来源：
+
+```xml
+<meta-data android:name="ponko.about" android:value="一句话介绍" />
+<meta-data android:name="ponko.about" android:resource="@raw/about" />
+```
+
+| 写法 | 读法 | 适合 |
+|---|---|---|
+| `android:value` | 直接当字符串 | 一两句话 |
+| `android:resource` | 读该资源的原始字节（UTF-8） | 多段文档，放 `res/raw/*.txt` |
+
+`<service>` 和 `<application>` 都读，**service 优先**（与 `ponko.actions` 一致）。
+没声明 → 弹窗显示"无"，不弹错误（老插件都没有这个字段）。
+
+#### 为什么走 manifest 而不是 AIDL
+
+1. 关于文档是**静态文本**，跟着 APK 版本走，不需要跨进程协议。
+   加 AIDL 方法要升 SDK + 所有插件重编，代价和收益不成比例
+2. **插件连不上时也要能看**。卡片最需要"这是什么、模型哪来的"的时刻，
+   恰恰是插件处于 stopped / 绑定失败的时候 —— 走 AIDL 那种情况只能显示"无"
+
+#### 实现里的两个坑
+
+**`android:resource` 的值是资源 id，不是文本。**
+meta-data 用 `android:resource` 写法时，bundle 里存的是 **int 资源 id**。
+直接 `getString()` 会拿到 `"2131689472"` 这种十进制字符串，弹窗上显示一串数字。
+所以先 `getInt(key, 0)`：非 0 → `createPackageContext(pkg, 0).resources.openRawResource(id)`
+按 UTF-8 读；0 → 才走 `getString()`。
+
+**`AlertDialog.setMessage` 的文本复制不了。**
+它内部是不可选中的 `TextView`。而这个弹窗的内容就是给人复制的
+（模型许可、作者联系方式），所以自己建 `TextView` +
+`setTextIsSelectable(true)` + 包一层 `ScrollView`，再配一个「复制」按钮
+（只有真有内容时才给 —— 对着"无"提供复制按钮没有意义）。
+
+### 顺带：启动时不再弹连接失败的 toast
+
+宿主每次启动会自动重连所有已启用插件，而插件只要处于 stopped 状态
+（装完没激活过、被系统清掉）就必然失败 —— 于是**每次冷启动都弹一次**，
+装几个插件弹几个。
+
+那些时刻用户什么都没做，弹窗只是噪音；而真正要排查的人，卡片上有
+**完整多行原因**（可长按复制），toast 一秒就没了本来也不够用。
+所以失败信息只留在卡片上，不再主动弹。
+
+> 判据：**预期中的常态失败不该弹窗。** stopped 是 Android 的机制，不是插件写错了。
+
 ### v10 补充：插件自己排布局（`ROW_START` / `GRID_START`）
 
 **问题**：`items` 一直是一个**纯纵向**的有序列表。插件能决定"有哪些项、什么顺序"，
