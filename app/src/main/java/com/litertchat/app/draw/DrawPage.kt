@@ -1861,7 +1861,7 @@ class DrawPage(
             "mem: avail=${LogBook.mb(mi.availMem)} total=${LogBook.mb(mi.totalMem)}" +
                 " threshold=${LogBook.mb(mi.threshold)}$low"
         } catch (t: Throwable) {
-            "mem: 读不到（${t.javaClass.simpleName}）"
+            "mem: unavailable (${t.javaClass.simpleName})"
         }
     }
 
@@ -1907,31 +1907,31 @@ class DrawPage(
             LogBook.w(c, LogBook.DRAW, s)
         }
         runCatching { stageFile.writeText("") }
-        LogBook.w(c, LogBook.DRAW, "=== 加载开始 ===")
-        stage("2 模型集：${set.id}（${set.kind}/${set.family}，${set.slotCount()} 个文件）")
+        LogBook.w(c, LogBook.DRAW, "=== load start ===")
+        stage("2 model set: ${set.id} (${set.kind}/${set.family}, ${set.slotCount()} files)")
         slots.forEach { (k, v) ->
             // 文件名 + 实际大小：判断"是不是下错了量化版本"全靠这两项
             val f = File(v)
-            stage("   槽位 $k = ${f.name}（${LogBook.mb(f.length())}）")
+            stage("   slot $k = ${f.name} (${LogBook.mb(f.length())})")
         }
-        activeLora()?.let { stage(c.getString(R.string.v_058, (it.name), (it.length() / 1048576))) }
-        stage(c.getString(R.string.v_041, (android.os.Build.SUPPORTED_ABIS.firstOrNull()), (android.os.Build.VERSION.SDK_INT), (android.os.Build.MANUFACTURER), (android.os.Build.MODEL)))
-        stage(c.getString(R.string.v_042, (Runtime.getRuntime().maxMemory() / 1048576), (root.usableSpace / 1048576)))
+        activeLora()?.let { stage("0 LoRA: ${it.name} (${it.length() / 1048576} MB)") }
+        stage("1 device: abi=${android.os.Build.SUPPORTED_ABIS.firstOrNull()} sdk=${android.os.Build.VERSION.SDK_INT} vendor=${android.os.Build.MANUFACTURER} model=${android.os.Build.MODEL}")
+        stage("1 memory: maxHeap=${Runtime.getRuntime().maxMemory() / 1048576}MB freeDisk=${root.usableSpace / 1048576}MB")
         // 再加一行**系统可用内存**：maxMemory 只是 Java 堆上限，和 native 能否
         // 分配下 7GB 权重无关 —— issue 里的误解基本都出在这一处。
         runCatching { stage("   " + memLine()) }
 
         // 分步探测：每步都先落盘，后执行
-        stage(c.getString(R.string.s_009))
+        stage("2 loading native library (libponko_sd.so)")
         try {
-            SdCppEngine.info().let { stage("3 native OK：$it") }
+            SdCppEngine.info().let { stage("3 native OK: $it") }
         } catch (t: Throwable) {
-            stage(c.getString(R.string.v_043, (t.message ?: t.javaClass.simpleName)))
+            stage("3 native load failed: ${t.message ?: t.javaClass.simpleName}")
             runCatching { stageFile.delete() }
             return c.getString(R.string.v_044, (t.message ?: t.javaClass.simpleName))
         }
 
-        stage(c.getString(R.string.v_045, (nThreads)))
+        stage("4 creating sd.cpp context (CPU, $nThreads threads)")
         return try {
             if (sdHandle != 0L) runCatching { SdCppEngine.nativeFree(sdHandle) }
             sdHandle = 0L
@@ -1965,9 +1965,9 @@ class DrawPage(
                 // 返回 null 是 sd.cpp 自己拒绝，**不是崩溃** —— 进程还活着，
                 // 所以清掉信号文件（让下次启动别误报"上次崩了"），
                 // 但**保留** logs/draw.log：这条失败照样值得被报出来。
-                stage(c.getString(R.string.s_012))
-                runCatching { stage(c.getString(R.string.s_010) + SdCppEngine.lastParams().replace("\n", "  |  ")) }
-                LogBook.w(c, LogBook.DRAW, "=== 加载失败（sd.cpp 返回 null，进程未崩）===")
+                stage("5 create failed: new_sd_ctx returned 0")
+                runCatching { stage("4 params: " + SdCppEngine.lastParams().replace("\n", "  |  ")) }
+                LogBook.w(c, LogBook.DRAW, "=== load failed: sd.cpp returned null (process alive) ===")
                 runCatching { stageFile.delete() }
                 return c.getString(R.string.s_059)
             }
@@ -1976,9 +1976,9 @@ class DrawPage(
             vaeModel = set.files["vae"]
             // 登记到进程级单例：API 的绘图接口要复用同一个句柄（界面重建/换主题都不影响）
             DrawCore.attach(h, mainModel?.name ?: set.name, used)
-            stage(c.getString(R.string.s_011))
+            stage("5 context created OK")
             runCatching {
-                stage(c.getString(R.string.s_010) + SdCppEngine.lastParams().replace("\n", "  |  "))
+                stage("4 params: " + SdCppEngine.lastParams().replace("\n", "  |  "))
             }
 
             val summary = buildString {
@@ -1995,15 +1995,15 @@ class DrawPage(
             // mmap 是**惰性**的：这里"加载成功"只说明元数据读通了、句柄建起来了，
             // 权重还没真正全部读进内存。Flux / SD3.5-Large 这类会在这里成功、
             // 到第一次推理才 OOM —— 所以下面一句要写明白，别让日志误导人。
-            LogBook.w(c, LogBook.DRAW, "=== 加载成功（backend=$used, threads=$nThreads）" +
-                " 注：mmap 惰性，权重尚未全部驻留 ===")
+            LogBook.w(c, LogBook.DRAW, "=== load OK (backend=$used, threads=$nThreads)" +
+                " note: mmap is lazy, weights not yet all resident ===")
             runCatching { stageFile.delete() }
             onPipelineReady?.invoke()
             null
         } catch (e: Throwable) {
-            stage(c.getString(R.string.v_046, (e.javaClass.name), (e.message)))
+            stage("5 create failed: ${e.javaClass.name}: ${e.message}")
             runCatching { stageFile.appendText(android.util.Log.getStackTraceString(e) + "\n") }
-            LogBook.w(c, LogBook.DRAW, "=== 加载异常（Java 层）: ${e.javaClass.name}: ${e.message} ===")
+            LogBook.w(c, LogBook.DRAW, "=== load threw (Java): ${e.javaClass.name}: ${e.message} ===")
             c.getString(R.string.v_047, (e.message ?: e.javaClass.simpleName))
         }
     }
@@ -2227,11 +2227,11 @@ class DrawPage(
         }
         runCatching { stageFile.writeText("") }
         val t0 = System.currentTimeMillis()
-        gstage("=== 推理开始 ===")
+        gstage("=== render start ===")
         // prompt 只留前 80 字：够判断"是不是超长/含特殊字符"，又不把用户写的内容整段抄走
         gstage("  prompt=${LogBook.briefPrompt(prompt)}")
         gstage("  size=${w}x$hgt steps=$steps cfg=$cfg seed=$useSeed sampler=$sampler sched=$scheduler")
-        gstage("  lora=${lora?.name ?: "无"} scale=$loraScale  backend=$activeBackend")
+        gstage("  lora=${lora?.name ?: "none"} scale=$loraScale backend=$activeBackend")
         runCatching { gstage("  " + memLine()) }
         // 步进日志：每步都落盘。sd.cpp 一步几秒，写一行的开销可忽略，
         // 换来的是"崩在第 17/20 步"这种能直接定位的信息。
@@ -2268,15 +2268,15 @@ class DrawPage(
                 )
             } ?: throw IllegalStateException(c.getString(R.string.s_147))
             onProgress(steps, steps)
-            gstage("=== 推理完成，耗时 ${(System.currentTimeMillis() - t0) / 1000}s ===")
+            gstage("=== render done in ${(System.currentTimeMillis() - t0) / 1000}s ===")
             runCatching { stageFile.delete() }
             return ImageData(bmp, useSeed)
         } catch (e: Throwable) {
             // 取消不是失败：用户点了中断也会走到这里，别把它记成崩溃
             val cancelled = cancelRequested
             gstage(
-                if (cancelled) "=== 推理被用户中断（${(System.currentTimeMillis() - t0) / 1000}s）==="
-                else "=== 推理异常: ${e.javaClass.name}: ${e.message} ==="
+                if (cancelled) "=== render cancelled by user (${(System.currentTimeMillis() - t0) / 1000}s) ==="
+                else "=== render threw: ${e.javaClass.name}: ${e.message} ==="
             )
             runCatching { stageFile.delete() }
             throw e
@@ -2453,10 +2453,10 @@ class DrawPage(
             }
             runCatching { gs.writeText("") }
             var lastStep = -1
-            gstage("=== 图生图推理开始 ===")
+            gstage("=== img2img render start ===")
             gstage("  prompt=${LogBook.briefPrompt(prompt)}")
             gstage("  size=${w}x$hgt steps=$steps cfg=$cfg strength=$strength seed=$useSeed")
-            gstage("  src=${src.width}x${src.height} lora=${lora?.name ?: "无"} scale=$loraScale")
+            gstage("  src=${src.width}x${src.height} lora=${lora?.name ?: "none"} scale=$loraScale")
             runCatching { gstage("  " + memLine()) }
             try {
                 SdCppEngine.render(
@@ -2487,13 +2487,13 @@ class DrawPage(
                     initHeight = src.height,
                     strength = strength,
                 ).also {
-                    gstage("=== 图生图完成，耗时 ${(System.currentTimeMillis() - t0) / 1000}s ===")
+                    gstage("=== img2img done in ${(System.currentTimeMillis() - t0) / 1000}s ===")
                     runCatching { gs.delete() }
                 }
             } catch (e: Throwable) {
                 gstage(
-                    if (cancelRequested) "=== 图生图被中断（${(System.currentTimeMillis() - t0) / 1000}s）==="
-                    else "=== 图生图异常: ${e.javaClass.name}: ${e.message} ==="
+                    if (cancelRequested) "=== img2img cancelled by user (${(System.currentTimeMillis() - t0) / 1000}s) ==="
+                    else "=== img2img threw: ${e.javaClass.name}: ${e.message} ==="
                 )
                 runCatching { gs.delete() }
                 throw e

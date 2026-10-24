@@ -116,7 +116,7 @@ object ChatCore {
         val chars = messages.sumOf { it.text.length }
         val roles = messages.groupingBy { it.role }.eachCount()
         val backend = if (engine != null) "litertlm" else if (llama != null) "gguf" else "none"
-        LogBook.w(LogBook.CHAT, "=== 生成开始 backend=$backend msgs=${messages.size} " +
+        LogBook.w(LogBook.CHAT, "=== generate start backend=$backend msgs=${messages.size} " +
             "chars=$chars roles=$roles temp=${temperature ?: "默认"} max=${maxTokens ?: "默认"} ===")
         try {
             withContext(Dispatchers.IO) {
@@ -130,11 +130,11 @@ object ChatCore {
         } catch (e: Throwable) {
             // 取消会以 CancellationException 的形式到这里；两者要分开记，
             // 否则"用户点了停止"会被误读成"对话崩了"
-            val what = if (cancelFlag) "被中断" else "异常 ${e.javaClass.name}: ${e.message}"
-            LogBook.w(LogBook.CHAT, "=== 生成$what（${(System.currentTimeMillis() - t0) / 1000}s）===")
+            val what = if (cancelFlag) "cancelled" else "threw ${e.javaClass.name}: ${e.message}"
+            LogBook.w(LogBook.CHAT, "=== generate $what (${(System.currentTimeMillis() - t0) / 1000}s) ===")
             throw e
         } finally {
-            LogBook.w(LogBook.CHAT, "=== 生成结束 ${(System.currentTimeMillis() - t0) / 1000}s ===")
+            LogBook.w(LogBook.CHAT, "=== generate done in ${(System.currentTimeMillis() - t0) / 1000}s ===")
             busy = false
         }
     }

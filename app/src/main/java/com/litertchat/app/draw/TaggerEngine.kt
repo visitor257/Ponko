@@ -71,16 +71,16 @@ object TaggerEngine {
         val t0 = System.currentTimeMillis()
         // 打标失败最常见的原因是 ONNX 与标签表**不配套**（换了模型没换 csv），
         // 所以两边的文件名和标签条数都要记下来 —— 只记"加载失败"没法判断。
-        LogBook.w(LogBook.TAGGER, "=== 加载 onnx=${model.name}(${LogBook.mb(model.length())})" +
+        LogBook.w(LogBook.TAGGER, "=== load onnx=${model.name}(${LogBook.mb(model.length())})" +
             " csv=${csv.name}(${LogBook.mb(csv.length())}) gpu=$useGpu threads=$threads ===")
         return try {
             unload()
             val tagList = parseCsv(csv)
             if (tagList.isEmpty()) {
-                LogBook.w(LogBook.TAGGER, "=== 失败：标签表为空 ===")
+                LogBook.w(LogBook.TAGGER, "=== failed: tag list is empty ===")
                 return ctx.getString(R.string.s_384)
             }
-            LogBook.w(LogBook.TAGGER, "  标签数=${tagList.size}")
+            LogBook.w(LogBook.TAGGER, "  tags=${tagList.size}")
 
             val e = OrtEnvironment.getEnvironment()
             val opts = OrtSession.SessionOptions()
@@ -116,12 +116,12 @@ object TaggerEngine {
             modelFile = model
             csvFile = csv
             usingGpu = gpuOk
-            LogBook.w(LogBook.TAGGER, "=== 加载成功 ${(System.currentTimeMillis() - t0) / 1000}s" +
+            LogBook.w(LogBook.TAGGER, "=== load OK in ${(System.currentTimeMillis() - t0) / 1000}s" +
                 " input=$inputName size=$inSize nhwc=$nhwc gpu=$gpuOk ===")
             null
         } catch (t: Throwable) {
             unload()
-            LogBook.w(LogBook.TAGGER, "=== 加载异常: ${t.javaClass.name}: ${t.message} ===")
+            LogBook.w(LogBook.TAGGER, "=== load threw: ${t.javaClass.name}: ${t.message} ===")
             t.message ?: t.javaClass.simpleName
         }
     }

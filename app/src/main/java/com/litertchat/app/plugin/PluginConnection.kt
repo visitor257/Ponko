@@ -596,7 +596,7 @@ class PluginConnection(
 
         for ((intent, kind) in candidates) {
             Log.i(TAG, "[$packageName] 尝试绑定（$kind）${intent.component ?: intent.action}")
-            LogBook.w(LogBook.PLUGIN, "[$packageName] 尝试绑定 kind=$kind " +
+            LogBook.w(LogBook.PLUGIN, "[$packageName] bind attempt kind=$kind " +
                 "component=${intent.component ?: intent.action}")
             val ok = try {
                 context.bindService(intent, conn, Context.BIND_AUTO_CREATE)
@@ -606,13 +606,13 @@ class PluginConnection(
                 val msg = describeBindFailure(t, diag)
                 // 把给用户看的那段（里面带两边指纹）原样记进日志 ——
                 // 用户报 issue 时抄不准指纹，日志里有原文才比得了。
-                LogBook.w(LogBook.PLUGIN, "[$packageName] 绑定抛异常 ${t.javaClass.name}: $msg")
+                LogBook.w(LogBook.PLUGIN, "[$packageName] bind threw ${t.javaClass.name}: $msg")
                 setState(State.FAILED, msg)
                 return
             }
             if (ok) {
                 boundOnce = true
-                LogBook.w(LogBook.PLUGIN, "[$packageName] 绑定成功 kind=$kind")
+                LogBook.w(LogBook.PLUGIN, "[$packageName] bind OK kind=$kind")
                 break
             }
             lastError = kind
@@ -621,7 +621,7 @@ class PluginConnection(
         if (!boundOnce) {
             // 返回 false ≠ 权限问题（那个会抛异常），而是**系统解析不到服务**。
             val msg = describeFalseReturn(diag, lastError)
-            LogBook.w(LogBook.PLUGIN, "[$packageName] 绑定返回 false（解析不到服务）: $msg")
+            LogBook.w(LogBook.PLUGIN, "[$packageName] bind returned false (service unresolved): $msg")
             setState(State.FAILED, msg)
             return
         }
