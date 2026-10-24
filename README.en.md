@@ -23,6 +23,7 @@ All inference runs on-device: apart from the optional in-app LoRA download, no f
 | **Tagging** | Fully offline ONNX (WD14 family); tags can be sent to T2I / I2I |
 | **API server** | Serves loaded models over OpenAI-compatible endpoints; chat 8080 / drawing 8081, fully independent |
 | **Plugins (Ponko-EX)** | Speech synthesis and similar live in separate APKs; the protocol is public, so third-party plugins work and you can write your own |
+| **Diagnostics** | One log per module, flushed per line; a crash is traceable to loading vs. the Nth render step, and the report is one tap to copy |
 | **Local-first** | No telemetry, no account; no network needed except the manual LoRA download |
 
 ## Contents
@@ -32,6 +33,7 @@ All inference runs on-device: apart from the optional in-app LoRA download, no f
 - [API server (use the phone as a server)](#api-server-use-the-phone-as-a-server)
 - [Tagging (Tagger)](#tagging-tagger)
 - [Plugins (Ponko-EX)](#plugins-ponko-ex)
+- [Diagnostics](#diagnostics)
 - [Permissions](#permissions)
 - [Languages](#languages)
 - [Building](#building)
@@ -182,6 +184,80 @@ data), the AIDL protocol, localisation, and a release checklist. Host/SDK versio
 compatibility is checked **in both directions** (a newer or older plugin is flagged,
 but both keep working).
 
+## Diagnostics
+
+When something goes wrong you need **no adb and no root**: tap "Diagnostics" on the
+Models page and the dialog holds the whole report. One "Copy report" button, paste it
+into the issue.
+
+The report carries version, device, Android release, ABI, memory (see below), free
+disk, **every imported drawing model file with its size**, then the tail of each
+module's log.
+
+### Four modules, four files
+
+Deliberately not one big file. The modules differ widely in how private their content
+is, and a single file can only follow the strictest rule — so the case worth
+reproducing is the one that gets dropped.
+
+| Module | File | Records | Prompt |
+|---|---|---|---|
+| Drawing | `logs/draw.log` | load stages, slot names + sizes, render params, **every step**, timings | first 80 chars + total length |
+| Chat | `logs/chat.log` | backend, message count, char count, role spread, timings | **length only, never content** |
+| Tagging | `logs/tagger.log` | onnx/csv names + sizes, tag count, input size, timings | — |
+| Plugins | `logs/plugin.log` | every bind attempt, failure reason incl. both signing fingerprints | — |
+
+Chat records length and nothing else on purpose: what you type there is yours, and
+diagnosing "why is it slow / why did it die" does not need the words.
+
+### Crashes are traceable too
+
+Every line is **flushed as written**, because the failures worth catching are mostly
+native (a C++ abort, or being killed by the low-memory killer). Those never reach
+Java's uncaught-exception handler — the process simply vanishes, and anything still in
+a buffer is gone.
+
+Two **marker files** exist alongside; if one is present, the previous run never reached
+its normal ending:
+
+| File | Meaning |
+|---|---|
+| `draw/.loadstage` | died while **loading the model** |
+| `draw/.genstage` | died while **rendering** |
+
+The Models page turns either into a notice on the next launch, and the two say
+different things: a load death is usually "this model won't open", a render death is
+usually "the weights do not fit in memory" (smaller quantization, smaller model, lower
+resolution).
+
+> Why they are separate: with mmap, a large model (Flux, SD3.5-Large) **loads
+> successfully** — mmap is lazy and only reads metadata — and dies on the first render
+> when the weights are actually faulted in. Trusting the load log alone would conclude
+> "loading was fine".
+
+### On "available memory"
+
+The report prints `availMem` and `java heap max` as two separate lines. Do not confuse
+them:
+
+- **`availMem`** — what the system can still give this process; **this is what bounds
+  model weights**
+- **`java heap max`** — the Dalvik/ART heap cap, a few hundred MB, **unrelated to
+  whether a model fits**
+
+"But my phone has 16GB" usually compares total device RAM against the weight sizes.
+The system itself takes 4–6GB, and Flux alone is 10GB of weights. The report puts all
+three figures side by side so the gap is visible.
+
+### Logs are not translated
+
+Log text is **fixed English and does not follow the system language**; UI strings are
+the bilingual part.
+
+The reason is that a log is evidence: if a Chinese device wrote "设备：…" and an English
+one "device: …", two reports of the same failure could not be grepped against each
+other.
+
 ## Permissions
 
 Taking a photo, picking an image and saving to the gallery require **no storage access permission at all**; apart from the entries below the app declares no other permissions.
@@ -206,6 +282,9 @@ All UI strings are externalized (`res/values` = English, `res/values-zh` = Chine
 **The plugin page is included**, including plugin-supplied text; the host also passes
 its current language to plugins as `hostLocaleTag`, so a plugin may use it — though
 simply following Android's own resource fallback is already enough.
+
+**Logs are the exception: fixed English, never routed through resources.** They are
+evidence, not UI — see [Diagnostics](#diagnostics).
 
 The fifth tab is an **About** page with two collapsible sections: **Settings** (the three-position theme slider: Light / Follow system / Dark) and **About** (version and install time, app intro, notes on the thinking mode, license and third-party component list, author and project link).
 
@@ -251,6 +330,7 @@ powershell -File tools/build-release.ps1
 - Drawing is CPU-only by default: 256×256 with LCM-LoRA at 6 steps takes about a minute; 512×512 is noticeably slower. Switch the run mode to GPU to try Vulkan acceleration; devices without it fall back to CPU (the backend in use is shown in the drawing status line)
 - **GPU support is "theoretical" for now and NOT verified on a real device**: only drawing (Vulkan), tagging (NNAPI) and `.litertlm` chat carry GPU code, and all three have only been verified at build time - none of them has been tested on an actual phone. When the driver is unstable or the VRAM is too small the app falls back to CPU automatically (the drawing status line shows the backend in use); GGUF chat has no GPU backend at all and is CPU-only
 - The quantization level is baked into the model file; the app only reads and displays it, never converts
+- **Large models (Flux / SD3.5-Large / Qwen-Image) are not really runnable on a phone**: the architecture and the loading mechanism both support them, but the weight total (8GB and up) plus inference activations exceed what Android will give a single app. The usual symptom is **a crash while rendering** — loading succeeds, because mmap is lazy. Those crashes land in the [diagnostics log](#diagnostics), where the model sizes sit next to `availMem` and the shortfall is visible at a glance. To actually run one, use a smaller quantization, lower the resolution, or wait for a desktop build
 - The drawing native library is built with `-march=armv8.2-a+dotprod+fp16`, requiring a 64-bit ARM device from 2019 or later
 - Tagging supports Danbooru-style ONNX taggers (WD14 and its derivatives; the tag list must be in `tag_id,name,category,count` format); the `.onnx` and the tag-list CSV must be imported as a matching pair
 - If tagging looks wrong (e.g. wrong colours or hair colour), try switching the **channel order** (BGR / RGB): BGR is the official WD-family preprocessing, but a few re-exported models already baked BGR into their weights and need RGB; threshold and tag count also change the output a lot
