@@ -1,6 +1,8 @@
 // Ponko · (c) 2026 visitor257 · MIT License · github.com/visitor257/Ponko
 package com.litertchat.app.draw
 
+import com.litertchat.app.LogBook
+
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
@@ -66,10 +68,19 @@ object TaggerEngine {
      * 可能耗时（几秒），务必在 IO 线程调用。
      */
     fun load(ctx: Context, model: File, csv: File, useGpu: Boolean, threads: Int): String? {
+        val t0 = System.currentTimeMillis()
+        // 打标失败最常见的原因是 ONNX 与标签表**不配套**（换了模型没换 csv），
+        // 所以两边的文件名和标签条数都要记下来 —— 只记"加载失败"没法判断。
+        LogBook.w(LogBook.TAGGER, "=== load onnx=${model.name}(${LogBook.mb(model.length())})" +
+            " csv=${csv.name}(${LogBook.mb(csv.length())}) gpu=$useGpu threads=$threads ===")
         return try {
             unload()
             val tagList = parseCsv(csv)
-            if (tagList.isEmpty()) return ctx.getString(R.string.s_384)
+            if (tagList.isEmpty()) {
+                LogBook.w(LogBook.TAGGER, "=== failed: tag list is empty ===")
+                return ctx.getString(R.string.s_384)
+            }
+            LogBook.w(LogBook.TAGGER, "  tags=${tagList.size}")
 
             val e = OrtEnvironment.getEnvironment()
             val opts = OrtSession.SessionOptions()
@@ -105,9 +116,12 @@ object TaggerEngine {
             modelFile = model
             csvFile = csv
             usingGpu = gpuOk
+            LogBook.w(LogBook.TAGGER, "=== load OK in ${(System.currentTimeMillis() - t0) / 1000}s" +
+                " input=$inputName size=$inSize nhwc=$nhwc gpu=$gpuOk ===")
             null
         } catch (t: Throwable) {
             unload()
+            LogBook.w(LogBook.TAGGER, "=== load threw: ${t.javaClass.name}: ${t.message} ===")
             t.message ?: t.javaClass.simpleName
         }
     }

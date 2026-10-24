@@ -109,6 +109,15 @@ object ChatCore {
     ): String = lock.withLock {
         busy = true
         cancelFlag = false
+        val t0 = System.currentTimeMillis()
+        // 对话日志**只记结构，不记内容**：
+        // 用户在这里说的话是他自己的私人文本，而排查"为什么慢/为什么崩"并不需要原文。
+        // 条数、角色分布、总字符数 + 后端 + 参数，已经够定位绝大多数问题。
+        val chars = messages.sumOf { it.text.length }
+        val roles = messages.groupingBy { it.role }.eachCount()
+        val backend = if (engine != null) "litertlm" else if (llama != null) "gguf" else "none"
+        LogBook.w(LogBook.CHAT, "=== generate start backend=$backend msgs=${messages.size} " +
+            "chars=$chars roles=$roles temp=${temperature ?: "默认"} max=${maxTokens ?: "默认"} ===")
         try {
             withContext(Dispatchers.IO) {
                 val eng = engine
@@ -118,7 +127,14 @@ object ChatCore {
                     runGguf(lm, messages, temperature, maxTokens, onDelta)
                 }
             }
+        } catch (e: Throwable) {
+            // 取消会以 CancellationException 的形式到这里；两者要分开记，
+            // 否则"用户点了停止"会被误读成"对话崩了"
+            val what = if (cancelFlag) "cancelled" else "threw ${e.javaClass.name}: ${e.message}"
+            LogBook.w(LogBook.CHAT, "=== generate $what (${(System.currentTimeMillis() - t0) / 1000}s) ===")
+            throw e
         } finally {
+            LogBook.w(LogBook.CHAT, "=== generate done in ${(System.currentTimeMillis() - t0) / 1000}s ===")
             busy = false
         }
     }

@@ -9,10 +9,6 @@
 <string name="s_006">(model returned reasoning only, no answer)</string>
 <string name="s_007">(model returned nothing)</string>
 <string name="s_008">-1 = random each run; set a value to reproduce the same image</string>
-<string name="s_009">2 loading native library (libponko_sd.so)</string>
-<string name="s_010">4 params: </string>
-<string name="s_011">5 context created OK</string>
-<string name="s_012">5 create failed: new_sd_ctx returned 0</string>
 <string name="s_013">CFG scale</string>
 <string name="s_014">Discrete is the standard choice; Karras pairs with the DPM++ family; LCM goes with the LCM sampler</string>
 <string name="s_015">Euler a is the safest all-rounder; LCM / TCD are the few-step acceleration samplers for LoRA; DPM++ 2M / 2M SDE give more detail but are slower (DPM++ 2M SDE pairs well with the Karras scheduler)</string>
@@ -234,12 +230,7 @@
     <string name="v_038">Import failed: %1$s</string>
     <string name="v_039">E top-level exception: %1$s: %2$s\n</string>
     <string name="v_040">Load failed: %1$s</string>
-    <string name="v_041">1 device: abi=%1$s sdk=%2$s vendor=%3$s model=%4$s</string>
-    <string name="v_042">1 memory: maxHeap=%1$sMB freeDisk=%2$sMB</string>
-    <string name="v_043">3 native load failed: %1$s</string>
     <string name="v_044">Native library load failed: %1$s</string>
-    <string name="v_045">4 creating sd.cpp context (CPU · %1$s threads)</string>
-    <string name="v_046">5 create failed: %1$s: %2$s</string>
     <string name="v_047">Load failed: %1$s</string>
     <string name="v_048">Current model quantization: %1$s (%2$s)</string>
     <string name="v_049"> · step %1$d/%2$d</string>
@@ -249,7 +240,6 @@
     <string name="v_053">Drawing done (%1$s s)</string>
     <string name="v_054">Interrupted (%1$s s)</string>
     <string name="v_055">Drawing failed: %1$s</string>
-    <string name="v_058">0 LoRA: %1$s (%2$s MB)</string>
     <string name="v_059">Generation failed (%1$s s): %2$s</string>
     <string name="v_060">See \"Load log\" for the full stack trace</string>
     <string name="s_207">Text to Image</string>
@@ -723,4 +713,10 @@ Try a different word, or tap Clear above.</string>
 <string name="s_743">Done</string>
 <string name="s_746">Idle</string>
 <string name="s_747">Back to the plugin list</string>
+<!-- s_748: 推理阶段崩溃的提示。和 s_035（加载崩溃）分开，因为用户该做的事不同 -->
+<string name="s_748">Last run crashed while generating (the model itself loaded fine). This usually means the weights do not fit in available memory — try a smaller quantization (Q4 instead of Q8), a smaller model, or a lower resolution. Details:</string>
+<string name="s_749">Diagnostics</string>
+<string name="s_750">Copy report</string>
+<string name="s_751">Report copied — paste it into your bug report</string>
+<string name="s_752">Clear logs</string>
 </resources>
