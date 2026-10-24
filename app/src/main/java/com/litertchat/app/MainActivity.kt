@@ -792,9 +792,11 @@ class MainActivity : Activity() {
     private var loraStatusTv: TextView? = null
     /** 已安装 LoRA 列表容器（模型页） */
     private var loraBox: LinearLayout? = null
-    /** 上次启动时发现「加载绘图模型」中途崩了（native 崩溃，Java 层捕不到） */
+    /** 上次启动时发现绘图流程中途崩了（native 崩溃，Java 层捕不到） */
     private var pendingDrawCrash = false
-    /** 上次崩溃时已执行的阶段（来自 draw/.loadstage） */
+    /** 崩溃发生在**推理**阶段而非加载阶段（决定提示文案，两者排查方向不同） */
+    private var pendingDrawCrashAtGen = false
+    /** 上次崩溃时已执行的阶段（来自 draw/.loadstage 或 draw/.genstage） */
     private var pendingDrawStage: String? = null
     private lateinit var backendSpinner: Spinner
     private lateinit var loadButton: TextView
@@ -819,6 +821,12 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         // 最早挂上崩溃钩子：连主题解析 / 建界面阶段的异常也能落盘（崩在 buildUi 里否则没日志）
         installCrashHandler()
+        // 日志目录也要最早可用：ChatCore / TaggerEngine 这些单例没有 Context，
+        // 靠这里注入一次。放在崩溃钩子之后、建界面之前 —— 建界面过程中的异常才能进日志。
+        //
+        // 启动本身不写日志：版本/设备/内存这些已经在诊断报告头里，
+        // 往任一模块（绘图/对话/打标/插件）里塞都会让那份日志显得不属于它自己。
+        LogBook.init(this)
         // 主题必须在 setContentView 之前定好（系统栏/窗口底色来自 style，界面颜色来自 pal）
         themeMode = chatPrefs().getInt("themeMode", 0)
         pal = PonkoTheme.resolve(this, themeMode)
@@ -895,6 +903,19 @@ class MainActivity : Activity() {
             runCatching { st.delete() }
             pendingDrawCrash = true
         }
+        // 推理崩溃是**另一条路径**，要分开报。
+        //
+        // 为什么要单独一个文件：加载崩了通常是"模型本身打不开"，推理崩了多半是
+        // "权重总量放不下内存"。两者的下一步动作完全不同，混成一条提示只会误导。
+        // 而且这类崩（Flux 首次推理 OOM）在 mmap 下**加载阶段是成功的**，
+        // 只查 .loadstage 会漏掉。
+        val gs = File(filesDir, "draw/.genstage")
+        if (gs.exists()) {
+            pendingDrawStage = runCatching { gs.readText() }.getOrNull()
+            runCatching { gs.delete() }
+            pendingDrawCrash = true
+            pendingDrawCrashAtGen = true
+        }
     }
 
     /** 读并清空崩溃日志（供模型页展示） */
@@ -904,6 +925,93 @@ class MainActivity : Activity() {
         val s = runCatching { f.readText() }.getOrNull()
         runCatching { f.delete() }
         return s
+    }
+
+    /**
+     * 汇总诊断报告：设备头 + 各模块自己的日志。
+     *
+     * ## 为什么要一个"汇总"而不是各看各的
+     *
+     * 报 issue 的人不会知道该贴哪一份。分成 `draw.log` / `chat.log` … 是**存储**上的
+     * 隔离（隐私敏感度不同），但对外的出口必须是**一个动作**：点一下、复制、粘贴。
+     *
+     * 头部固定带设备信息 —— 90% 的"跑不动"问题，看型号 + 可用内存就能判断，
+     * 而这两项用户通常说不清（"我 16GB 手机"说的是整机内存，不是可用内存）。
+     */
+    private fun buildDiagnosticReport(): String {
+        val sb = StringBuilder()
+        sb.append("=== Ponko 诊断报告 ===\n")
+        sb.append("app: ").append(
+            runCatching {
+                packageManager.getPackageInfo(packageName, 0).versionName
+            }.getOrDefault("?")
+        ).append("\n")
+        sb.append("android: ").append(android.os.Build.VERSION.RELEASE)
+          .append(" (SDK ").append(android.os.Build.VERSION.SDK_INT).append(")\n")
+        sb.append("device: ").append(android.os.Build.MANUFACTURER)
+          .append(" ").append(android.os.Build.MODEL).append("\n")
+        sb.append("abi: ").append(android.os.Build.SUPPORTED_ABIS.joinToString(",")).append("\n")
+        runCatching {
+            val am = getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager
+            val mi = android.app.ActivityManager.MemoryInfo()
+            am.getMemoryInfo(mi)
+            sb.append("mem: avail=").append(mi.availMem / 1048576)
+              .append("MB total=").append(mi.totalMem / 1048576).append("MB\n")
+        }
+        // Java 堆上限单独一行：它和 native 能不能装下模型**没关系**，
+        // 但很多人（包括 issue 里那位）会拿它当"可用内存"。
+        sb.append("java heap max: ").append(Runtime.getRuntime().maxMemory() / 1048576).append("MB\n")
+        runCatching {
+            sb.append("disk free: ").append(File(filesDir.parentFile!!.absolutePath).usableSpace / 1048576).append("MB\n")
+        }
+        // 已导入的绘图模型清单：判断"是不是下了个不匹配的量化版本"全靠这个
+        runCatching {
+            val sets = File(filesDir, "draw/sets")
+            val dirs = sets.listFiles { f -> f.isDirectory } ?: emptyArray()
+            if (dirs.isNotEmpty()) {
+                sb.append("\n-- 绘图模型集 --\n")
+                dirs.forEach { d ->
+                    sb.append(d.name).append(":\n")
+                    d.listFiles { f -> f.isFile }?.forEach { f ->
+                        sb.append("  ").append(f.name)
+                          .append(" (").append(f.length() / 1048576).append("MB)\n")
+                    }
+                }
+            }
+        }
+        LogBook.MODULES.forEach { (mod, label) ->
+            val body = LogBook.read(this, mod)
+            sb.append("\n-- ").append(label).append(" (").append(mod).append(".log) --\n")
+            // 每份只留尾部：完整日志可能有几百 KB，粘进 issue 也没人看
+            sb.append(if (body.isBlank()) "(无记录)\n" else body.takeLast(6000))
+        }
+        return sb.toString()
+    }
+
+    private fun showDiagnosticsDialog() {
+        val report = buildDiagnosticReport()
+        val tv = TextView(this).apply {
+            text = report
+            textSize = 10.5f
+            setTextIsSelectable(true)
+            typeface = android.graphics.Typeface.MONOSPACE
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+        }
+        val sc = ScrollView(this).apply { addView(tv) }
+        AlertDialog.Builder(this)
+            .setTitle(getString(R.string.s_749))
+            .setView(sc)
+            .setPositiveButton(getString(R.string.s_750)) { _, _ ->
+                val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("ponko-diag", report))
+                toast(getString(R.string.s_751))
+            }
+            .setNeutralButton(getString(R.string.s_752)) { _, _ ->
+                LogBook.MODULES.forEach { (mod, _) -> LogBook.clear(this, mod) }
+                toast(getString(R.string.s_112))
+            }
+            .setNegativeButton(getString(R.string.s_049), null)
+            .show()
     }
 
     override fun onPause() {
@@ -1419,8 +1527,12 @@ class MainActivity : Activity() {
         drawCard.addView(dStatus, matchWrap().apply { topMargin = dp(6) })
         // 上次崩溃信息（自捕获，供排查）
         if (pendingDrawCrash) {
+            // 阶段文件里第一行就能看出是加载还是推理；两句话分开说，
+            // 因为用户该做的事不一样（换模型 vs 换更小的量化 / 换设备）。
             drawCard.addView(TextView(this).apply {
-                text = getString(R.string.s_035) + (pendingDrawStage ?: getString(R.string.s_197))
+                text = getString(
+                    if (pendingDrawCrashAtGen) R.string.s_748 else R.string.s_035
+                ) + (pendingDrawStage?.takeLast(400) ?: getString(R.string.s_197))
                 textSize = 11f
                 setTextColor(C_ERR)
                 setPadding(0, dp(6), 0, 0)
@@ -1472,32 +1584,7 @@ class MainActivity : Activity() {
         drawToggleBtn = actionButton(getString(R.string.s_061)) { onDrawToggleClick() }
         drawCard.addView(drawToggleBtn, matchWrap().apply { topMargin = dp(8) })
         drawCard.addView(
-            smallButton(getString(R.string.s_123)) {
-                val f = File(filesDir, "draw/.loadstage")
-                val log = if (f.exists()) runCatching { f.readText() }.getOrDefault(getString(R.string.s_198)) else getString(R.string.s_196)
-                val body = log.takeLast(8000)
-                val tv = TextView(this).apply {
-                    text = body
-                    textSize = 11f
-                    setTextIsSelectable(true)
-                    setPadding(dp(16), dp(8), dp(16), dp(8))
-                }
-                val sc = ScrollView(this).apply { addView(tv) }
-                AlertDialog.Builder(this)
-                    .setTitle(getString(R.string.s_157))
-                    .setView(sc)
-                    .setPositiveButton(getString(R.string.s_071)) { _, _ ->
-                        val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                        cm.setPrimaryClip(android.content.ClipData.newPlainText("ponko-draw-log", body))
-                        toast(getString(R.string.s_087))
-                    }
-                    .setNeutralButton(getString(R.string.s_136)) { _, _ ->
-                        runCatching { f.delete() }
-                        toast(getString(R.string.s_112))
-                    }
-                    .setNegativeButton(getString(R.string.s_049), null)
-                    .show()
-            },
+            smallButton(getString(R.string.s_749)) { showDiagnosticsDialog() },
             matchWrap().apply { topMargin = dp(10) }
         )
 

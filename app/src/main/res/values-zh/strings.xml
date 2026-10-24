@@ -723,4 +723,10 @@
 <string name="s_743">完成</string>
 <string name="s_746">空闲</string>
 <string name="s_747">返回插件列表</string>
+<!-- s_748: 推理阶段崩溃的提示。和 s_035（加载崩溃）分开，因为用户该做的事不同 -->
+<string name="s_748">上次「出图」时崩了（模型本身加载是成功的）。这种情况基本是权重总量超过了可用内存 —— 换更小的量化（Q4 而不是 Q8）、换小一点的模型，或降低分辨率。详情：</string>
+<string name="s_749">诊断日志</string>
+<string name="s_750">复制报告</string>
+<string name="s_751">报告已复制，粘贴到你的反馈里即可</string>
+<string name="s_752">清空日志</string>
 </resources>

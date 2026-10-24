@@ -3,6 +3,7 @@ package com.litertchat.app.draw
 
 import com.litertchat.app.DrawCore
 import com.litertchat.app.InferConfig
+import com.litertchat.app.LogBook
 import com.litertchat.app.PonkoTheme
 import com.litertchat.app.R
 
@@ -1842,6 +1843,28 @@ class DrawPage(
     /** 当前模型集的主模型文件名 */
     fun currentMainName(): String? = activeSetOrSelected()?.name
 
+    /**
+     * 一行系统内存快照。
+     *
+     * 为什么需要它：`Runtime.maxMemory()` 是 **Dalvik/ART 堆的上限**，
+     * 模型权重走的是 native 分配，**不受这个上限管**。
+     * 用户看到 "maxMemory=512MB" 会以为这就是全部可用内存，
+     * 于是得出"我 16GB 手机怎么会不够"的结论 —— 而真相要看 `availMem`。
+     */
+    private fun memLine(): String {
+        return try {
+            val am = c.getSystemService(android.content.Context.ACTIVITY_SERVICE)
+                    as android.app.ActivityManager
+            val mi = android.app.ActivityManager.MemoryInfo()
+            am.getMemoryInfo(mi)
+            val low = if (mi.lowMemory) " LOW-MEMORY" else ""
+            "mem: avail=${LogBook.mb(mi.availMem)} total=${LogBook.mb(mi.totalMem)}" +
+                " threshold=${LogBook.mb(mi.threshold)}$low"
+        } catch (t: Throwable) {
+            "mem: 读不到（${t.javaClass.simpleName}）"
+        }
+    }
+
     /** 某个文件的量化等级（Q4_0 / Q8_0 / …），读不出来返回 null */
     fun quantOf(f: File): String? = GgufProbe.quantType(f)
 
@@ -1871,17 +1894,32 @@ class DrawPage(
 
         // 崩溃追踪：逐步把阶段写进文件。native 段错误会直接杀死进程，
         // 但只要事先写进了磁盘，下次启动就能看到崩在哪一步。
+        //
+        // 同时写两处，各管一件事：
+        //   · draw/.loadstage —— **信号文件**：存在 = 上次非正常退出（正常路径都会删）。
+        //     MainActivity 启动时据此弹提示。内容只为"崩在哪一步"服务，读完即删。
+        //   · logs/draw.log  —— **持久历史**：滚动保留、不随提示消失，
+        //     用户报 issue 时能整份导出。只有信号文件的话，重启一次线索就没了。
         val root = File(c.filesDir, DIR_NAME)
         val stageFile = File(root, ".loadstage")
         fun stage(s: String) {
             runCatching { stageFile.appendText("$s\n") }
+            LogBook.w(c, LogBook.DRAW, s)
         }
         runCatching { stageFile.writeText("") }
+        LogBook.w(c, LogBook.DRAW, "=== 加载开始 ===")
         stage("2 模型集：${set.id}（${set.kind}/${set.family}，${set.slotCount()} 个文件）")
-        slots.forEach { (k, v) -> stage("   槽位 $k = ${File(v).name}（${File(v).length() / 1048576} MB）") }
+        slots.forEach { (k, v) ->
+            // 文件名 + 实际大小：判断"是不是下错了量化版本"全靠这两项
+            val f = File(v)
+            stage("   槽位 $k = ${f.name}（${LogBook.mb(f.length())}）")
+        }
         activeLora()?.let { stage(c.getString(R.string.v_058, (it.name), (it.length() / 1048576))) }
         stage(c.getString(R.string.v_041, (android.os.Build.SUPPORTED_ABIS.firstOrNull()), (android.os.Build.VERSION.SDK_INT), (android.os.Build.MANUFACTURER), (android.os.Build.MODEL)))
         stage(c.getString(R.string.v_042, (Runtime.getRuntime().maxMemory() / 1048576), (root.usableSpace / 1048576)))
+        // 再加一行**系统可用内存**：maxMemory 只是 Java 堆上限，和 native 能否
+        // 分配下 7GB 权重无关 —— issue 里的误解基本都出在这一处。
+        runCatching { stage("   " + memLine()) }
 
         // 分步探测：每步都先落盘，后执行
         stage(c.getString(R.string.s_009))
@@ -1924,8 +1962,12 @@ class DrawPage(
             }
             activeBackend = used
             if (h == 0L) {
+                // 返回 null 是 sd.cpp 自己拒绝，**不是崩溃** —— 进程还活着，
+                // 所以清掉信号文件（让下次启动别误报"上次崩了"），
+                // 但**保留** logs/draw.log：这条失败照样值得被报出来。
                 stage(c.getString(R.string.s_012))
                 runCatching { stage(c.getString(R.string.s_010) + SdCppEngine.lastParams().replace("\n", "  |  ")) }
+                LogBook.w(c, LogBook.DRAW, "=== 加载失败（sd.cpp 返回 null，进程未崩）===")
                 runCatching { stageFile.delete() }
                 return c.getString(R.string.s_059)
             }
@@ -1950,12 +1992,18 @@ class DrawPage(
             statusText.post { refreshQuantText() }
             // 参数快照同步给 API（此时控件都已建好）
             statusText.post { runCatching { syncDrawCore() } }
+            // mmap 是**惰性**的：这里"加载成功"只说明元数据读通了、句柄建起来了，
+            // 权重还没真正全部读进内存。Flux / SD3.5-Large 这类会在这里成功、
+            // 到第一次推理才 OOM —— 所以下面一句要写明白，别让日志误导人。
+            LogBook.w(c, LogBook.DRAW, "=== 加载成功（backend=$used, threads=$nThreads）" +
+                " 注：mmap 惰性，权重尚未全部驻留 ===")
             runCatching { stageFile.delete() }
             onPipelineReady?.invoke()
             null
         } catch (e: Throwable) {
             stage(c.getString(R.string.v_046, (e.javaClass.name), (e.message)))
             runCatching { stageFile.appendText(android.util.Log.getStackTraceString(e) + "\n") }
+            LogBook.w(c, LogBook.DRAW, "=== 加载异常（Java 层）: ${e.javaClass.name}: ${e.message} ===")
             c.getString(R.string.v_047, (e.message ?: e.javaClass.simpleName))
         }
     }
@@ -2163,6 +2211,32 @@ class DrawPage(
         // 对话页出图不走界面的 setGenerating，这里手动上报一句：
         // 否则 API 侧不知道界面在出图，会插进来抢同一个 native 句柄
         DrawCore.uiBusy = true
+
+        // ---- 推理埋点 ----
+        //
+        // 为什么必须有这段：加载阶段有 `.loadstage` 追踪，**推理阶段此前一条日志都没有**。
+        // 而 Flux / SD3.5-Large 这类模型恰恰是「加载看似成功（mmap 惰性），
+        // 第一次推理才 OOM」—— 用户只看到闪退，报 issue 时什么都提供不了。
+        //
+        // 信号文件：推理期间生成 `.genstage`。它存在 = 上次推理没走到收尾（崩溃/被杀）。
+        // 和 `.loadstage` 分开是刻意的 —— 崩溃发生在加载还是推理，是两条完全不同的排查路径。
+        val stageFile = File(File(c.filesDir, DIR_NAME), ".genstage")
+        fun gstage(s: String) {
+            runCatching { stageFile.appendText("$s\n") }
+            LogBook.w(c, LogBook.DRAW, s)
+        }
+        runCatching { stageFile.writeText("") }
+        val t0 = System.currentTimeMillis()
+        gstage("=== 推理开始 ===")
+        // prompt 只留前 80 字：够判断"是不是超长/含特殊字符"，又不把用户写的内容整段抄走
+        gstage("  prompt=${LogBook.briefPrompt(prompt)}")
+        gstage("  size=${w}x$hgt steps=$steps cfg=$cfg seed=$useSeed sampler=$sampler sched=$scheduler")
+        gstage("  lora=${lora?.name ?: "无"} scale=$loraScale  backend=$activeBackend")
+        runCatching { gstage("  " + memLine()) }
+        // 步进日志：每步都落盘。sd.cpp 一步几秒，写一行的开销可忽略，
+        // 换来的是"崩在第 17/20 步"这种能直接定位的信息。
+        var lastLoggedStep = -1
+
         try {
             // 推理是同步阻塞的 native 调用（一张几百秒），绝不能跟调用方同线程——
             // 调用方基本都在 Dispatchers.Main，否则整个 UI 会卡死到出图为止。
@@ -2180,14 +2254,32 @@ class DrawPage(
                     seed = useSeed,
                     sampler = sampler,
                     scheduler = scheduler,
-                    cb = { cur, total -> onProgress(cur, total) },
+                    cb = { cur, total ->
+                        // 只在步号变化时写，避免同一 step 被回调多次时刷屏
+                        if (cur != lastLoggedStep) {
+                            lastLoggedStep = cur
+                            runCatching { gstage("  step $cur/$total") }
+                        }
+                        onProgress(cur, total)
+                    },
                     onPreview = onPreview?.let { f ->
                         SdCppEngine.PreviewCallback { st, w, h, rgb -> f(st, w, h, rgb) }
                     },
                 )
             } ?: throw IllegalStateException(c.getString(R.string.s_147))
             onProgress(steps, steps)
+            gstage("=== 推理完成，耗时 ${(System.currentTimeMillis() - t0) / 1000}s ===")
+            runCatching { stageFile.delete() }
             return ImageData(bmp, useSeed)
+        } catch (e: Throwable) {
+            // 取消不是失败：用户点了中断也会走到这里，别把它记成崩溃
+            val cancelled = cancelRequested
+            gstage(
+                if (cancelled) "=== 推理被用户中断（${(System.currentTimeMillis() - t0) / 1000}s）==="
+                else "=== 推理异常: ${e.javaClass.name}: ${e.message} ==="
+            )
+            runCatching { stageFile.delete() }
+            throw e
         } finally {
             DrawCore.uiBusy = false
         }
@@ -2351,28 +2443,61 @@ class DrawPage(
 
         val bmp = withContext(Dispatchers.IO) {
             val rgb = SdCppEngine.bitmapToRgb888(src)
-            SdCppEngine.render(
-                handle = h,
-                prompt = prompt,
-                negative = negative,
-                loraPath = lora?.absolutePath,
-                loraScale = loraScale,
-                width = w,
-                height = hgt,
-                steps = steps,
-                cfg = cfg,
-                seed = useSeed,
-                sampler = sampler,
-                scheduler = scheduler,
-                cb = { cur, total -> onProgress(cur, total) },
-                onPreview = onPreview?.let { f ->
-                    SdCppEngine.PreviewCallback { st, w, h, rgb -> f(st, w, h, rgb) }
-                },
-                initImage = rgb,
-                initWidth = src.width,
-                initHeight = src.height,
-                strength = strength,
-            )
+            val t0 = System.currentTimeMillis()
+            // 图生图和文生图走同一个 native 入口，崩起来一模一样，
+            // 所以埋点也要对称 —— 否则"只有文生图有日志"会让人以为是文生图的问题。
+            val gs = File(File(c.filesDir, DIR_NAME), ".genstage")
+            fun gstage(s: String) {
+                runCatching { gs.appendText("$s\n") }
+                LogBook.w(c, LogBook.DRAW, s)
+            }
+            runCatching { gs.writeText("") }
+            var lastStep = -1
+            gstage("=== 图生图推理开始 ===")
+            gstage("  prompt=${LogBook.briefPrompt(prompt)}")
+            gstage("  size=${w}x$hgt steps=$steps cfg=$cfg strength=$strength seed=$useSeed")
+            gstage("  src=${src.width}x${src.height} lora=${lora?.name ?: "无"} scale=$loraScale")
+            runCatching { gstage("  " + memLine()) }
+            try {
+                SdCppEngine.render(
+                    handle = h,
+                    prompt = prompt,
+                    negative = negative,
+                    loraPath = lora?.absolutePath,
+                    loraScale = loraScale,
+                    width = w,
+                    height = hgt,
+                    steps = steps,
+                    cfg = cfg,
+                    seed = useSeed,
+                    sampler = sampler,
+                    scheduler = scheduler,
+                    cb = { cur, total ->
+                        if (cur != lastStep) {
+                            lastStep = cur
+                            runCatching { gstage("  step $cur/$total") }
+                        }
+                        onProgress(cur, total)
+                    },
+                    onPreview = onPreview?.let { f ->
+                        SdCppEngine.PreviewCallback { st, w, h, rgb -> f(st, w, h, rgb) }
+                    },
+                    initImage = rgb,
+                    initWidth = src.width,
+                    initHeight = src.height,
+                    strength = strength,
+                ).also {
+                    gstage("=== 图生图完成，耗时 ${(System.currentTimeMillis() - t0) / 1000}s ===")
+                    runCatching { gs.delete() }
+                }
+            } catch (e: Throwable) {
+                gstage(
+                    if (cancelRequested) "=== 图生图被中断（${(System.currentTimeMillis() - t0) / 1000}s）==="
+                    else "=== 图生图异常: ${e.javaClass.name}: ${e.message} ==="
+                )
+                runCatching { gs.delete() }
+                throw e
+            }
         } ?: throw IllegalStateException(c.getString(R.string.s_147))
         onProgress(steps, steps)
         return ImageData(bmp, useSeed)

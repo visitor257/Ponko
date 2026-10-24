@@ -1,6 +1,7 @@
 // Ponko · (c) 2026 visitor257 · MIT License · github.com/visitor257/Ponko
 package com.litertchat.app.plugin
 
+import com.litertchat.app.LogBook
 import com.litertchat.app.R
 import android.content.ComponentName
 import android.content.Context
@@ -595,16 +596,23 @@ class PluginConnection(
 
         for ((intent, kind) in candidates) {
             Log.i(TAG, "[$packageName] 尝试绑定（$kind）${intent.component ?: intent.action}")
+            LogBook.w(LogBook.PLUGIN, "[$packageName] 尝试绑定 kind=$kind " +
+                "component=${intent.component ?: intent.action}")
             val ok = try {
                 context.bindService(intent, conn, Context.BIND_AUTO_CREATE)
             } catch (t: Throwable) {
                 // SecurityException 基本只剩「签名不一致」或「宿主没拿到权限」两种。
                 // 这种错换 intent 也没用，直接给结论
-                setState(State.FAILED, describeBindFailure(t, diag))
+                val msg = describeBindFailure(t, diag)
+                // 把给用户看的那段（里面带两边指纹）原样记进日志 ——
+                // 用户报 issue 时抄不准指纹，日志里有原文才比得了。
+                LogBook.w(LogBook.PLUGIN, "[$packageName] 绑定抛异常 ${t.javaClass.name}: $msg")
+                setState(State.FAILED, msg)
                 return
             }
             if (ok) {
                 boundOnce = true
+                LogBook.w(LogBook.PLUGIN, "[$packageName] 绑定成功 kind=$kind")
                 break
             }
             lastError = kind
@@ -612,7 +620,9 @@ class PluginConnection(
 
         if (!boundOnce) {
             // 返回 false ≠ 权限问题（那个会抛异常），而是**系统解析不到服务**。
-            setState(State.FAILED, describeFalseReturn(diag, lastError))
+            val msg = describeFalseReturn(diag, lastError)
+            LogBook.w(LogBook.PLUGIN, "[$packageName] 绑定返回 false（解析不到服务）: $msg")
+            setState(State.FAILED, msg)
             return
         }
         armTimeout()

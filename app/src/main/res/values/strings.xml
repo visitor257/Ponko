@@ -723,4 +723,10 @@ Try a different word, or tap Clear above.</string>
 <string name="s_743">Done</string>
 <string name="s_746">Idle</string>
 <string name="s_747">Back to the plugin list</string>
+<!-- s_748: 推理阶段崩溃的提示。和 s_035（加载崩溃）分开，因为用户该做的事不同 -->
+<string name="s_748">Last run crashed while generating (the model itself loaded fine). This usually means the weights do not fit in available memory — try a smaller quantization (Q4 instead of Q8), a smaller model, or a lower resolution. Details:</string>
+<string name="s_749">Diagnostics</string>
+<string name="s_750">Copy report</string>
+<string name="s_751">Report copied — paste it into your bug report</string>
+<string name="s_752">Clear logs</string>
 </resources>
