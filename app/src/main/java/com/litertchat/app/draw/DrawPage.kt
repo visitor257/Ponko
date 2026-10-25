@@ -1913,9 +1913,27 @@ class DrawPage(
         }
     }
 
+    /**
+     * 只剩「可用内存多少 MB」这一个数。
+     *
+     * 和 [memLine] 的区别：这个在**采样回调里每步调用**，所以不拼字符串、
+     * 不取 total/threshold，尽量少分配。取不到就返回 null（调用方降级为不写内存）。
+     *
+     * 线程：采样回调跑在 native 推理线程上，`getMemoryInfo` 是 Binder 调用，
+     * 任意线程都安全，不需要切回主线程。
+     */
+    private fun availMb(): Int? = try {
+        val am = c.getSystemService(android.content.Context.ACTIVITY_SERVICE)
+                as android.app.ActivityManager
+        val mi = android.app.ActivityManager.MemoryInfo()
+        am.getMemoryInfo(mi)
+        (mi.availMem / 1048576L).toInt()
+    } catch (t: Throwable) {
+        null
+    }
+
     /** 某个文件的量化等级（Q4_0 / Q8_0 / …），读不出来返回 null */
     fun quantOf(f: File): String? = GgufProbe.quantType(f)
-
     /** 删除单个已复制的模型文件（旧接口，保留给兼容用） */
     fun deleteModel(f: File): Boolean = runCatching { f.delete() }.getOrDefault(false)
 
@@ -2292,6 +2310,10 @@ class DrawPage(
         try {
             // 推理是同步阻塞的 native 调用（一张几百秒），绝不能跟调用方同线程——
             // 调用方基本都在 Dispatchers.Main，否则整个 UI 会卡死到出图为止。
+            // 采样过程中的内存：渲染前那行 mem 只是快照，看不到峰值。
+            // 每步记一次，崩了之后**日志最后一行就是崩溃前的可用内存**，
+            // 这比事后推断靠谱得多（OOM 是"越跑越少"还是"第一步就爆"完全不同）。
+            var minAvailMb = Int.MAX_VALUE
             val bmp = withContext(Dispatchers.IO) {
                 SdCppEngine.render(
                     handle = h,
@@ -2319,7 +2341,16 @@ class DrawPage(
                             // 只在步号变化时写，避免同一 step 被回调多次时刷屏
                             if (cur != lastLoggedStep) {
                                 lastLoggedStep = cur
-                                runCatching { gstage("  sample $cur/$total") }
+                                // 每步带上可用内存：这是唯一能看到峰值的办法。
+                                // 图省事只记 avail，不记 total/threshold（渲染前那行已经有了）
+                                val mb = runCatching { availMb() }.getOrNull()
+                                if (mb != null && mb < minAvailMb) minAvailMb = mb
+                                runCatching {
+                                    gstage(
+                                        if (mb != null) "  sample $cur/$total  avail=$mb MB"
+                                        else "  sample $cur/$total"
+                                    )
+                                }
                             }
                             onProgress(cur, total)
                         } else if (cur == total) {
@@ -2333,6 +2364,9 @@ class DrawPage(
                 )
             } ?: throw IllegalStateException(c.getString(R.string.s_147))
             onProgress(steps, steps)
+            // 峰值单独写一行：崩溃时看不到这行，但它出现在这里就说明没崩，
+            // 也顺便给出"这次最低剩下多少"作为下次的参照
+            if (minAvailMb != Int.MAX_VALUE) gstage("  peak: lowest avail = $minAvailMb MB")
             gstage("=== render done in ${(System.currentTimeMillis() - t0) / 1000}s ===")
             runCatching { stageFile.delete() }
             return ImageData(bmp, useSeed)
@@ -2519,6 +2553,8 @@ class DrawPage(
             runCatching { gs.writeText("") }
             var lastStep = -1
             var sawSampling = false
+            // 同文生图：每步记可用内存，崩溃时最后一行就是崩溃前的值
+            var minAvailMb = Int.MAX_VALUE
             gstage("=== img2img render start ===")
             gstage("  prompt=${LogBook.briefPrompt(prompt)}")
             gstage("  size=${w}x$hgt steps=$steps cfg=$cfg strength=$strength seed=$useSeed")
@@ -2547,7 +2583,14 @@ class DrawPage(
                             }
                             if (cur != lastStep) {
                                 lastStep = cur
-                                runCatching { gstage("  sample $cur/$total") }
+                                val mb = runCatching { availMb() }.getOrNull()
+                                if (mb != null && mb < minAvailMb) minAvailMb = mb
+                                runCatching {
+                                    gstage(
+                                        if (mb != null) "  sample $cur/$total  avail=$mb MB"
+                                        else "  sample $cur/$total"
+                                    )
+                                }
                             }
                             onProgress(cur, total)
                         } else if (cur == total) {
@@ -2562,6 +2605,7 @@ class DrawPage(
                     initHeight = src.height,
                     strength = strength,
                 ).also {
+                    if (minAvailMb != Int.MAX_VALUE) gstage("  peak: lowest avail = $minAvailMb MB")
                     gstage("=== img2img done in ${(System.currentTimeMillis() - t0) / 1000}s ===")
                     runCatching { gs.delete() }
                 }
