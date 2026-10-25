@@ -233,7 +233,8 @@ class DrawPage(
      * flash attention 正是最容易出现这种差异的一项（它在 sd.cpp 里对 T5 的 mask 还带着
      * `TODO: figure out if we can bend t5 to work too` 的未验证分支）。
      *
-     * 因此加开关：既能让人自行排除这个变量，也避免"开关不存在所以没法验证"。
+     * 因此加开关（**在「模型」页的绘图模型区**，不在绘图参数区 —— 它是加载时生效的）。
+     * 既能让人自行排除这个变量，也避免"开关不存在所以没法验证"。
      * 持久化 —— 关掉的人通常是撞过问题，不该每次重启又给打开。
      */
     var flashAttn: Boolean = c.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -313,7 +314,6 @@ class DrawPage(
     private lateinit var cfgEdit: EditText
     private lateinit var seedEdit: EditText
     private lateinit var loraCheck: CheckBox
-    private lateinit var flashAttnCheck: CheckBox
     private lateinit var loraHint: TextView
     private lateinit var genBtn: Button
 
@@ -384,7 +384,6 @@ class DrawPage(
     private lateinit var i2iSamplerSpinner: android.widget.Spinner
     private lateinit var i2iSchedulerSpinner: android.widget.Spinner
     private lateinit var i2iLoraCheck: CheckBox
-    private lateinit var i2iFlashAttnCheck: CheckBox
     private lateinit var i2iLoraScaleEdit: EditText
     private lateinit var i2iLoraHint: TextView
     private lateinit var i2iGenBtn: Button
@@ -587,18 +586,6 @@ class DrawPage(
             }
         }
         paramCard.addView(loraCheck)
-        // FlashAttention 开关。放在这里而不是「模型页」，是因为它和 LoRA 一样是
-        // 「换一种跑法」的性质；但它是**加载时**生效，所以文案里点明要重新加载模型。
-        flashAttnCheck = CheckBox(c).apply {
-            text = c.getString(R.string.s_753)
-            textSize = 13f
-            setTextColor(textColor)
-            isChecked = flashAttn
-            setPadding(0, dp(6), 0, 0)
-            setOnCheckedChangeListener { _, checked -> flashAttn = checked }
-        }
-        paramCard.addView(flashAttnCheck)
-        if (::i2iFlashAttnCheck.isInitialized) i2iFlashAttnCheck.isChecked = flashAttn
         loraScaleEdit = smallNumber(loadParam(KEY_LORA_SCALE, defOf("t2i", "loraScale", "1.0")))
         bindParam(loraScaleEdit, KEY_LORA_SCALE)
         paramCard.addView(paramRow(c.getString(R.string.s_024), loraScaleEdit, c.getString(R.string.s_037)))
@@ -924,20 +911,6 @@ class DrawPage(
             }
         }
         paramCard.addView(i2iLoraCheck)
-        // FlashAttention（与文生图共用同一个状态，两个 checkbox 相互同步）
-        i2iFlashAttnCheck = CheckBox(c).apply {
-            text = c.getString(R.string.s_753)
-            textSize = 13f
-            setTextColor(textColor)
-            isChecked = flashAttn
-            setPadding(0, dp(6), 0, 0)
-            setOnCheckedChangeListener { _, checked ->
-                flashAttn = checked
-                if (::flashAttnCheck.isInitialized) flashAttnCheck.isChecked = checked
-            }
-        }
-        paramCard.addView(i2iFlashAttnCheck)
-        if (::flashAttnCheck.isInitialized) flashAttnCheck.isChecked = flashAttn
         i2iLoraScaleEdit = smallNumber(loadParam(KEY_I2I_LORA_SCALE, defOf("i2i", "loraScale", "1.0")))
         bindParam(i2iLoraScaleEdit, KEY_I2I_LORA_SCALE)
         paramCard.addView(paramRow(c.getString(R.string.s_024), i2iLoraScaleEdit, c.getString(R.string.s_037)))
