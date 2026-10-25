@@ -3403,7 +3403,11 @@ class MainActivity : Activity() {
      *  单文件 = 一个 all-in-one .gguf；多文件 = 主模型 + 若干配套文件（按家族给槽位模板）。 */
     private fun showDrawTypeMenu() {
         val single = listOf("sd15", "sdxl", "sd3", "flux", "qwen", "video", "other")
-        val multi = listOf("sd3", "flux", "qwen", "hidream", "video", "other")
+        // 三个 LLM 编码器架构只在「多文件」里出现 —— 它们的扩散模型和文本编码器
+        // 几乎总是分开分发；塞进单文件模式会给人「一个文件就够」的错误暗示。
+        val multi = listOf("sd3", "flux", "qwen", "hidream",
+            DrawPage.FAM_IDEOGRAM, DrawPage.FAM_KREA2, DrawPage.FAM_KLEIN,
+            "video", "other")
         val labels = ArrayList<String>()
         val picks = ArrayList<kotlin.Pair<String, String>>()
         for (kind in listOf("single", "multi")) {

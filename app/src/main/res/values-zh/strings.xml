@@ -720,4 +720,7 @@
 <string name="s_751">报告已复制，粘贴到你的反馈里即可</string>
 <string name="s_752">清空日志</string>
 <string name="s_753">FlashAttention</string>
+<string name="s_754">Ideogram 4（需要 LLM 编码器 + Flux2 VAE）</string>
+<string name="s_755">Krea 2（需要 LLM 编码器 + Wan VAE）</string>
+<string name="s_756">FLUX.2 Klein（需要 LLM 编码器 + Flux2 VAE）</string>
 </resources>
