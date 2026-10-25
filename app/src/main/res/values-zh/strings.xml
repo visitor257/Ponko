@@ -719,4 +719,5 @@
 <string name="s_750">复制报告</string>
 <string name="s_751">报告已复制，粘贴到你的反馈里即可</string>
 <string name="s_752">清空日志</string>
+<string name="s_753">FlashAttention（更快；模型跑不起来时可以关掉试试 —— 重新加载模型后生效）</string>
 </resources>

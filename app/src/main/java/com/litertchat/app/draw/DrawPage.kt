@@ -174,6 +174,8 @@ class DrawPage(
         /** SharedPreferences 文件名与键（只存 UI 偏好） */
         private const val PREFS_NAME = "ponko"
         private const val KEY_USE_LORA = "useLora"
+        /** FlashAttention 开关（默认 true，但可关掉以排除兼容性问题） */
+        private const val KEY_FLASH_ATTN = "flashAttn"
 
         // 绘图参数持久化（提示词按用户要求不保存，每次重来）
         private const val KEY_W = "drawW"
@@ -221,8 +223,26 @@ class DrawPage(
      *  现读不缓存 —— 在「关于 → 设置」里改完，下次加载模型就用到新值。 */
     private val nThreads: Int get() = InferConfig.threads(c)
 
-    /** FlashAttention（CLIP + UNet）。实测不开每步慢约 28%（6 步 125s vs 98s）。 */
-    private var flashAttn: Boolean = true
+    /**
+     * FlashAttention（CLIP + UNet/T5）。实测不开每步慢约 28%（6 步 125s vs 98s），
+     * 所以默认开 —— **但上游 stable-diffusion.cpp 的默认是关**（`sd_ctx_params_init`
+     * 里 `*sd_ctx_params = {}`，`flash_attn` / `diffusion_flash_attn` 都是 false）。
+     *
+     * 我们单方面打开它，就意味着和上游、和 Termux 里直接跑 `sd` CLI 的行为不一致。
+     * 2026-10-25 issue #3：SD3 在权重加载完后、采样开始前崩溃，而同一模型在 Termux 正常 —
+     * flash attention 正是最容易出现这种差异的一项（它在 sd.cpp 里对 T5 的 mask 还带着
+     * `TODO: figure out if we can bend t5 to work too` 的未验证分支）。
+     *
+     * 因此加开关：既能让人自行排除这个变量，也避免"开关不存在所以没法验证"。
+     * 持久化 —— 关掉的人通常是撞过问题，不该每次重启又给打开。
+     */
+    var flashAttn: Boolean = c.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .getBoolean(KEY_FLASH_ATTN, true)
+        set(value) {
+            field = value
+            c.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit().putBoolean(KEY_FLASH_ATTN, value).apply()
+        }
 
     /** 外部（MainActivity）通知：当前已加载语言模型。用于「生成」按钮给出更准确的提示。 */
     var llmLoaded: Boolean = false
@@ -293,6 +313,7 @@ class DrawPage(
     private lateinit var cfgEdit: EditText
     private lateinit var seedEdit: EditText
     private lateinit var loraCheck: CheckBox
+    private lateinit var flashAttnCheck: CheckBox
     private lateinit var loraHint: TextView
     private lateinit var genBtn: Button
 
@@ -363,6 +384,7 @@ class DrawPage(
     private lateinit var i2iSamplerSpinner: android.widget.Spinner
     private lateinit var i2iSchedulerSpinner: android.widget.Spinner
     private lateinit var i2iLoraCheck: CheckBox
+    private lateinit var i2iFlashAttnCheck: CheckBox
     private lateinit var i2iLoraScaleEdit: EditText
     private lateinit var i2iLoraHint: TextView
     private lateinit var i2iGenBtn: Button
@@ -565,6 +587,18 @@ class DrawPage(
             }
         }
         paramCard.addView(loraCheck)
+        // FlashAttention 开关。放在这里而不是「模型页」，是因为它和 LoRA 一样是
+        // 「换一种跑法」的性质；但它是**加载时**生效，所以文案里点明要重新加载模型。
+        flashAttnCheck = CheckBox(c).apply {
+            text = c.getString(R.string.s_753)
+            textSize = 13f
+            setTextColor(textColor)
+            isChecked = flashAttn
+            setPadding(0, dp(6), 0, 0)
+            setOnCheckedChangeListener { _, checked -> flashAttn = checked }
+        }
+        paramCard.addView(flashAttnCheck)
+        if (::i2iFlashAttnCheck.isInitialized) i2iFlashAttnCheck.isChecked = flashAttn
         loraScaleEdit = smallNumber(loadParam(KEY_LORA_SCALE, defOf("t2i", "loraScale", "1.0")))
         bindParam(loraScaleEdit, KEY_LORA_SCALE)
         paramCard.addView(paramRow(c.getString(R.string.s_024), loraScaleEdit, c.getString(R.string.s_037)))
@@ -890,6 +924,20 @@ class DrawPage(
             }
         }
         paramCard.addView(i2iLoraCheck)
+        // FlashAttention（与文生图共用同一个状态，两个 checkbox 相互同步）
+        i2iFlashAttnCheck = CheckBox(c).apply {
+            text = c.getString(R.string.s_753)
+            textSize = 13f
+            setTextColor(textColor)
+            isChecked = flashAttn
+            setPadding(0, dp(6), 0, 0)
+            setOnCheckedChangeListener { _, checked ->
+                flashAttn = checked
+                if (::flashAttnCheck.isInitialized) flashAttnCheck.isChecked = checked
+            }
+        }
+        paramCard.addView(i2iFlashAttnCheck)
+        if (::flashAttnCheck.isInitialized) flashAttnCheck.isChecked = flashAttn
         i2iLoraScaleEdit = smallNumber(loadParam(KEY_I2I_LORA_SCALE, defOf("i2i", "loraScale", "1.0")))
         bindParam(i2iLoraScaleEdit, KEY_I2I_LORA_SCALE)
         paramCard.addView(paramRow(c.getString(R.string.s_024), i2iLoraScaleEdit, c.getString(R.string.s_037)))
@@ -2231,11 +2279,15 @@ class DrawPage(
         // prompt 只留前 80 字：够判断"是不是超长/含特殊字符"，又不把用户写的内容整段抄走
         gstage("  prompt=${LogBook.briefPrompt(prompt)}")
         gstage("  size=${w}x$hgt steps=$steps cfg=$cfg seed=$useSeed sampler=$sampler sched=$scheduler")
-        gstage("  lora=${lora?.name ?: "none"} scale=$loraScale backend=$activeBackend")
+        // flashAttn 必须记：它是唯一一个「我们和上游默认值不同」的开关，
+        // 排查兼容性问题时第一个要看的就是它开没开。
+        gstage("  lora=${lora?.name ?: "none"} scale=$loraScale backend=$activeBackend flashAttn=$flashAttn")
         runCatching { gstage("  " + memLine()) }
         // 步进日志：每步都落盘。sd.cpp 一步几秒，写一行的开销可忽略，
         // 换来的是"崩在第 17/20 步"这种能直接定位的信息。
         var lastLoggedStep = -1
+        // 是否已经进入采样阶段（区分"卡在权重加载"和"卡在采样"）
+        var sawSampling = false
 
         try {
             // 推理是同步阻塞的 native 调用（一张几百秒），绝不能跟调用方同线程——
@@ -2254,13 +2306,26 @@ class DrawPage(
                     seed = useSeed,
                     sampler = sampler,
                     scheduler = scheduler,
-                    cb = { cur, total ->
-                        // 只在步号变化时写，避免同一 step 被回调多次时刷屏
-                        if (cur != lastLoggedStep) {
-                            lastLoggedStep = cur
-                            runCatching { gstage("  step $cur/$total") }
+                    cb = { cur, total, sampling ->
+                        // 两种进度必须分开处理：
+                        //   · sampling=false 是权重加载（sd.cpp 报的是张量计数），
+                        //     **不能**拿去驱动进度条 —— 否则进度条会在 178/178 → 18/18 之间乱跳
+                        //   · sampling=true 才是真正的采样步
+                        if (sampling) {
+                            if (!sawSampling) {
+                                sawSampling = true
+                                runCatching { gstage("  weights materialized, sampling begins") }
+                            }
+                            // 只在步号变化时写，避免同一 step 被回调多次时刷屏
+                            if (cur != lastLoggedStep) {
+                                lastLoggedStep = cur
+                                runCatching { gstage("  sample $cur/$total") }
+                            }
+                            onProgress(cur, total)
+                        } else if (cur == total) {
+                            // 每个文件的加载只记完成那一行，不记每 200ms 的中间态
+                            runCatching { gstage("  load: tensor batch $cur/$total done") }
                         }
-                        onProgress(cur, total)
                     },
                     onPreview = onPreview?.let { f ->
                         SdCppEngine.PreviewCallback { st, w, h, rgb -> f(st, w, h, rgb) }
@@ -2453,6 +2518,7 @@ class DrawPage(
             }
             runCatching { gs.writeText("") }
             var lastStep = -1
+            var sawSampling = false
             gstage("=== img2img render start ===")
             gstage("  prompt=${LogBook.briefPrompt(prompt)}")
             gstage("  size=${w}x$hgt steps=$steps cfg=$cfg strength=$strength seed=$useSeed")
@@ -2472,12 +2538,21 @@ class DrawPage(
                     seed = useSeed,
                     sampler = sampler,
                     scheduler = scheduler,
-                    cb = { cur, total ->
-                        if (cur != lastStep) {
-                            lastStep = cur
-                            runCatching { gstage("  step $cur/$total") }
+                    cb = { cur, total, sampling ->
+                        // 同文生图：权重加载进度不能拿来驱动进度条 / 不能标成采样步
+                        if (sampling) {
+                            if (!sawSampling) {
+                                sawSampling = true
+                                runCatching { gstage("  weights materialized, sampling begins") }
+                            }
+                            if (cur != lastStep) {
+                                lastStep = cur
+                                runCatching { gstage("  sample $cur/$total") }
+                            }
+                            onProgress(cur, total)
+                        } else if (cur == total) {
+                            runCatching { gstage("  load: tensor batch $cur/$total done") }
                         }
-                        onProgress(cur, total)
                     },
                     onPreview = onPreview?.let { f ->
                         SdCppEngine.PreviewCallback { st, w, h, rgb -> f(st, w, h, rgb) }

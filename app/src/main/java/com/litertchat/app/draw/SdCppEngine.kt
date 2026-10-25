@@ -70,7 +70,15 @@ object SdCppEngine {
     const val WTYPE_Q8_0 = 8
 
     fun interface StepCallback {
-        fun onStep(step: Int, steps: Int)
+        /**
+         * @param sampling true = 采样循环的第 step 步；false = 权重加载的进度。
+         *
+         * sd.cpp 用**同一个**全局进度回调报告这两件事，而权重是惰性加载的
+         * （mmap，真正的 materialize 在第一次推理内部），所以两者会混在一起。
+         * 不加这个区分的话，「加载 178 个张量」和「采样第 178 步」长得一样 ——
+         * 2026-10-25 issue #3 里我和报告者都误读成了采样步数。
+         */
+        fun onStep(step: Int, steps: Int, sampling: Boolean)
     }
 
     /** 生成过程预览：每一步回调一张低分辨率小图（RGB888，行优先，左上原点） */

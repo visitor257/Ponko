@@ -719,4 +719,5 @@ Try a different word, or tap Clear above.</string>
 <string name="s_750">Copy report</string>
 <string name="s_751">Report copied — paste it into your bug report</string>
 <string name="s_752">Clear logs</string>
+<string name="s_753">FlashAttention (faster; turn off if a model fails to run — takes effect after reloading the model)</string>
 </resources>
