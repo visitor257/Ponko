@@ -765,6 +765,8 @@ class MainActivity : Activity() {
     private var drawSavedContainer: LinearLayout? = null
     /** 绘图模型的「加载/卸载」二合一按钮 */
     private var drawToggleBtn: TextView? = null
+    /** 绘图模型的 FlashAttention 开关（加载时生效；已加载时禁用） */
+    private var drawFlashAttnCheck: CheckBox? = null
     /** 绘图模型的「导入」按钮（复制期间禁用） */
     private var drawImportBtn: TextView? = null
     /** 绘图模型导入进度条（本地复制时显示） */
@@ -1583,6 +1585,18 @@ class MainActivity : Activity() {
         // 加载 / 卸载合成一个按钮：未加载时点击 = 加载，已加载时点击 = 卸载
         drawToggleBtn = actionButton(getString(R.string.s_061)) { onDrawToggleClick() }
         drawCard.addView(drawToggleBtn, matchWrap().apply { topMargin = dp(8) })
+        // FlashAttention：**加载时**生效，所以放在「模型」这一区而不是绘图参数区。
+        // 模型已加载时禁用 —— 改了也不会立刻起作用，允许点只会让人以为已经切好了。
+        drawFlashAttnCheck = CheckBox(this).apply {
+            text = getString(R.string.s_753)
+            textSize = 12.5f
+            setTextColor(C_TEXT)
+            buttonTintList = ColorStateList.valueOf(C_PRIMARY)
+            isChecked = drawPage?.flashAttn ?: true
+            setPadding(0, dp(8), 0, 0)
+            setOnCheckedChangeListener { _, v -> drawPage?.flashAttn = v }
+        }
+        drawCard.addView(drawFlashAttnCheck, matchWrap())
         drawCard.addView(
             smallButton(getString(R.string.s_749)) { showDiagnosticsDialog() },
             matchWrap().apply { topMargin = dp(10) }
@@ -3975,7 +3989,8 @@ class MainActivity : Activity() {
      *  与对话模型保持一致：加载=蓝色实心；已加载=浅灰描边（避免误以为还是主操作）。 */
     private fun refreshDrawToggle() {
         val b = drawToggleBtn ?: return
-        if (drawPage?.isReady() == true) {
+        val ready = drawPage?.isReady() == true
+        if (ready) {
             b.text = getString(R.string.s_063)
             b.background = rounded(C_SOFT_BTN2, 12,
                 strokeDp = 1, strokeColor = C_BORDER)
@@ -3984,6 +3999,13 @@ class MainActivity : Activity() {
             b.text = getString(R.string.s_061)
             b.background = rounded(C_PRIMARY, 12)
             b.setTextColor(Color.WHITE)
+        }
+        // FlashAttention 是**加载时**生效的参数：模型在跑的时候改它没有任何作用，
+        // 允许点会让人以为已经切过去了。所以已加载就禁用，卸载后自动恢复。
+        drawFlashAttnCheck?.let { cb ->
+            cb.isEnabled = !ready
+            cb.alpha = if (ready) 0.5f else 1f
+            cb.isChecked = drawPage?.flashAttn ?: true
         }
     }
 

@@ -719,4 +719,5 @@
 <string name="s_750">复制报告</string>
 <string name="s_751">报告已复制，粘贴到你的反馈里即可</string>
 <string name="s_752">清空日志</string>
+<string name="s_753">FlashAttention</string>
 </resources>

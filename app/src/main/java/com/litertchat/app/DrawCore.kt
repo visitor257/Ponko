@@ -145,7 +145,11 @@ object DrawCore {
                         seed = useSeed,
                         sampler = sampler ?: p.sampler,
                         scheduler = scheduler ?: p.scheduler,
-                        cb = { cur, total -> onStep?.invoke(cur, total) },
+                        // 只在 sampling=true 时上报：false 是权重加载（张量数），
+                        // 拿去当进度会让进度条在 178/178 → 18/18 之间乱跳。
+                        cb = { cur, total, sampling ->
+                            if (sampling) onStep?.invoke(cur, total)
+                        },
                     )
                 } ?: throw IllegalStateException("生成失败（引擎返回空图）")
                 out.add(Result(bmp, useSeed))

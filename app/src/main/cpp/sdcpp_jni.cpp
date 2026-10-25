@@ -22,10 +22,28 @@ JavaVM* g_vm = nullptr;
 struct SdHandle {
     sd_ctx_t* ctx = nullptr;
     jobject   cb  = nullptr;    // StepCallback（GlobalRef）
-    jmethodID cb_mid = nullptr; // onStep(II)V
+    jmethodID cb_mid = nullptr; // onStep(IIZ)V
     jobject   pcb = nullptr;    // PreviewCallback（GlobalRef）
     jmethodID pcb_mid = nullptr; // onPreview(III[B)V
     std::atomic<bool> cancelled{false};
+
+    // ---- 进度回调的"这是哪个阶段" ----
+    //
+    // sd.cpp 的 sd_progress_cb 是**全局唯一**的，而它被两处复用：
+    //   · 采样循环      diffusion_engine.cpp  pretty_progress(step, total_steps)
+    //   · 权重加载      model_loader.cpp      pretty_bytes_progress(张量数, 总张量数)
+    //
+    // 更麻烦的是权重是**惰性**加载的（mmap）：真正的 materialize 发生在
+    // 第一次推理内部，所以那段张量进度也走我们这个回调。
+    //
+    // 结果：不做区分的话，日志里"加载 178 个张量"和"采样第 3 步"长得一模一样，
+    // 用户和我都以为是采样步数 —— 2026-10-25 issue #3 就是这么被误读的。
+    //
+    // 判别依据：采样进度报告的总数**就等于请求的步数**，而加载进度报告的是
+    // 某个文件的张量数（几十到几百）。用 req_steps 比对即可。
+    // 一旦匹配上就锁存 sampling_started，避免"某文件恰好也有 N 个张量"在采样开始后误判。
+    int  req_steps        = 0;
+    bool sampling_started = false;
 };
 
 SdHandle* g_active = nullptr;  // 同时只允许一个生成（进度回调是全局的）
@@ -42,10 +60,22 @@ const char* jstr(JNIEnv* env, jstring s, std::string& holder) {
 }
 
 // 进度回调：由 native 推理线程调用 → 需要 attach 到 JVM
+//
+// 这里要把**采样进度**和**权重加载进度**区分开（两者共用同一个全局回调）。
+// 判据见 SdHandle 的注释：报告的总数 == 请求的采样步数 → 这是采样。
 void progressTrampoline(int step, int steps, float /*time*/, void* data) {
     SdHandle* h = static_cast<SdHandle*>(data);
     if (!h || !h->cb || !h->cb_mid) return;
     if (h->cancelled.load()) return;
+
+    // steps 是本次回调报告的总数：
+    //   == req_steps  → 采样循环
+    //   != req_steps  → 某个模型文件的张量加载
+    // 锁存：采样一旦开始就不再回到加载态，避免采样中途某个数恰好相等时误判。
+    if (h->req_steps > 0 && steps == h->req_steps) {
+        h->sampling_started = true;
+    }
+    const bool sampling = h->sampling_started;
 
     JNIEnv* env = nullptr;
     bool attached = false;
@@ -53,7 +83,9 @@ void progressTrampoline(int step, int steps, float /*time*/, void* data) {
         if (g_vm->AttachCurrentThread(&env, nullptr) != JNI_OK || env == nullptr) return;
         attached = true;
     }
-    env->CallVoidMethod(h->cb, h->cb_mid, static_cast<jint>(step), static_cast<jint>(steps));
+    env->CallVoidMethod(h->cb, h->cb_mid,
+                        static_cast<jint>(step), static_cast<jint>(steps),
+                        sampling ? JNI_TRUE : JNI_FALSE);
     if (env->ExceptionCheck()) env->ExceptionClear();
     if (attached) g_vm->DetachCurrentThread();
 }
@@ -252,9 +284,10 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeGenerate(
     if (cb != nullptr) {
         h->cb = env->NewGlobalRef(cb);
         jclass cls = env->GetObjectClass(cb);
-        h->cb_mid = env->GetMethodID(cls, "onStep", "(II)V");
+        // 第三个参数 sampling 区分采样进度 / 权重加载进度，见 SdHandle 注释
+        h->cb_mid = env->GetMethodID(cls, "onStep", "(IIZ)V");
         if (h->cb_mid == nullptr) {
-            LOGE("StepCallback.onStep(II)V not found");
+            LOGE("StepCallback.onStep(IIZ)V not found");
             env->DeleteGlobalRef(h->cb);
             h->cb = nullptr;
         }
@@ -275,6 +308,10 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeGenerate(
         sd_set_preview_callback(nullptr, PREVIEW_NONE, 1, true, false, nullptr);
     }
     h->cancelled.store(false);
+    // 每次推理都要重置阶段判定：上一次的 sampling_started 不能带过来，
+    // 否则本次的权重加载会被误标成采样进度。
+    h->req_steps        = steps;
+    h->sampling_started = false;
     g_active = h;
     sd_set_progress_callback(progressTrampoline, h);
 
