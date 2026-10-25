@@ -107,6 +107,23 @@ class DrawPage(
         const val FAM_VIDEO = "video"
         const val FAM_OTHER = "other"
 
+        // ---- 以下三个是 sd.cpp 已支持、但 App 之前没有出口的架构（2.0.2 补上）----
+        //
+        // 共同点：文本编码器都是 **LLM**（不是 CLIP/T5），所以槽位是
+        // diffusion + llm(+llm_vision) + vae，和 Qwen-Image 同构。
+        // VAE 各家不同（见 model.h 的 sd_version_uses_*_vae），必须用户自己放对文件。
+        //
+        // 顺带记下 sd.cpp 里的默认值，方便判断出图参数合不合理：
+        //   Ideogram4  FLOW_PRED        flow_shift 1.0
+        //   Krea2      FLUX_FLOW_PRED   flow_shift 1.15
+        //   Flux2Klein FLUX_FLOW_PRED   flow_shift 1.0（带 guidance_in 时 1.15）
+        /** Ideogram 4：LLM 编码器（Qwen3-VL）+ Flux2 VAE */
+        const val FAM_IDEOGRAM = "ideogram4"
+        /** Krea 2：LLM 编码器（Qwen3-VL）+ Wan VAE */
+        const val FAM_KREA2 = "krea2"
+        /** FLUX.2 Klein：LLM 编码器（Qwen3）+ Flux2 VAE */
+        const val FAM_KLEIN = "klein"
+
         /** 家族显示名 */
         fun familyLabelRes(family: String): Int = when (family) {
             FAM_SD15 -> R.string.s_337
@@ -116,6 +133,9 @@ class DrawPage(
             FAM_QWEN -> R.string.s_341
             FAM_HIDREAM -> R.string.s_342
             FAM_VIDEO -> R.string.s_343
+            FAM_IDEOGRAM -> R.string.s_754
+            FAM_KREA2 -> R.string.s_755
+            FAM_KLEIN -> R.string.s_756
             else -> R.string.s_344
         }
 
@@ -157,6 +177,10 @@ class DrawPage(
                 family == FAM_HIDREAM -> listOf(
                     "diffusion" to true, "high_noise" to false, "clip_l" to false, "clip_g" to false,
                     "t5xxl" to false, "llm" to false, "vae" to true)
+                // 三个 LLM 编码器架构：扩散模型 + LLM 必填；llm_vision 只在用参考图时才需要，
+                // 所以标可选 —— 标必填会让纯文生图的人卡在"缺文件"上。
+                family == FAM_IDEOGRAM || family == FAM_KREA2 || family == FAM_KLEIN -> listOf(
+                    "diffusion" to true, "llm" to true, "llm_vision" to false, "vae" to true)
                 family == FAM_VIDEO -> listOf(
                     "diffusion" to true, "clip_vision" to false, "t5xxl" to false, "llm" to false,
                     "vae" to true, "audio_vae" to false)
@@ -167,8 +191,11 @@ class DrawPage(
             }
             // TAESD 是可选的附加项，只在图像模型上出现：
             // 视频走 TinyVideoAutoEncoder（权重格式不同）、Qwen / HiDream 的 VAE 各走特殊路径，先不暴露。
-            return if (family == FAM_VIDEO || family == FAM_QWEN || family == FAM_HIDREAM) base
-            else base + ("taesd" to false)
+            // Ideogram4 / Krea2 / Klein 的 VAE 同样各有专用实现（Flux2 VAE / Wan VAE），
+            // TAESD 那套编解码器对它们不成立，所以这里一并排除。
+            val noTaesd = family == FAM_VIDEO || family == FAM_QWEN || family == FAM_HIDREAM ||
+                family == FAM_IDEOGRAM || family == FAM_KREA2 || family == FAM_KLEIN
+            return if (noTaesd) base else base + ("taesd" to false)
         }
 
         /** SharedPreferences 文件名与键（只存 UI 偏好） */
