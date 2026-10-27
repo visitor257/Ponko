@@ -13,8 +13,8 @@ android {
         applicationId = "com.litertchat.app"
         minSdk = 28
         targetSdk = 36
-        versionCode = 22
-        versionName = "2.0.2"
+        versionCode = 23
+        versionName = "2.0.3"
         ndk {
             // LiteRT-LM 与 llama.cpp 的 native 都只跑 arm64 真机，去掉 x86_64 可减小 APK
             abiFilters += "arm64-v8a"
