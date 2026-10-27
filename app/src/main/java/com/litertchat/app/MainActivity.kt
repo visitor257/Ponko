@@ -1000,20 +1000,101 @@ class MainActivity : Activity() {
             setPadding(dp(16), dp(8), dp(16), dp(8))
         }
         val sc = ScrollView(this).apply { addView(tv) }
-        AlertDialog.Builder(this)
-            .setTitle(getString(R.string.s_749))
-            .setView(sc)
-            .setPositiveButton(getString(R.string.s_750)) { _, _ ->
+
+        // AlertDialog 只有三个按钮位。这里四个动作（保存 / 复制 / 清空 / 关闭），
+        // 把前三个自己排成一行塞进 setView，关闭仍用系统的 negative 位 ——
+        // 位置符合习惯（左下），也不用自己管 dismiss。
+        val buttons = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(dp(12), dp(4), dp(12), dp(8))
+        }
+        listOf(
+            smallButton(getString(R.string.s_757)) { saveDiagnosticsToDocuments(report) },
+            smallButton(getString(R.string.s_750)) {
                 val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
                 cm.setPrimaryClip(android.content.ClipData.newPlainText("ponko-diag", report))
                 toast(getString(R.string.s_751))
-            }
-            .setNeutralButton(getString(R.string.s_752)) { _, _ ->
+            },
+            smallButton(getString(R.string.s_752)) {
                 LogBook.MODULES.forEach { (mod, _) -> LogBook.clear(this, mod) }
                 toast(getString(R.string.s_112))
-            }
+            },
+        ).forEach { v ->
+            buttons.addView(v, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                .apply { marginEnd = dp(8) })
+        }
+
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            // 高度必须写死：LinearLayout 内部的 weight 依赖父容器有确定高度，
+            // 而 AlertDialog 的自定义 View 是按 wrap_content 量的 —— 用 0+weight
+            // 会让 ScrollView 塌成 0，报告区直接看不见。
+            addView(sc, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(380)
+            ))
+            addView(buttons)
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle(getString(R.string.s_749))
+            .setView(box)
             .setNegativeButton(getString(R.string.s_049), null)
             .show()
+    }
+
+    /**
+     * 把诊断报告存成 .txt 到「文档」(Documents)。
+     *
+     * 为什么走 MediaStore 而不是 File 直写：targetSdk 34+ 不允许直接往公共目录
+     * 写文件，会被系统拒掉。API 29 起 MediaStore 插入不需要任何权限。
+     *
+     * API 28 例外：公共 Documents 仍要 WRITE_EXTERNAL_STORAGE，而这个权限只为
+     * 存一份日志去申请不值得（用户会看到一个莫名其妙的存储权限弹窗），所以低版本
+     * 降级到应用自己的外部目录，路径直接显示在提示里，用户照样能用文件管理器取。
+     *
+     * 兜底思路：MediaStore.Files 写 Documents 在个别 ROM 上会返回 null，
+     * 所以再退一步到 Download（那个集合兼容性最好），最后才退到私有目录。
+     */
+    private fun saveDiagnosticsToDocuments(report: String) {
+        val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US)
+            .format(java.util.Date())
+        val name = "ponko-diag-$stamp.txt"
+        val bytes = report.toByteArray(Charsets.UTF_8)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                // 依次尝试：Documents → Download。哪个成通用哪个。
+                val targets = listOf(
+                    MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY) to Environment.DIRECTORY_DOCUMENTS,
+                    MediaStore.Downloads.EXTERNAL_CONTENT_URI to Environment.DIRECTORY_DOWNLOADS,
+                )
+                for ((collection, dir) in targets) {
+                    val values = ContentValues().apply {
+                        put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+                        put(MediaStore.MediaColumns.MIME_TYPE, "text/plain")
+                        put(MediaStore.MediaColumns.RELATIVE_PATH, dir)
+                    }
+                    val uri = runCatching { contentResolver.insert(collection, values) }.getOrNull()
+                        ?: continue
+                    val ok = runCatching {
+                        contentResolver.openOutputStream(uri)?.use { it.write(bytes) } != null
+                    }.getOrDefault(false)
+                    if (ok) {
+                        toast(getString(R.string.s_758, dir, name))
+                        return
+                    }
+                    // 写失败就把刚建的空条目撤掉，别在「文档」里留垃圾
+                    runCatching { contentResolver.delete(uri, null, null) }
+                }
+            }
+            // API 28，或上面两个集合都没成：落到应用外部私有目录
+            val dir = getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS) ?: filesDir
+            var f = File(dir, name)
+            if (f.exists()) f = File(dir, "ponko-diag-$stamp-1.txt")
+            f.writeBytes(bytes)
+            toast(getString(R.string.s_759, f.absolutePath))
+        } catch (t: Throwable) {
+            toast(getString(R.string.s_760, t.javaClass.simpleName, t.message ?: ""))
+        }
     }
 
     override fun onPause() {

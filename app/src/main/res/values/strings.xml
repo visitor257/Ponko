@@ -723,4 +723,8 @@ Try a different word, or tap Clear above.</string>
 <string name="s_754">Ideogram 4 (needs LLM encoder + Flux2 VAE)</string>
 <string name="s_755">Krea 2 (needs LLM encoder + Wan VAE)</string>
 <string name="s_756">FLUX.2 Klein (needs LLM encoder + Flux2 VAE)</string>
+<string name="s_757">Save to Documents</string>
+<string name="s_758">Saved to %1$s/%2$s</string>
+<string name="s_759">Saved to %1$s (public Documents needs a permission this app does not request)</string>
+<string name="s_760">Save failed: %1$s %2$s</string>
 </resources>

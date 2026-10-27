@@ -723,4 +723,8 @@
 <string name="s_754">Ideogram 4（需要 LLM 编码器 + Flux2 VAE）</string>
 <string name="s_755">Krea 2（需要 LLM 编码器 + Wan VAE）</string>
 <string name="s_756">FLUX.2 Klein（需要 LLM 编码器 + Flux2 VAE）</string>
+<string name="s_757">保存到文档</string>
+<string name="s_758">已保存到 %1$s/%2$s</string>
+<string name="s_759">已保存到 %1$s（公共「文档」目录需要存储权限，本 App 没有申请）</string>
+<string name="s_760">保存失败：%1$s %2$s</string>
 </resources>
