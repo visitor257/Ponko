@@ -22,13 +22,18 @@ setlocal
 call "C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvars64.bat" >nul 2>&1
 if errorlevel 1 goto :novc
 
+REM Build in place: the project root is the parent of this script's folder.
+REM Previously this was hardcoded to C:\PonkoBuild, which meant every tree
+REM (main line, beta line) silently built that one copy instead of itself.
+for %%I in ("%~dp0..") do set "PROJ_ROOT=%%~fI"
+
 set "JAVA_HOME=C:\Program Files\Eclipse Adoptium\jdk-17.0.19.10-hotspot"
 set "ANDROID_HOME=C:\Android"
 set "ANDROID_SDK_ROOT=C:\Android"
 set "PATH=C:\Android\cmake\3.31.6\bin;%PATH%"
 
-if not exist "C:\PonkoBuild\settings.gradle.kts" goto :nosandbox
-cd /d C:\PonkoBuild
+if not exist "%PROJ_ROOT%\settings.gradle.kts" goto :nosandbox
+cd /d "%PROJ_ROOT%"
 call C:\gradle\gradle-9.7.1\bin\gradle.bat %* --console=plain --no-daemon
 exit /b %errorlevel%
 
@@ -37,6 +42,6 @@ echo ERROR: vcvars64.bat not found or failed to load.
 exit /b 1
 
 :nosandbox
-echo ERROR: C:\PonkoBuild not found. Sync the project there first
-echo        ^(AGP rejects non-ASCII build paths^).
+echo ERROR: settings.gradle.kts not found in "%PROJ_ROOT%"
+echo        ^(AGP rejects non-ASCII build paths, so the tree must live on an ASCII path^).
 exit /b 1

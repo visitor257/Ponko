@@ -1,28 +1,49 @@
 #include "vocab.h"
-
 #include "clip_merges.hpp"
-
-// Ponko 精简版：SD1.5 只需要 CLIP tokenizer。
-// 其余 tokenizer 的词表（gemma/gemma2/gpt_oss/mistral/qwen2/t5/umt5）合计约 250 MB 源码，
-// 在同一个 TU 里编译会撑爆内存，这里改为返回空串（SD1.5 路径不会调用它们）。
+#include "gemma_merges.hpp"
+#include "gemma_vocab.hpp"
+#include "mistral_merges.hpp"
+#include "mistral_vocab.hpp"
+#include "qwen_merges.hpp"
+#include "t5.hpp"
+#include "umt5.hpp"
 
 std::string load_clip_merges() {
-    std::string merges_utf8_str(reinterpret_cast<const char*>(clip_merges_utf8_c_str),
-                                sizeof(clip_merges_utf8_c_str));
+    std::string merges_utf8_str(reinterpret_cast<const char*>(clip_merges_utf8_c_str), sizeof(clip_merges_utf8_c_str));
     return merges_utf8_str;
 }
 
-std::string load_qwen2_merges() { return {}; }
+std::string load_qwen2_merges() {
+    std::string merges_utf8_str(reinterpret_cast<const char*>(qwen2_merges_utf8_c_str), sizeof(qwen2_merges_utf8_c_str));
+    return merges_utf8_str;
+}
 
-std::string load_mistral_merges() { return {}; }
-std::string load_mistral_vocab_json() { return {}; }
+std::string load_mistral_merges() {
+    std::string merges_utf8_str(reinterpret_cast<const char*>(mistral_merges_utf8_c_str), sizeof(mistral_merges_utf8_c_str));
+    return merges_utf8_str;
+}
 
-std::string load_t5_tokenizer_json() { return {}; }
-std::string load_umt5_tokenizer_json() { return {}; }
+std::string load_mistral_vocab_json() {
+    std::string json_str(reinterpret_cast<const char*>(mistral_vocab_json_utf8_c_str), sizeof(mistral_vocab_json_utf8_c_str));
+    return json_str;
+}
 
-std::string load_gemma_merges() { return {}; }
-std::string load_gemma_vocab_json() { return {}; }
-std::string load_gemma2_merges() { return {}; }
-std::string load_gemma2_vocab_json() { return {}; }
-std::string load_gpt_oss_merges() { return {}; }
-std::string load_gpt_oss_vocab_json() { return {}; }
+std::string load_t5_tokenizer_json() {
+    std::string json_str(reinterpret_cast<const char*>(t5_tokenizer_json_str), sizeof(t5_tokenizer_json_str));
+    return json_str;
+}
+
+std::string load_umt5_tokenizer_json() {
+    std::string json_str(reinterpret_cast<const char*>(umt5_tokenizer_json_str), sizeof(umt5_tokenizer_json_str));
+    return json_str;
+}
+
+std::string load_gemma_merges() {
+    std::string merges_utf8_str(reinterpret_cast<const char*>(gemma_merges_utf8_c_str), sizeof(gemma_merges_utf8_c_str));
+    return merges_utf8_str;
+}
+
+std::string load_gemma_vocab_json() {
+    std::string json_str(reinterpret_cast<const char*>(gemma_vocab_json_utf8_c_str), sizeof(gemma_vocab_json_utf8_c_str));
+    return json_str;
+}

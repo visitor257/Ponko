@@ -365,14 +365,15 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeGenerate(
     LOGI("generate_image: %s", gdump ? gdump : "(null)");
     if (gdump) free(gdump);
 
-    sd_image_t* out = nullptr;
-    int n = 0;
-    bool ok = generate_image(h->ctx, &g, &out, &n);
-    if (n > 0 && out != nullptr && out->data != nullptr) ok = true;
+    // sd.cpp 新版把"出图 + 张数"合并成一个结果对象，失败时置 nullptr 并由调用方释放。
+    sd_image_generation_result_t* res = nullptr;
+    bool ok = generate_image(h->ctx, &g, &res);
+    const int n = (res != nullptr) ? res->count : 0;
+    sd_image_t* out = (n > 0) ? &res->items[0].image : nullptr;
 
     jintArray result = nullptr;
-    if (ok && n > 0 && out != nullptr && out[0].data != nullptr) {
-        const sd_image_t& img = out[0];
+    if (ok && out != nullptr && out->data != nullptr) {
+        const sd_image_t& img = *out;
         const int w = static_cast<int>(img.width);
         const int hh = static_cast<int>(img.height);
         const int ch = static_cast<int>(img.channel);
@@ -389,11 +390,10 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeGenerate(
         }
         result = env->NewIntArray(total);
         env->SetIntArrayRegion(result, 0, total, px.data());
-        free_sd_images(out, n);
     } else {
-        if (out) free_sd_images(out, n);
         LOGE("generate_image failed (ok=%d, n=%d)", ok ? 1 : 0, n);
     }
+    if (res != nullptr) free_sd_image_generation_result(res);
 
     if (initBytes != nullptr && initData != nullptr) {
         env->ReleaseByteArrayElements(initData, initBytes, JNI_ABORT);

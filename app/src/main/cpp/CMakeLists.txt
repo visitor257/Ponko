@@ -93,9 +93,11 @@ if (SD_VULKAN)
         # Windows 的 MAX_PATH：ggml 的 host 工具（vulkan-shaders-gen）用 ExternalProject 构建，
         # 默认会落在 <build>/.cxx/<config>/<hash>/<abi>/sd/ggml/... 这种超深目录里，
         # MSVC 因对象文件路径超过 250 字符直接报 C1083。用 EP_BASE 把它挪到短目录（只影响这个 host 工具）。
-        set(_ponko_ep_base "$ENV{TEMP}/ponko-ep")
-        if (NOT _ponko_ep_base OR _ponko_ep_base STREQUAL "/ponko-ep")
-            set(_ponko_ep_base "C:/ponko-ep")
+        # 目录名带 -beta：这条线（sd.cpp 升级）与主线并存，共用同一个 EP 目录会命中对方生成的
+        # CMakeCache，报 "source does not match the source ... used to generate cache"。
+        set(_ponko_ep_base "$ENV{TEMP}/ponko-ep-beta")
+        if (NOT _ponko_ep_base OR _ponko_ep_base STREQUAL "/ponko-ep-beta")
+            set(_ponko_ep_base "C:/ponko-ep-beta")
         endif ()
         file(TO_CMAKE_PATH "${_ponko_ep_base}" _ponko_ep_base)
         set_property(DIRECTORY PROPERTY EP_BASE "${_ponko_ep_base}")

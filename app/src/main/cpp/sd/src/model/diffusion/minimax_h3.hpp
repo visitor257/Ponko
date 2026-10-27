@@ -12,6 +12,7 @@
 #include "core/ggml_tensor_utils.h"
 
 #include "core/ggml_graph_cut.h"
+#include "model/common/block.hpp"
 #include "model/diffusion/dit.hpp"
 #include "model/diffusion/model.hpp"
 
@@ -160,12 +161,13 @@ namespace MiniMaxH3 {
         return ggml_reshape_3d(ctx, x, x->ne[0], x->ne[1], x->ne[2] * x->ne[3]);
     }
 
-    static ggml_tensor* apply_partial_rope(ggml_context* ctx,
+    static ggml_tensor* apply_partial_rope(GGMLRunnerContext* runner_ctx,
                                            ggml_tensor* x,
                                            ggml_tensor* pe) {
+        auto ctx        = runner_ctx->ggml_ctx;
         int64_t rot_dim = pe->ne[2] * 2;
         GGML_ASSERT(rot_dim <= x->ne[0]);
-        auto rotated = Rope::apply_rope(ctx,
+        auto rotated = Rope::apply_rope(runner_ctx,
                                         ggml_ext_slice(ctx, x, 0, 0, rot_dim),
                                         pe,
                                         false);
@@ -209,14 +211,13 @@ namespace MiniMaxH3 {
             q                = q_norm->forward(ctx, q);
             k                = k_norm->forward(ctx, k);
             if (pe != nullptr) {
-                q = apply_partial_rope(ctx->ggml_ctx, q, pe);
-                k = apply_partial_rope(ctx->ggml_ctx, k, pe);
+                q = apply_partial_rope(ctx, q, pe);
+                k = apply_partial_rope(ctx, k, pe);
             } else {
                 q = attention_layout(ctx->ggml_ctx, q);
                 k = attention_layout(ctx->ggml_ctx, k);
             }
-            auto out = ggml_ext_attention_ext(ctx->ggml_ctx,
-                                              ctx->backend,
+            auto out = ggml_ext_attention_ext(ctx,
                                               q,
                                               k,
                                               v,
@@ -234,9 +235,9 @@ namespace MiniMaxH3 {
             blocks["norm1"] = std::make_shared<RMSNorm>(config.hidden_size, config.norm_eps);
             blocks["norm2"] = std::make_shared<RMSNorm>(config.hidden_size, config.norm_eps);
             blocks["attn"]  = std::make_shared<Attention>(config.hidden_size,
-                                                         config.num_attention_heads,
-                                                         config.attention_head_dim,
-                                                         config.qk_norm_eps);
+                                                          config.num_attention_heads,
+                                                          config.attention_head_dim,
+                                                          config.qk_norm_eps);
             blocks["mlp"]   = std::make_shared<MLP>(config.hidden_size, config.ffn_hidden_size);
         }
 
@@ -265,6 +266,9 @@ namespace MiniMaxH3 {
             for (int64_t i = 0; i < num_layers; ++i) {
                 auto block = std::dynamic_pointer_cast<TokenRefinerBlock>(blocks["blocks." + std::to_string(i)]);
                 x          = block->forward(ctx, x);
+                sd::ggml_graph_cut::mark_graph_cut(x,
+                                                   "minimax_h3.token_refiner.blocks." + std::to_string(i),
+                                                   "hidden_states");
             }
             return std::dynamic_pointer_cast<RMSNorm>(blocks["final_norm"])->forward(ctx, x);
         }
@@ -388,11 +392,11 @@ namespace MiniMaxH3 {
             blocks["norm1"]      = std::make_shared<RMSNorm>(config.hidden_size, config.norm_eps);
             blocks["norm2"]      = std::make_shared<RMSNorm>(config.hidden_size, config.norm_eps);
             blocks["attn"]       = std::make_shared<Attention>(config.hidden_size,
-                                                         config.num_attention_heads,
-                                                         config.attention_head_dim,
-                                                         config.qk_norm_eps);
+                                                               config.num_attention_heads,
+                                                               config.attention_head_dim,
+                                                               config.qk_norm_eps);
             blocks["mlp"]        = std::make_shared<MLP>(config.hidden_size,
-                                                  config.ffn_hidden_size);
+                                                         config.ffn_hidden_size);
             blocks["adaln_proj"] = std::make_shared<AdaLayerNormModulation>(config.time_embed_dim,
                                                                             config.hidden_size,
                                                                             6,
@@ -479,8 +483,8 @@ namespace MiniMaxH3 {
                 auto row   = modulation_row(ctx->ggml_ctx, mods, config.hidden_size, 2, 1, segment.modulation_row);
                 auto value = norm->forward(ctx, ggml_ext_slice(ctx->ggml_ctx, x, 1, segment.start, segment.end));
                 return ggml_add(ctx->ggml_ctx,
-                                    ggml_add(ctx->ggml_ctx, value, ggml_mul(ctx->ggml_ctx, value, row[1])),
-                                    row[0]);
+                                ggml_add(ctx->ggml_ctx, value, ggml_mul(ctx->ggml_ctx, value, row[1])),
+                                row[0]);
             };
             return {video_out->forward(ctx, apply(video)),
                     audio_out->forward(ctx, apply(audio))};
@@ -528,7 +532,11 @@ namespace MiniMaxH3 {
             GGML_ASSERT(context->ne[0] == config.text_dim);
             auto condition_proj = std::dynamic_pointer_cast<Linear>(blocks["condition_proj"]);
             auto token_refiner  = std::dynamic_pointer_cast<TokenRefiner>(blocks["token_refiner"]);
-            return token_refiner->forward(ctx, condition_proj->forward(ctx, context));
+            auto projected      = condition_proj->forward(ctx, context);
+            sd::ggml_graph_cut::mark_graph_cut(projected,
+                                               "minimax_h3.condition_proj",
+                                               "hidden_states");
+            return token_refiner->forward(ctx, projected);
         }
 
         ggml_tensor* time_embedding(GGMLRunnerContext* ctx,
@@ -839,10 +847,10 @@ namespace MiniMaxH3 {
                 const auto& condition = condition_videos[index];
                 auto axes             = condition_spatial_axes(condition);
                 int64_t count         = condition.shape()[2] *
-                                static_cast<int64_t>(axes.first.size() * axes.second.size());
-                bool is_first    = keyframe_indices.empty() || keyframe_indices[static_cast<int64_t>(index)] == 0;
-                float keyframe_t = is_first ? static_cast<float>(text_len)
-                                            : static_cast<float>(text_len) + video_duration - FRAME_RESCALE;
+                                        static_cast<int64_t>(axes.first.size() * axes.second.size());
+                bool is_first         = keyframe_indices.empty() || keyframe_indices[static_cast<int64_t>(index)] == 0;
+                float keyframe_t      = is_first ? static_cast<float>(text_len)
+                                                 : static_cast<float>(text_len) + video_duration - FRAME_RESCALE;
                 for (int64_t t = 0; t < condition.shape()[2]; ++t) {
                     for (float h : axes.first) {
                         for (float w : axes.second) {
@@ -896,9 +904,9 @@ namespace MiniMaxH3 {
 
                 if (block.kind != MiniMaxH3ReferenceKind::AUDIO) {
                     GGML_ASSERT(ref_video != nullptr);
-                    auto axes     = condition_spatial_axes(*ref_video);
-                    int64_t count = ref_video->shape()[2] *
-                                    static_cast<int64_t>(axes.first.size() * axes.second.size());
+                    auto axes       = condition_spatial_axes(*ref_video);
+                    int64_t count   = ref_video->shape()[2] *
+                                      static_cast<int64_t>(axes.first.size() * axes.second.size());
                     float video_end = append_video_positions(*ref_video, cursor);
                     layout.sequence_segments.push_back({row,
                                                         row + count,

@@ -124,6 +124,24 @@ class DrawPage(
         /** FLUX.2 Klein：LLM 编码器（Qwen3）+ Flux2 VAE */
         const val FAM_KLEIN = "klein"
 
+        // ---- 以下是 2.1.0-beta 把 sd.cpp 升到上游 master 后才存在的架构 ----
+        //
+        // 三个都是「LLM 编码器 + **Flux2 VAE**」，槽位结构与 FLUX.2 Klein 一致，
+        // 所以共用同一条槽位定义。
+        //
+        // sd.cpp 里的默认采样参数（来自 model/integrations/*.cpp）：
+        //   Flux.3 Image Klein  FLUX3_FLOW_PRED  shift 6.93  Euler + Discrete
+        //   MOSS-Image          FLOW_PRED        shift 5.0   Euler + Discrete
+        //   Fibo-2.0            FLOW_PRED        shift 3.0   Euler + **Flux**
+        //
+        // 注意 Fibo-2.0 的调度器是 FLUX 而不是 Discrete —— 混用会出糊图。
+        /** FLUX.3 Image Klein：LLM 编码器（Qwen3-VL）+ Flux2 VAE */
+        const val FAM_FLUX3 = "flux3"
+        /** MOSS-Image：LLM 编码器 + Flux2 VAE */
+        const val FAM_MOSS = "moss"
+        /** Fibo 2.0：LLM 编码器 + Flux2 VAE */
+        const val FAM_FIBO2 = "fibo2"
+
         /** 家族显示名 */
         fun familyLabelRes(family: String): Int = when (family) {
             FAM_SD15 -> R.string.s_337
@@ -136,6 +154,9 @@ class DrawPage(
             FAM_IDEOGRAM -> R.string.s_754
             FAM_KREA2 -> R.string.s_755
             FAM_KLEIN -> R.string.s_756
+            FAM_FLUX3 -> R.string.s_761
+            FAM_MOSS -> R.string.s_762
+            FAM_FIBO2 -> R.string.s_763
             else -> R.string.s_344
         }
 
@@ -179,7 +200,8 @@ class DrawPage(
                     "t5xxl" to false, "llm" to false, "vae" to true)
                 // 三个 LLM 编码器架构：扩散模型 + LLM 必填；llm_vision 只在用参考图时才需要，
                 // 所以标可选 —— 标必填会让纯文生图的人卡在"缺文件"上。
-                family == FAM_IDEOGRAM || family == FAM_KREA2 || family == FAM_KLEIN -> listOf(
+                family == FAM_IDEOGRAM || family == FAM_KREA2 || family == FAM_KLEIN ||
+                    family == FAM_FLUX3 || family == FAM_MOSS || family == FAM_FIBO2 -> listOf(
                     "diffusion" to true, "llm" to true, "llm_vision" to false, "vae" to true)
                 family == FAM_VIDEO -> listOf(
                     "diffusion" to true, "clip_vision" to false, "t5xxl" to false, "llm" to false,

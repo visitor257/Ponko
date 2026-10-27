@@ -26,15 +26,15 @@ static void set_error(std::string* error, const std::string& message) {
 }
 
 static std::string resolve_index_shard_path(const std::string& index_path, const std::string& shard_path) {
-    fs::path shard_fs_path(shard_path);
+    fs::path shard_fs_path = fs::u8path(shard_path);
     if (shard_fs_path.is_absolute()) {
-        return shard_fs_path.lexically_normal().string();
+        return shard_fs_path.lexically_normal().u8string();
     }
-    return (fs::path(index_path).parent_path() / shard_fs_path).lexically_normal().string();
+    return (fs::u8path(index_path).parent_path() / shard_fs_path).lexically_normal().u8string();
 }
 
 bool is_safetensors_file(const std::string& file_path) {
-    std::ifstream file(file_path, std::ios::binary);
+    std::ifstream file(fs::u8path(file_path), std::ios::binary);
     if (!file.is_open()) {
         return false;
     }
@@ -86,10 +86,17 @@ static ggml_type safetensors_dtype_to_ggml_type(const std::string& dtype) {
         ttype = GGML_TYPE_F32;
     } else if (dtype == "F64") {
         ttype = GGML_TYPE_F32;
+#ifdef SD_USE_UPSTREAM_GGML
+    } else if (dtype == "F8_E4M3") {
+        ttype = GGML_TYPE_F16;
+    } else if (dtype == "F8_E5M2") {
+        ttype = GGML_TYPE_F16;
+#else
     } else if (dtype == "F8_E4M3") {
         ttype = GGML_TYPE_F8_E4M3;
     } else if (dtype == "F8_E5M2") {
         ttype = GGML_TYPE_F8_E5M2;
+#endif
     } else if (dtype == "I32") {
         ttype = GGML_TYPE_I32;
     } else if (dtype == "I64") {
@@ -146,7 +153,7 @@ bool read_safetensors_file(const std::string& file_path,
                            std::string* error,
                            std::map<std::string, std::string>* metadata,
                            std::set<std::string>* tensor_names) {
-    std::ifstream file(file_path, std::ios::binary);
+    std::ifstream file(fs::u8path(file_path), std::ios::binary);
     if (!file.is_open()) {
         set_error(error, "failed to open '" + file_path + "'");
         return false;
@@ -230,6 +237,12 @@ bool read_safetensors_file(const std::string& file_path,
         if (!read_comfy_quant_config(file, file_path, name, data_start + begin, end - begin, config, error)) {
             return false;
         }
+#ifdef SD_USE_UPSTREAM_GGML
+        if (config.format == "int8_tensorwise") {
+            set_error(error, "INT8 tensorwise/convrot is not supported by this ggml build (tensor '" + name + "')");
+            return false;
+        }
+#endif
         const std::string module_name = name.substr(0, name.size() - std::string(".comfy_quant").size());
         comfy_quant_configs.emplace(module_name, std::move(config));
     }
@@ -246,6 +259,11 @@ bool read_safetensors_file(const std::string& file_path,
 
         std::string dtype    = tensor_info["dtype"];
         nlohmann::json shape = tensor_info["shape"];
+
+        // ComfyUI FP8 activation scales cancel when inference uses F16/F32 activations.
+        if (ends_with(name, ".scale_input")) {
+            continue;
+        }
 
         size_t begin = tensor_info["data_offsets"][0].get<size_t>();
         size_t end   = tensor_info["data_offsets"][1].get<size_t>();
@@ -357,10 +375,20 @@ bool read_safetensors_file(const std::string& file_path,
         bool tensor_size_ok;
         if (dtype == "F8_E4M3") {
             tensor_storage.is_f8_e4m3 = true;
-            tensor_size_ok            = (tensor_storage.nbytes() == tensor_data_size);
+#ifdef SD_USE_UPSTREAM_GGML
+            // f8 -> f16
+            tensor_size_ok = (tensor_storage.nbytes() == tensor_data_size * 2);
+#else
+            tensor_size_ok = (tensor_storage.nbytes() == tensor_data_size);
+#endif
         } else if (dtype == "F8_E5M2") {
             tensor_storage.is_f8_e5m2 = true;
-            tensor_size_ok            = (tensor_storage.nbytes() == tensor_data_size);
+#ifdef SD_USE_UPSTREAM_GGML
+            // f8 -> f16
+            tensor_size_ok = (tensor_storage.nbytes() == tensor_data_size * 2);
+#else
+            tensor_size_ok = (tensor_storage.nbytes() == tensor_data_size);
+#endif
         } else if (dtype == "F64") {
             tensor_storage.is_f64 = true;
             // f64 -> f32
@@ -390,7 +418,7 @@ bool read_safetensors_index_file(const std::string& file_path,
                                  std::string* error) {
     shard_paths.clear();
 
-    std::ifstream file(file_path);
+    std::ifstream file(fs::u8path(file_path));
     if (!file.is_open()) {
         set_error(error, "failed to open '" + file_path + "'");
         return false;
@@ -494,7 +522,7 @@ bool write_safetensors_file(const std::string& file_path,
 
     const std::string header_str = header.dump();
 
-    std::ofstream file(file_path, std::ios::binary);
+    std::ofstream file(fs::u8path(file_path), std::ios::binary);
     if (!file.is_open()) {
         set_error(error, "failed to open '" + file_path + "' for writing");
         return false;
@@ -568,7 +596,7 @@ bool SafetensorsStreamingWriter::write_metadata(const std::string& file_path,
     data_start_                  = ST_HEADER_SIZE_LEN + header_str.size();
 
     LOG_INFO("trying to save tensors to %s", file_path.c_str());
-    std::ofstream file(file_path, std::ios::binary | std::ios::trunc);
+    std::ofstream file(fs::u8path(file_path), std::ios::binary | std::ios::trunc);
     if (!file.is_open()) {
         set_error(error, "failed to open '" + file_path + "' for writing");
         return false;

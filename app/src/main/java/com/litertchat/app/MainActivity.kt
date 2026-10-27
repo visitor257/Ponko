@@ -3488,6 +3488,7 @@ class MainActivity : Activity() {
         // 几乎总是分开分发；塞进单文件模式会给人「一个文件就够」的错误暗示。
         val multi = listOf("sd3", "flux", "qwen", "hidream",
             DrawPage.FAM_IDEOGRAM, DrawPage.FAM_KREA2, DrawPage.FAM_KLEIN,
+            DrawPage.FAM_FLUX3, DrawPage.FAM_MOSS, DrawPage.FAM_FIBO2,
             "video", "other")
         val labels = ArrayList<String>()
         val picks = ArrayList<kotlin.Pair<String, String>>()
