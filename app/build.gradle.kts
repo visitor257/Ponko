@@ -10,7 +10,17 @@ android {
     ndkVersion = "27.3.13750724"
 
     defaultConfig {
-        applicationId = "com.litertchat.app"
+        // beta 线用独立包名，这样它可以和正式版**同时装在一个手机上**。
+        // namespace 保持 com.litertchat.app 不变：那只是 R 类和源码的包名，
+        // 和"装成哪个应用"无关，改了要动所有 Kotlin 文件的 package 声明。
+        //
+        // 代价（已写进 Release 说明，用户明确要求接受）：
+        //   · 模型要重新导入 —— 模型存在 filesDir 下，而 filesDir 按 applicationId 隔离，
+        //     两个包名的私有目录互不可见
+        //   · 插件是隐式 Action（com.litertchat.ponko.PLUGIN）发现宿主的，两个宿主都装了
+        //     就会都去 bind 同一个 Service
+        //   · 磁盘上占两份模型
+        applicationId = "com.litertchat.app.beta"
         minSdk = 28
         targetSdk = 36
         versionCode = 24
