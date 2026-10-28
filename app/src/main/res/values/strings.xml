@@ -727,4 +727,12 @@ Try a different word, or tap Clear above.</string>
 <string name="s_758">Saved to %1$s/%2$s</string>
 <string name="s_759">Saved to %1$s (public Documents needs a permission this app does not request)</string>
 <string name="s_760">Save failed: %1$s %2$s</string>
+<string name="s_770">Chat settings</string>
+<string name="s_771">System prompt</string>
+<string name="s_772">Sent ahead of every conversation, before your first message. The model treats it as standing instructions rather than as something said in the chat. Leave it empty to send nothing.</string>
+<string name="s_773">Save</string>
+<string name="s_774">Clear</string>
+<string name="s_775">e.g. Always answer in English, keep it under three sentences.</string>
+<string name="s_776">System prompt saved</string>
+
 </resources>
