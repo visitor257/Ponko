@@ -74,7 +74,15 @@ std::vector<std::string> g_warn_lines;
 std::set<std::string> g_warn_seen;
 
 void sd_log_trampoline(enum sd_log_level_t level, const char* text, void* /*data*/) {
-    if (text == nullptr || level < SD_LOG_WARN) return;
+    if (text == nullptr) return;
+    // 默认只收 WARN/ERROR。但有一条 INFO 必须放行：LoraModel::stat() 在
+    // 「全部张量都应用成功」时走的是 LOG_INFO —— 那正是「LoRA 到底生效了没有」
+    // 的唯一答案。只看 WARN 会把「成功」和「没跑统计」混成同一种沉默。
+    bool interesting = level >= SD_LOG_WARN;
+    if (!interesting && level == SD_LOG_INFO) {
+        interesting = strstr(text, "LoRA tensors have been applied") != nullptr;
+    }
+    if (!interesting) return;
     std::string line(text);
     // 去掉末尾换行，日志文件里每行一条更整齐
     while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
@@ -83,7 +91,8 @@ void sd_log_trampoline(enum sd_log_level_t level, const char* text, void* /*data
     std::lock_guard<std::mutex> lock(g_log_mutex);
     if (!g_warn_seen.insert(line).second) return;  // 同一条只留一次
     if (g_warn_lines.size() >= kMaxWarnLines) return;
-    g_warn_lines.push_back((level == SD_LOG_ERROR ? "E: " : "W: ") + line);
+    const char* tag = level == SD_LOG_ERROR ? "E: " : (level == SD_LOG_WARN ? "W: " : "I: ");
+    g_warn_lines.push_back(tag + line);
     __android_log_print(level == SD_LOG_ERROR ? ANDROID_LOG_ERROR : ANDROID_LOG_WARN,
                         TAG, "sd.cpp %s", line.c_str());
 }
