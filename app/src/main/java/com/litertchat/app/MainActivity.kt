@@ -137,14 +137,10 @@ class MainActivity : Activity() {
         /** 思考模式开关（全局偏好，与模型无关） */
         private const val KEY_CHAT_THINK = "chatThink"
         /**
-         * 系统提示词（对话设置抽屉里编辑）。
-         *
-         * 为什么**不**按模型名分开存（其它 chat 参数都是 chatKey(...) 带模型后缀）：
-         * 那些参数是「这台设备跑这个模型怎么调」，换个模型确实该另调；
-         * 而系统提示词是「我要这个助手怎么说话」，属于用户自己的设定，
-         * 换模型时它应该跟着走 —— 否则每换一个模型就得重写一遍人设。
+         * 2.0.4 里系统提示词曾是全局设置，改为按对话存之后这条键只用于**一次性迁移**。
+         * 迁移完就删，之后不再写。
          */
-        private const val KEY_CHAT_SYS = "chatSystemPrompt"
+        private const val KEY_CHAT_SYS_LEGACY = "chatSystemPrompt"
         /** 系统提示词长度上限：够写一段人设，又不至于把 4096 上下文一口吃光 */
         private const val MAX_SYS_PROMPT = 4000
         private const val DEF_CHAT_CTX = 4096
@@ -669,6 +665,17 @@ class MainActivity : Activity() {
     /** 一个独立对话，拥有自己的完整历史。 */
     private class ChatSession(var id: Long, var title: String) {
         val turns = mutableListOf<QaTurn>()
+
+        /**
+         * 这个对话的系统提示词（人设/规则），**跟着对话走**，不是全局设置。
+         *
+         * 为什么不全局：同一个人可能开一个「只回中文、简短」的日常对话，
+         * 又开一个「详细讲解、给代码」的技术对话 —— 人设本来就该随场景变。
+         * 全局的话每次换场景都得重设一遍，等于没有这个功能。
+         *
+         * 空串 = 不发（新建对话默认空，由用户按需填）。
+         */
+        var sysPrompt: String = ""
     }
 
     private val sessions = mutableListOf<ChatSession>()
@@ -771,6 +778,8 @@ class MainActivity : Activity() {
     /** 底部抽屉：遮罩 + 面板（面板贴底，打开时向上长出来） */
     private lateinit var sysSheetMask: View
     private lateinit var sysSheetPanel: LinearLayout
+    /** 抽屉里那行「作用于：<对话名>」，用来点明这是会话级设置 */
+    private lateinit var sysSheetScopeTv: TextView
     private lateinit var sysPromptEdit: EditText
     private var sysSheetOpen = false
     private lateinit var drawerPanel: LinearLayout
@@ -2783,6 +2792,17 @@ class MainActivity : Activity() {
             setPadding(0, dp(10), 0, 0)
         }, matchWrap())
 
+        // 归属对话：提示词是「每个对话各一份」，这行把它说清楚，
+        // 否则很容易被当成全局设置（改一处以为全改，或者反过来）
+        sysSheetScopeTv = TextView(this).apply {
+            textSize = 11.5f
+            setTextColor(C_PRIMARY)
+            setPadding(0, dp(2), 0, 0)
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        }
+        sysSheetPanel.addView(sysSheetScopeTv, matchWrap())
+
         sysSheetPanel.addView(TextView(this).apply {
             text = getString(R.string.s_772)
             textSize = 11.5f
@@ -2830,12 +2850,11 @@ class MainActivity : Activity() {
         ).apply { gravity = Gravity.BOTTOM })
     }
 
-    /** 把提示词落盘；清空时直接删键，getString 默认值就是空串 */
+    /** 把提示词存进**当前对话**；清空即置空串（saveSessions 会跳过空值不写） */
     private fun saveSysPrompt(raw: String) {
         val v = raw.trim().take(MAX_SYS_PROMPT)
-        chatPrefs().edit().apply {
-            if (v.isEmpty()) remove(KEY_CHAT_SYS) else putString(KEY_CHAT_SYS, v)
-        }.apply()
+        current.sysPrompt = v
+        saveSessions()
         toast(getString(R.string.s_776))
         closeChatSettingsSheet()
         // LiteRT 的会话在创建时就把 initialMessages 定死了，不重建不会生效；
@@ -2845,8 +2864,10 @@ class MainActivity : Activity() {
 
     private fun openChatSettingsSheet() {
         if (sysSheetOpen) return
-        // 每次打开都回读一次盘上的值：清空/手改都会走 saveSysPrompt，这里只是保险
-        sysPromptEdit.setText(chatPrefs().getString(KEY_CHAT_SYS, "").orEmpty())
+        // 读的是当前对话自己的提示词：换对话就是另一套
+        sysPromptEdit.setText(current.sysPrompt)
+        // 在说明里点名是哪个对话，避免被当成全局设置（这个误解真的发生过）
+        sysSheetScopeTv.text = current.title
         sysSheetMask.visibility = View.VISIBLE
         sysSheetMask.alpha = 0f
         sysSheetPanel.visibility = View.VISIBLE
@@ -3512,9 +3533,13 @@ class MainActivity : Activity() {
     /** 随机种子，-1 = 每次都换 */
     private fun chatSeed(): Int = chatPrefs().getInt(chatKey(KEY_CHAT_SEED), DEF_CHAT_SEED)
 
-    /** 系统提示词；空串＝不发。读的时候顺手裁掉首尾空白和超长部分。 */
-    private fun sysPrompt(): String =
-        chatPrefs().getString(KEY_CHAT_SYS, "").orEmpty().trim().take(MAX_SYS_PROMPT)
+    /**
+     * 当前对话的系统提示词；空串＝不发。读的时候顺手裁掉首尾空白和超长部分。
+     *
+     * 存在 [ChatSession] 上而不是 SharedPreferences 里：它是「这个对话的人设」，
+     * 换对话就该换一套，并且要跟着 sessions.json 一起持久化。
+     */
+    private fun sysPrompt(): String = current.sysPrompt.trim().take(MAX_SYS_PROMPT)
 
     /** 输入侧 token 预算：上下文留 1/4 给输出 */
     private fun inputTokenBudget(): Int = chatCtx() - chatCtx() / 4
@@ -5063,6 +5088,8 @@ class MainActivity : Activity() {
                 val o = JSONObject()
                 o.put("id", s.id)
                 o.put("title", s.title)
+                // 空串不写，省得每个 convo 都多一对 "sys": "" 把文件撑大
+                if (s.sysPrompt.isNotEmpty()) o.put("sys", s.sysPrompt)
                 val ts = JSONArray()
                 for (t in s.turns) {
                     ts.put(
@@ -5095,6 +5122,8 @@ class MainActivity : Activity() {
                             o.optLong("id", System.currentTimeMillis() + i),
                             o.optString("title", getString(R.string.s_109)),
                         )
+                        // 老版本（≤2.0.3）的 sessions.json 没有这个键，optString 给空串正好
+                        s.sysPrompt = o.optString("sys", "").take(MAX_SYS_PROMPT)
                         val ts = o.optJSONArray("turns")
                         if (ts != null) {
                             for (j in 0 until ts.length()) {
@@ -5118,6 +5147,24 @@ class MainActivity : Activity() {
         } catch (_: Throwable) {}
         if (sessions.isEmpty()) sessions += ChatSession(System.currentTimeMillis(), getString(R.string.s_109))
         current = sessions.getOrElse(idx) { sessions.first() }
+        migrateLegacySysPrompt()
+    }
+
+    /**
+     * 一次性迁移：2.0.4 早期把系统提示词存在全局 SharedPreferences 里，
+     * 后来改成按对话存。已装过那一版的人如果设过，值不能丢 ——
+     * 挂到当前对话上（那是他当时正在用的那个），然后把旧键删掉。
+     *
+     * 只认旧键、只写当前会话：如果某个对话已经有自己的提示词就不覆盖。
+     */
+    private fun migrateLegacySysPrompt() {
+        val legacy = chatPrefs().getString(KEY_CHAT_SYS_LEGACY, "").orEmpty().trim()
+        if (legacy.isEmpty()) return
+        if (current.sysPrompt.isEmpty()) {
+            current.sysPrompt = legacy.take(MAX_SYS_PROMPT)
+            saveSessions()
+        }
+        chatPrefs().edit().remove(KEY_CHAT_SYS_LEGACY).apply()
     }
 
     // ================= 绘图模式（对话页直接出图） =================
