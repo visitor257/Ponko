@@ -448,8 +448,22 @@ SDVersion ModelLoader::get_sd_version() const {
         return VERSION_FLUX3;
     }
 
-    if (tensor_storage_map.count("model.diffusion_model.video_embedder.weight") &&
-        tensor_storage_map.count("model.diffusion_model.shared_block_modulation.weight")) {
+    // ---- Ponko 补丁：Comfy-Org 的 diffusion_models 也是**裸名**，同样补一条 ----
+    //
+    // Comfy-Org/MOSS-Image 的 diffusion_models/moss_image_sft_bf16.safetensors 实测 379 个
+    // 张量，前缀统计 model.diffusion_model.=0、model.=0、transformer.=0，键长这样：
+    //     video_embedder.weight
+    //     shared_block_modulation.weight
+    //     layers.0.proj.ffn_down.weight
+    //     final_linear_video.weight
+    //
+    // 这些和 MossImageModel 内部名逐字一致（blocks["video_embedder"]、blocks["layers.N"]、
+    // blocks["final_linear_video"]），**只差 model.diffusion_model. 前缀**。
+    // 所以这里放宽成「带前缀或不带前缀都认」，两种分发方式都能命中。
+    if ((tensor_storage_map.count("model.diffusion_model.video_embedder.weight") ||
+         tensor_storage_map.count("video_embedder.weight")) &&
+        (tensor_storage_map.count("model.diffusion_model.shared_block_modulation.weight") ||
+         tensor_storage_map.count("shared_block_modulation.weight"))) {
         return VERSION_MOSS_IMAGE;
     }
 

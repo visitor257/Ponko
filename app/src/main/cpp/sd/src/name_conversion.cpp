@@ -1068,7 +1068,7 @@ static std::string convert_diffusers_dit_to_original_pixart(std::string name) {
     return "model.diffusion_model." + out;
 }
 
-static std::string convert_moss_image_dit_name(std::string name) {
+static std::string convert_moss_image_dit_name_bare(std::string name) {
     static const std::vector<std::pair<std::string, std::string>> name_map = {
         {".proj.q.weight", ".proj.qkv.weight"},
         {".proj.k.weight", ".proj.qkv.weight.1"},
@@ -1076,6 +1076,33 @@ static std::string convert_moss_image_dit_name(std::string name) {
     };
     replace_with_name_map(name, name_map);
     return name;
+}
+
+// ---- Ponko 补丁：裸名 MOSS 也要补 "model.diffusion_model." ----
+//
+// 和 PixArt 那边同因不同款。Comfy-Org 的 diffusion_models 目录放的是**裸名**张量
+// （video_embedder.weight、layers.0.proj.ffn_down.weight …），而通用映射
+// {"transformer."/"unet."/"diffusion_model." → "model.diffusion_model."} 只认带前缀的名字，
+// 裸名一路不匹配，最后 MossImageModel 按带前缀的名字找不到任何张量 —— 这就是
+// "Moss models won't load"。
+//
+// 顺手也剥掉可选的 "transformer." 包装层，覆盖 diffusers 整体 state_dict 那种导出。
+static std::string convert_moss_image_dit_name(std::string name) {
+    static const std::string wrapper = "transformer.";
+    if (starts_with(name, wrapper)) {
+        name = name.substr(wrapper.size());
+    }
+    name = convert_moss_image_dit_name_bare(std::move(name));
+    static const std::vector<std::string> known_prefixes = {
+        "model.", "first_stage_model.", "cond_stage_model.", "conditioner.",
+        "text_encoders.", "vae.", "lora.",
+    };
+    for (const auto& prefix : known_prefixes) {
+        if (starts_with(name, prefix)) {
+            return name;
+        }
+    }
+    return "model.diffusion_model." + name;
 }
 
 static std::string convert_ming_image_dit_name(std::string name) {
