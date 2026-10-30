@@ -727,7 +727,20 @@ Try a different word, or tap Clear above.</string>
 <string name="s_758">Saved to %1$s/%2$s</string>
 <string name="s_759">Saved to %1$s (public Documents needs a permission this app does not request)</string>
 <string name="s_760">Save failed: %1$s %2$s</string>
-<string name="s_761">FLUX.3 Klein (needs LLM encoder + Flux2 VAE)</string>
-<string name="s_762">MOSS-Image (needs LLM encoder + Flux2 VAE)</string>
-<string name="s_763">Fibo 2.0 (needs LLM encoder + Flux2 VAE)</string>
+<string name="s_770">Chat settings</string>
+<string name="s_771">System prompt</string>
+<string name="s_772">Belongs to this conversation only — each one keeps its own. Sent ahead of every message, before your first turn, and the model treats it as standing instructions rather than as something said in the chat. Leave it empty to send nothing.</string>
+<string name="s_773">Save</string>
+<string name="s_775">e.g. Always answer in English, keep it under three sentences.</string>
+<string name="s_776">System prompt saved</string>
+
+    <string name="s_763">Fibo 2.0 (needs LLM encoder + Flux2 VAE)</string>
+    <string name="s_762">MOSS-Image (needs LLM encoder + Flux2 VAE)</string>
+    <string name="s_761">FLUX.3 Klein (needs LLM encoder + Flux2 VAE)</string>
+    <string name="s_764">PixArt Sigma / Alpha (needs T5-XXL + SDXL or SD1.5 VAE)</string>
+    <string name="s_765">Reference images</string>
+    <string name="s_766">Style reference for the loaded model: it reads these instead of only the prompt. Useful with Krea2\'s style-reference LoRA, FLUX Kontext and Qwen-Image-Edit. Different from the starting image on the img2img page.</string>
+    <string name="s_767">Add reference image</string>
+    <string name="v_064">At most %1$d reference images</string>
+    <string name="v_065">%1$d / %2$d selected - tap a thumbnail to remove</string>
 </resources>

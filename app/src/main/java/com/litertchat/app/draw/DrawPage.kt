@@ -81,6 +81,10 @@ class DrawPage(
         /** 打标模型/标签表目录：filesDir/tagger */
         const val TAGGER_DIR = "tagger"
         private const val REQ_IMAGE = 0x5D02
+        /** 选参考图（ref_images，与图生图那张起始图不是一回事） */
+        private const val REQ_REF_IMAGE = 0x5D03
+        /** 参考图上限：Krea2 style reference LoRA 训练时就是 1~2 张 */
+        private const val MAX_REF_IMAGES = 2
         private const val REQ_TAGGER_IMAGE = 0x5D03
 
         /** LCM-LoRA：HuggingFace 官方仓库路径（文件实名为 pytorch_lora_weights.safetensors） */
@@ -141,6 +145,13 @@ class DrawPage(
         const val FAM_MOSS = "moss"
         /** Fibo 2.0：LLM 编码器 + Flux2 VAE */
         const val FAM_FIBO2 = "fibo2"
+        /**
+         * PixArt Σ / α：扩散模型 + T5-XXL + VAE（Σ 用 SDXL VAE，α 用 SD1.5 VAE）。
+         *
+         * 它**只用 T5**，没有 CLIP —— caption_channels 4096 就是 T5-XXL 的 hidden size。
+         * 所以槽位模板里不给 clip_l / clip_g，给了反而让人以为要填。
+         */
+        const val FAM_PIXART = "pixart"
 
         /** 家族显示名 */
         fun familyLabelRes(family: String): Int = when (family) {
@@ -157,6 +168,7 @@ class DrawPage(
             FAM_FLUX3 -> R.string.s_761
             FAM_MOSS -> R.string.s_762
             FAM_FIBO2 -> R.string.s_763
+            FAM_PIXART -> R.string.s_764
             else -> R.string.s_344
         }
 
@@ -206,6 +218,9 @@ class DrawPage(
                 family == FAM_VIDEO -> listOf(
                     "diffusion" to true, "clip_vision" to false, "t5xxl" to false, "llm" to false,
                     "vae" to true, "audio_vae" to false)
+                // PixArt 只要扩散模型 + T5-XXL + VAE，没有 CLIP
+                family == FAM_PIXART -> listOf(
+                    "diffusion" to true, "t5xxl" to true, "vae" to true)
                 else -> listOf(
                     "diffusion" to true, "vae" to false, "clip_l" to false, "clip_g" to false,
                     "clip_vision" to false, "t5xxl" to false, "llm" to false, "llm_vision" to false,
@@ -215,8 +230,11 @@ class DrawPage(
             // 视频走 TinyVideoAutoEncoder（权重格式不同）、Qwen / HiDream 的 VAE 各走特殊路径，先不暴露。
             // Ideogram4 / Krea2 / Klein 的 VAE 同样各有专用实现（Flux2 VAE / Wan VAE），
             // TAESD 那套编解码器对它们不成立，所以这里一并排除。
+            // PixArt 也排除：它的 VAE 缩放因子由 configure_pixart_vae 按架构定（Σ 用 SDXL VAE
+            // 的 0.13025、α 用 0.18215），换成 TAESD 会绕过那段判断，颜色对不上。
             val noTaesd = family == FAM_VIDEO || family == FAM_QWEN || family == FAM_HIDREAM ||
-                family == FAM_IDEOGRAM || family == FAM_KREA2 || family == FAM_KLEIN
+                family == FAM_IDEOGRAM || family == FAM_KREA2 || family == FAM_KLEIN ||
+                family == FAM_PIXART
             return if (noTaesd) base else base + ("taesd" to false)
         }
 
@@ -445,6 +463,13 @@ class DrawPage(
     /** 图生图选中的参考图（仅内存，进程结束即失效） */
     private var i2iBitmap: Bitmap? = null
 
+    // ---- 参考图（ref_images）----
+    private lateinit var refCard: LinearLayout
+    private lateinit var refPickBtn: Button
+    private lateinit var refRow: LinearLayout
+    /** 已选的参考图，最多 MAX_REF_IMAGES 张 */
+    private val refBitmaps = ArrayList<Bitmap>()
+
     // ---- Tagger 专属控件 ----
     private lateinit var tabTagger: TextView
     private lateinit var taggerContent: LinearLayout
@@ -645,6 +670,30 @@ class DrawPage(
         }
         paramCard.addView(loraHint)
         t2iContent.addView(paramCard)
+
+        // ---- 参考图（ref_images）----
+        // 只在已加载模型自带 ref_image_preset 时显示：把参考图交给没有预设的架构是有害的
+        // （pass_to_dit 默认 true，会在模型没预期的形状下改动图）。支持与否问 native，
+        // 不在 Kotlin 里硬编码家族 —— FLUX 家族里只有 Kontext 变体接受参考图。
+        refCard = card()
+        refCard.visibility = View.GONE
+        refCard.addView(title(c.getString(R.string.s_765)))
+        refCard.addView(body(c.getString(R.string.s_766)))
+        refPickBtn = Button(c).apply {
+            text = c.getString(R.string.s_767)
+            textSize = 12.5f
+            isAllCaps = false
+            setBackgroundColor(pal.softBtn)
+            setTextColor(textColor)
+            setOnClickListener { pickRefImage() }
+        }
+        refCard.addView(refPickBtn, matchWrap(top = 10))
+        refRow = LinearLayout(c).apply {
+            orientation = LinearLayout.HORIZONTAL
+            visibility = View.GONE
+        }
+        refCard.addView(refRow, matchWrap(top = 8))
+        t2iContent.addView(refCard)
         t2iContent.addView(defaultButtonsRow("t2i"), matchWrap(top = 10))
 
         // ---- 图生图页面 ----
@@ -1409,6 +1458,75 @@ class DrawPage(
         act.startActivityForResult(i, REQ_IMAGE)
     }
 
+    private fun pickRefImage() {
+        if (refBitmaps.size >= MAX_REF_IMAGES) {
+            toast(c.getString(R.string.v_064, MAX_REF_IMAGES))
+            return
+        }
+        val i = android.content.Intent(android.content.Intent.ACTION_GET_CONTENT).apply {
+            addCategory(android.content.Intent.CATEGORY_OPENABLE)
+            type = "image/*"
+        }
+        act.startActivityForResult(i, REQ_REF_IMAGE)
+    }
+
+    /**
+     * 参考图是否可用（模型自带 ref_image_preset）。
+     * 顺带把卡片显隐定下来 —— 加载模型后才会有答案，所以加载完要再调一次。
+     */
+    private fun refreshRefImageUi() {
+        if (!::refCard.isInitialized) return
+        val usable = refSupported()
+        refCard.visibility = if (usable) View.VISIBLE else View.GONE
+        // 换了个不支持参考图的模型，就把已选的清掉，免得下次误用
+        if (!usable && refBitmaps.isNotEmpty()) {
+            refBitmaps.clear()
+            refreshRefPreview()
+        }
+    }
+
+    /** 问 native：当前句柄的模型接受参考图吗。句柄没了就当作不支持。 */
+    private fun refSupported(): Boolean {
+        if (sdHandle == 0L) return false
+        val preset = runCatching { SdCppEngine.nativeRefImagePreset(sdHandle) }.getOrNull()
+        return !preset.isNullOrEmpty()
+    }
+
+    private fun applyRefImage(bmp: Bitmap) {
+        if (refBitmaps.size >= MAX_REF_IMAGES) return
+        refBitmaps.add(bmp)
+        refreshRefPreview()
+    }
+
+    /** 重建缩略图行；点缩略图 = 移除那一张 */
+    private fun refreshRefPreview() {
+        if (!::refRow.isInitialized) return
+        refRow.removeAllViews()
+        if (refBitmaps.isEmpty()) {
+            refRow.visibility = View.GONE
+            refPickBtn.isEnabled = true
+            refPickBtn.text = c.getString(R.string.s_767)
+            return
+        }
+        refRow.visibility = View.VISIBLE
+        refPickBtn.isEnabled = refBitmaps.size < MAX_REF_IMAGES
+        refPickBtn.text = c.getString(R.string.v_065, refBitmaps.size, MAX_REF_IMAGES)
+        val side = dp(64)
+        for ((idx, bmp) in refBitmaps.withIndex()) {
+            val iv = ImageView(c).apply {
+                setImageBitmap(bmp)
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                setBackgroundColor(pal.border)
+                isClickable = true
+                setOnClickListener {
+                    refBitmaps.removeAt(idx)
+                    refreshRefPreview()
+                }
+            }
+            refRow.addView(iv, LinearLayout.LayoutParams(side, side).apply { rightMargin = dp(8) })
+        }
+    }
+
     /** 解码选中的图片；超过 2048 像素则按比例下采样，避免 OOM */
     private fun decodePickedImage(uri: Uri): Bitmap? = runCatching {
         val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -2078,6 +2196,8 @@ class DrawPage(
             }
             statusText.post { statusText.text = summary }
             statusText.post { refreshQuantText() }
+            // 参考图卡片能不能显示，取决于刚加载的模型带不带 ref_image_preset
+            statusText.post { refreshRefImageUi() }
             // 参数快照同步给 API（此时控件都已建好）
             statusText.post { runCatching { syncDrawCore() } }
             // mmap 是**惰性**的：这里"加载成功"只说明元数据读通了、句柄建起来了，
@@ -2105,6 +2225,8 @@ class DrawPage(
             statusText.text = c.getString(R.string.s_115)
         } catch (_: Throwable) {}
         refreshQuantText()
+        // 句柄没了，参考图卡片要藏起来，已选的也别留着
+        refreshRefImageUi()
     }
 
     fun hasModel(): Boolean = listSets().isNotEmpty()
@@ -2268,6 +2390,7 @@ class DrawPage(
         prompt: String,
         onProgress: (Int, Int) -> Unit = { _, _ -> },
         onPreview: ((Int, Int, Int, ByteArray) -> Unit)? = null,
+        withRefImages: Boolean = true,
     ): ImageData {
         // 绘图接口正在出图时别插队：同一个 native 句柄同时跑两个任务会错乱
         if (DrawCore.busy) throw IllegalStateException(c.getString(R.string.s_428))
@@ -2383,6 +2506,14 @@ class DrawPage(
                     onPreview = onPreview?.let { f ->
                         SdCppEngine.PreviewCallback { st, w, h, rgb -> f(st, w, h, rgb) }
                     },
+                    // 参考图：只把「模型确实支持」的那些传下去。
+                    // 界面在换模型时会清空，但 API 路径（MainActivity / 插件）不经过界面，
+                    // 所以这里再用 native 的答案兜一次，避免把 ref 塞给不认识它的架构。
+                    refImages = if (withRefImages && refBitmaps.isNotEmpty() && refSupported()) {
+                        refBitmaps.map {
+                            SdCppEngine.RefImage(it.width, it.height, SdCppEngine.bitmapToRgb888(it))
+                        }
+                    } else emptyList(),
                 )
             } ?: throw IllegalStateException(c.getString(R.string.s_147))
             onProgress(steps, steps)
@@ -2403,7 +2534,27 @@ class DrawPage(
             throw e
         } finally {
             DrawCore.uiBusy = false
+            // 兜底：无论成功、取消还是抛异常，都把 sd.cpp 期间的 WARN/ERROR 落进日志。
+            // 这是定位「LoRA 挂了却不生效」「某个张量被跳过」的唯一入口 ——
+            // 那些消息 sd.cpp 只通过回调发出，App 不注册回调就会整条丢掉。
+            // 兜底：无论成功、取消还是抛异常，都把 sd.cpp 期间的 WARN/ERROR 落进日志。
+            // 这是定位「LoRA 挂了却不生效」「某个张量被跳过」的唯一入口 ——
+            // 那些消息 sd.cpp 只通过回调发出，App 不注册回调就会整条丢掉。
+            flushSdWarnings(::gstage)
         }
+    }
+
+    /**
+     * 把 sd.cpp 累积的警告写进 DRAW 日志；没有就什么都不写（免得每张图都多两行空标题）。
+     *
+     * [sink] 由调用方传入：t2i 和 i2i 各有自己的局部 gstage（写不同的日志文件），
+     * 所以这里不能直接引用某一个。
+     */
+    private inline fun flushSdWarnings(sink: (String) -> Unit) {
+        val w = runCatching { SdCppEngine.takeWarnings() }.getOrDefault("")
+        if (w.isEmpty()) return
+        sink("  -- sd.cpp warnings --")
+        w.lineSequence().filter { it.isNotBlank() }.forEach { sink("  $it") }
     }
 
     /** 采样器选择：索引 0 = 自动；其余按 SdCppEngine.Sampler 顺序 */
@@ -2638,6 +2789,10 @@ class DrawPage(
                 )
                 runCatching { gs.delete() }
                 throw e
+            } finally {
+                // 图生图这条路径原本没有 finally，补上：sd.cpp 的 WARN/ERROR 必须落盘，
+                // 否则 LoRA 不生效时日志里什么都看不到（同 text2img 的理由）
+                flushSdWarnings(::gstage)
             }
         } ?: throw IllegalStateException(c.getString(R.string.s_147))
         onProgress(steps, steps)
@@ -2677,7 +2832,8 @@ class DrawPage(
     }
 
     fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?): Boolean {
-        if (requestCode != REQ_IMAGE && requestCode != REQ_TAGGER_IMAGE) return false
+        if (requestCode != REQ_IMAGE && requestCode != REQ_TAGGER_IMAGE &&
+            requestCode != REQ_REF_IMAGE) return false
         if (resultCode != Activity.RESULT_OK) return true
         val uri = data?.data ?: return true
         scope.launch {
@@ -2686,6 +2842,8 @@ class DrawPage(
                 toast(c.getString(R.string.s_215))
             } else if (requestCode == REQ_IMAGE) {
                 applyPickedImage(bmp)
+            } else if (requestCode == REQ_REF_IMAGE) {
+                applyRefImage(bmp)
             } else {
                 applyTaggerImage(bmp)
             }

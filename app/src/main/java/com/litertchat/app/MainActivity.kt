@@ -15,6 +15,7 @@ import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.os.SystemClock
+import android.text.InputFilter
 import android.text.InputType
 import android.view.GestureDetector
 import android.view.Gravity
@@ -27,6 +28,8 @@ import android.animation.ValueAnimator
 import android.view.ViewGroup
 import android.view.animation.AccelerateInterpolator
 import android.view.animation.DecelerateInterpolator
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
@@ -133,6 +136,13 @@ class MainActivity : Activity() {
         private const val KEY_CHAT_SEED = "chatSeed"
         /** 思考模式开关（全局偏好，与模型无关） */
         private const val KEY_CHAT_THINK = "chatThink"
+        /**
+         * 2.0.4 里系统提示词曾是全局设置，改为按对话存之后这条键只用于**一次性迁移**。
+         * 迁移完就删，之后不再写。
+         */
+        private const val KEY_CHAT_SYS_LEGACY = "chatSystemPrompt"
+        /** 系统提示词长度上限：够写一段人设，又不至于把 4096 上下文一口吃光 */
+        private const val MAX_SYS_PROMPT = 4000
         private const val DEF_CHAT_CTX = 4096
         private const val DEF_CHAT_MAXOUT = 2048
         private const val DEF_CHAT_TEMP = 0.7f
@@ -655,6 +665,17 @@ class MainActivity : Activity() {
     /** 一个独立对话，拥有自己的完整历史。 */
     private class ChatSession(var id: Long, var title: String) {
         val turns = mutableListOf<QaTurn>()
+
+        /**
+         * 这个对话的系统提示词（人设/规则），**跟着对话走**，不是全局设置。
+         *
+         * 为什么不全局：同一个人可能开一个「只回中文、简短」的日常对话，
+         * 又开一个「详细讲解、给代码」的技术对话 —— 人设本来就该随场景变。
+         * 全局的话每次换场景都得重设一遍，等于没有这个功能。
+         *
+         * 空串 = 不发（新建对话默认空，由用户按需填）。
+         */
+        var sysPrompt: String = ""
     }
 
     private val sessions = mutableListOf<ChatSession>()
@@ -751,6 +772,16 @@ class MainActivity : Activity() {
     private var drawPage: DrawPage? = null
     private lateinit var appBarMenu: View
     private lateinit var appBarPlus: View
+    /** 对话页右上「⚙」：从底部升起对话设置抽屉（目前只放系统提示词） */
+    private lateinit var appBarChatSettings: View
+    private lateinit var rootFrameRef: FrameLayout
+    /** 底部抽屉：遮罩 + 面板（面板贴底，打开时向上长出来） */
+    private lateinit var sysSheetMask: View
+    private lateinit var sysSheetPanel: LinearLayout
+    /** 抽屉里那行「作用于：<对话名>」，用来点明这是会话级设置 */
+    private lateinit var sysSheetScopeTv: TextView
+    private lateinit var sysPromptEdit: EditText
+    private var sysSheetOpen = false
     private lateinit var drawerPanel: LinearLayout
     private lateinit var drawerMask: View
     private lateinit var drawerBody: LinearLayout
@@ -1163,6 +1194,8 @@ class MainActivity : Activity() {
 
     private fun buildUi() {
         val rootFrame = FrameLayout(this).apply { setBackgroundColor(C_BG) }
+        // 底部抽屉要往这一层挂（和左侧抽屉同一层），所以留一个引用
+        rootFrameRef = rootFrame
         val main = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(C_BG)
@@ -1255,6 +1288,7 @@ class MainActivity : Activity() {
         rootFrame.addView(main, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         buildDrawer(rootFrame)
+        buildChatSettingsSheet(rootFrame)
         setContentView(rootFrame)
         applySystemBarColors()
 
@@ -1409,6 +1443,9 @@ class MainActivity : Activity() {
         appBarStatusRow = statusRow
 
         r1.addView(titleBox, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        // 「⚙」在「＋」左边：＋ 是开新会话，⚙ 是调这一页的设置（系统提示词）
+        appBarChatSettings = iconButton("⚙") { openChatSettingsSheet() }
+        r1.addView(appBarChatSettings, wrapWrap().apply { rightMargin = dp(6) })
         appBarPlus = iconButton("＋") { newSession() }
         r1.addView(appBarPlus, wrapWrap())
         bar.addView(r1, matchWrap())
@@ -2555,6 +2592,11 @@ class MainActivity : Activity() {
         val isChat = index == 0
         appBarMenu.visibility = if (isChat) View.VISIBLE else View.INVISIBLE
         appBarPlus.visibility = if (isChat) View.VISIBLE else View.INVISIBLE
+        if (::appBarChatSettings.isInitialized) {
+            appBarChatSettings.visibility = if (isChat) View.VISIBLE else View.INVISIBLE
+        }
+        // 切页时把底部抽屉收掉：它还开着的话遮罩会挡住新页面
+        if (sysSheetOpen) closeChatSettingsSheet()
         for (i in navIcons.indices) {
             val c = if (i == currentTab) C_PRIMARY else C_SUBTEXT
             navIcons[i].setTextColor(c)
@@ -2676,6 +2718,179 @@ class MainActivity : Activity() {
         drawerMask.animate().alpha(0f).setDuration(180)
             .withEndAction { drawerMask.visibility = View.GONE }.start()
         drawerOpen = false
+    }
+
+    // ---- 对话设置：贴底向上展开的抽屉 ----
+
+    /**
+     * 建「对话设置」抽屉。和左侧抽屉一样挂在 rootFrame 上，但贴底：
+     * 面板默认在屏幕下方看不见，打开时把它往上平移回来。
+     *
+     * 这里不复用 PopupWindow：那个是贴在某个锚点上的气泡（「＋」附件菜单在用），
+     * 而这是一个**横贯全宽、贴住屏幕底边**的面板，用法不一样。
+     */
+    private fun buildChatSettingsSheet(rootFrame: FrameLayout) {
+        sysSheetMask = View(this).apply {
+            setBackgroundColor(C_SCRIM)
+            visibility = View.GONE
+            alpha = 0f
+            isClickable = true
+            setOnClickListener { closeChatSettingsSheet() }
+        }
+        rootFrame.addView(sysSheetMask, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+
+        sysSheetPanel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            // 只圆上面两个角：面板是贴底的，下面两个角本来就在屏幕外
+            val r = dp(16).toFloat()
+            background = GradientDrawable().apply {
+                setColor(C_CARD)
+                cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
+            }
+            elevation = dp(12).toFloat()
+            visibility = View.GONE
+            setPadding(dp(16), dp(10), dp(16), dp(14))
+        }
+
+        // 顶部小把手：暗示这块能收起
+        sysSheetPanel.addView(View(this).apply {
+            setBackgroundColor(C_DIVIDER)
+            layoutParams = LinearLayout.LayoutParams(dp(36), dp(4)).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+                topMargin = dp(2)
+                bottomMargin = dp(10)
+            }
+        })
+
+        // 标题 + 右上「✕」
+        val titleRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        titleRow.addView(TextView(this).apply {
+            text = getString(R.string.s_770)
+            textSize = 16f
+            setTextColor(C_TEXT)
+            typeface = Typeface.DEFAULT_BOLD
+        }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        titleRow.addView(TextView(this).apply {
+            text = "✕"
+            textSize = 17f
+            setTextColor(C_SUBTEXT)
+            setPadding(dp(10), dp(2), dp(2), dp(6))
+            isClickable = true
+            setOnClickListener { closeChatSettingsSheet() }
+        }, wrapWrap())
+        sysSheetPanel.addView(titleRow, matchWrap())
+
+        sysSheetPanel.addView(TextView(this).apply {
+            text = getString(R.string.s_771)
+            textSize = 13f
+            setTextColor(C_TEXT)
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(0, dp(10), 0, 0)
+        }, matchWrap())
+
+        // 归属对话：提示词是「每个对话各一份」，这行把它说清楚，
+        // 否则很容易被当成全局设置（改一处以为全改，或者反过来）
+        sysSheetScopeTv = TextView(this).apply {
+            textSize = 11.5f
+            setTextColor(C_PRIMARY)
+            setPadding(0, dp(2), 0, 0)
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        }
+        sysSheetPanel.addView(sysSheetScopeTv, matchWrap())
+
+        sysSheetPanel.addView(TextView(this).apply {
+            text = getString(R.string.s_772)
+            textSize = 11.5f
+            setTextColor(C_SUBTEXT)
+            setLineSpacing(dp(2).toFloat(), 1f)
+            setPadding(0, dp(4), 0, 0)
+        }, matchWrap())
+
+        sysPromptEdit = EditText(this).apply {
+            hint = getString(R.string.s_775)
+            textSize = 14f
+            setTextColor(C_TEXT)
+            setHintTextColor(C_SUBTEXT)
+            gravity = Gravity.TOP or Gravity.START
+            inputType = InputType.TYPE_CLASS_TEXT or
+                InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+                InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            // 不做自动纠正/联想：提示词里常有关键词和标点要精确控制
+            imeOptions = EditorInfo.IME_FLAG_NO_FULLSCREEN
+            setSingleLine(false)
+            minLines = 4
+            maxLines = 8
+            background = rounded(C_BG_ALT, 10)
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            filters = arrayOf(InputFilter.LengthFilter(MAX_SYS_PROMPT))
+        }
+        sysSheetPanel.addView(sysPromptEdit, matchWrap().apply { topMargin = dp(10) })
+
+        // 底部只有一个保存按钮，左右撑满 —— 和模型页的「选择模型 / 加载模型」同一套外观。
+        // 原来并排放了「清空」，但清空要点两下（先清输入框、再存空值），
+        // 而且清空本身就是「保存一个空串」，用保存按钮就能做到，没必要单列。
+        sysSheetPanel.addView(actionButton(getString(R.string.s_773)) {
+            saveSysPrompt(sysPromptEdit.text.toString())
+        }, matchWrap().apply { topMargin = dp(14) })
+
+        rootFrame.addView(sysSheetPanel, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT
+        ).apply { gravity = Gravity.BOTTOM })
+    }
+
+    /** 把提示词存进**当前对话**；清空即置空串（saveSessions 会跳过空值不写） */
+    private fun saveSysPrompt(raw: String) {
+        val v = raw.trim().take(MAX_SYS_PROMPT)
+        current.sysPrompt = v
+        saveSessions()
+        toast(getString(R.string.s_776))
+        closeChatSettingsSheet()
+        // LiteRT：systemInstruction 是建会话时写进提示模板的，不重建就等于没改。
+        // gguf：llama.cpp 每次推理现拼 user 消息，已经带上了新提示词，不用重建。
+        if (engine != null && llamaModel == null) rebuildConversation(silent = true)
+    }
+
+    private fun openChatSettingsSheet() {
+        if (sysSheetOpen) return
+        // 读的是当前对话自己的提示词：换对话就是另一套
+        sysPromptEdit.setText(current.sysPrompt)
+        // 在说明里点名是哪个对话，避免被当成全局设置（这个误解真的发生过）
+        sysSheetScopeTv.text = current.title
+        sysSheetMask.visibility = View.VISIBLE
+        sysSheetMask.alpha = 0f
+        sysSheetPanel.visibility = View.VISIBLE
+        // 先量一次拿到真实高度，再用它当平移初值（否则会闪一帧在屏幕中间）
+        sysSheetPanel.measure(
+            View.MeasureSpec.makeMeasureSpec(resources.displayMetrics.widthPixels, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+        )
+        sysSheetPanel.translationY = sysSheetPanel.measuredHeight.toFloat() + dp(24)
+        sysSheetPanel.animate().translationY(0f).setDuration(220)
+            .setInterpolator(DecelerateInterpolator()).start()
+        sysSheetMask.animate().alpha(1f).setDuration(220).start()
+        sysSheetOpen = true
+    }
+
+    private fun closeChatSettingsSheet() {
+        if (!sysSheetOpen) return
+        val h = if (sysSheetPanel.height > 0) sysSheetPanel.height.toFloat()
+        else sysSheetPanel.measuredHeight.toFloat() + dp(24)
+        // 先收键盘再滑下去，否则输入法会跟着面板一起卡在半路
+        (getSystemService(INPUT_METHOD_SERVICE) as? InputMethodManager)
+            ?.hideSoftInputFromWindow(sysPromptEdit.windowToken, 0)
+        sysSheetPanel.animate().translationY(h).setDuration(180)
+            .setInterpolator(AccelerateInterpolator())
+            .withEndAction {
+                if (!sysSheetOpen) sysSheetPanel.visibility = View.GONE
+            }.start()
+        sysSheetMask.animate().alpha(0f).setDuration(180)
+            .withEndAction { if (!sysSheetOpen) sysSheetMask.visibility = View.GONE }.start()
+        sysSheetOpen = false
     }
 
     private fun buildInputBar(): View {
@@ -3264,6 +3479,9 @@ class MainActivity : Activity() {
      */
     private fun estimateConversationTokens(s: ChatSession, extra: String, dropLast: Boolean): Float {
         var t = 0f
+        // 用户系统提示词：和 configFor 一起算，否则会低估、把上下文挤爆
+        val sp = sysPrompt()
+        if (sp.isNotEmpty()) t += estTokens(sp) + 12f
         if (canDrawFromChat) t += estTokens(drawToolPrompt) + 12f
         val upto = if (dropLast) s.turns.size - 1 else s.turns.size
         for (i in 0 until maxOf(upto, 0)) {
@@ -3307,6 +3525,14 @@ class MainActivity : Activity() {
     private fun chatBudget(): Int = chatPrefs().getInt(chatKey(KEY_CHAT_BUDGET), DEF_CHAT_BUDGET).coerceIn(0, 65536)
     /** 随机种子，-1 = 每次都换 */
     private fun chatSeed(): Int = chatPrefs().getInt(chatKey(KEY_CHAT_SEED), DEF_CHAT_SEED)
+
+    /**
+     * 当前对话的系统提示词；空串＝不发。读的时候顺手裁掉首尾空白和超长部分。
+     *
+     * 存在 [ChatSession] 上而不是 SharedPreferences 里：它是「这个对话的人设」，
+     * 换对话就该换一套，并且要跟着 sessions.json 一起持久化。
+     */
+    private fun sysPrompt(): String = current.sysPrompt.trim().take(MAX_SYS_PROMPT)
 
     /** 输入侧 token 预算：上下文留 1/4 给输出 */
     private fun inputTokenBudget(): Int = chatCtx() - chatCtx() / 4
@@ -3489,7 +3715,7 @@ class MainActivity : Activity() {
         val multi = listOf("sd3", "flux", "qwen", "hidream",
             DrawPage.FAM_IDEOGRAM, DrawPage.FAM_KREA2, DrawPage.FAM_KLEIN,
             DrawPage.FAM_FLUX3, DrawPage.FAM_MOSS, DrawPage.FAM_FIBO2,
-            "video", "other")
+            DrawPage.FAM_PIXART, "video", "other")
         val labels = ArrayList<String>()
         val picks = ArrayList<kotlin.Pair<String, String>>()
         for (kind in listOf("single", "multi")) {
@@ -4555,8 +4781,17 @@ class MainActivity : Activity() {
         // llama.cpp 的对话模板只认 user/assistant，新增 system 角色会直接报
         // 「Invalid role: system」。这份 msgs 只用于本次推理，不落历史。
         val turns = s.turns.takeLast(maxTurns)
+        // 系统提示词：llama.cpp 的对话模板不认 system 角色（新增一条会报 Invalid role: system），
+        // 所以并进**第一条** user 消息的最前面 —— 与 ChatCore 的 gguf 分支同一做法。
+        // 注意：本文件顶部 import 了 net.ladenthin.llama.value.Pair，它遮蔽了 kotlin.Pair，
+        // 名字里有 first/second 的是 kotlin.Pair；所以这里不去改 msgs 里的元素，
+        // 而是在拼 userText 时就并好。
+        val sysText = sysPrompt()
         for ((ti, t) in turns.withIndex()) {
             var userText = t.user
+            if (ti == 0 && sysText.isNotEmpty()) {
+                userText = if (userText.isEmpty()) sysText else "$sysText\n\n$userText"
+            }
             if (ti == turns.size - 1) {
                 // 本轮发送的文件正文只在这一轮出现（不进历史，免得撑爆 4096 上下文）
                 t.fileText?.let { if (it.isNotEmpty()) userText += "\n\n" + it }
@@ -4570,7 +4805,9 @@ class MainActivity : Activity() {
         }
         // agent 循环里的中间交换（模型自己的调用意图 / 工具返回）接在最后，只影响本次推理
         extraMsgs.forEach { msgs += Pair(it.first, it.second) }
-        if (canDrawFromChat && msgs.isEmpty()) msgs += Pair("user", drawToolPrompt)
+        if (canDrawFromChat && msgs.isEmpty()) {
+            msgs += Pair("user", if (sysText.isEmpty()) drawToolPrompt else "$sysText\n\n$drawToolPrompt")
+        }
         var p = InferenceParameters.empty()
             .withMessages(null, msgs)
             .withCachePrompt(true)
@@ -4604,6 +4841,11 @@ class MainActivity : Activity() {
     ): InferenceParameters {
         val turns = s.turns.takeLast(maxTurns)
         val msgs = mutableListOf<ChatMessage>()
+        // 系统提示词只并进**第一条** user 消息（原因同 buildInferenceParams）。
+        // 这里不能像文本路径那样最后统一改，因为最后一条是 userMultimodal，
+        // 正文在 parts 里而不是普通 ChatMessage，所以要边建边塞。
+        val sys = sysPrompt()
+        var sysDone = false
         for ((ti, t) in turns.withIndex()) {
             if (ti == turns.size - 1) {
                 val parts = ArrayList<ContentPart>()
@@ -4611,11 +4853,20 @@ class MainActivity : Activity() {
                 t.fileText?.let { if (it.isNotEmpty()) body += "\n\n" + it }
                 if (canTagTurn(t)) body += "\n\n" + tagHint(t)
                 if (canDrawFromChat) body += "\n\n" + drawToolPrompt
+                if (!sysDone && sys.isNotEmpty()) {
+                    body = if (body.isEmpty()) sys else sys + "\n\n" + body
+                    sysDone = true
+                }
                 if (body.isNotEmpty()) parts.add(ContentPart.text(body))
                 images.forEach { parts.add(ContentPart.imageBytes(it, "image/jpeg")) }
                 msgs += ChatMessage.userMultimodal(*parts.toTypedArray())
             } else {
-                msgs += ChatMessage("user", t.user)
+                var txt = t.user
+                if (!sysDone && sys.isNotEmpty()) {
+                    txt = if (txt.isEmpty()) sys else sys + "\n\n" + txt
+                    sysDone = true
+                }
+                msgs += ChatMessage("user", txt)
             }
             // 「工具返回」轮：模型自己那句由 extraMsgs 以原始形态回填，这里别重复
             val isLast = ti == turns.size - 1
@@ -4650,12 +4901,29 @@ class MainActivity : Activity() {
         reserveTokens: Int = 900,
     ): ConversationConfig {
         val msgs = mutableListOf<Message>()
+        // 系统提示词走 systemInstruction，**不能**塞进 initialMessages。
+        //
+        // 这是改提示词「看起来没生效」的根因：initialMessages 里的一条 system 消息只会
+        // 作为普通历史内容回放，模型把它当成"聊天里说过的话"，而不是会覆盖行为的系统指令。
+        // 所以把「你是猫」改成「你是狗」时，新会话里是 4 轮扮演猫的历史 + 一句"你是狗"，
+        // 历史赢，模型接着说猫。
+        //
+        // SDK 真正读取的是 ConversationConfig.systemInstruction（ChatCore 一直是对的，
+        // 这里之前写错了）。空串必须给 null：空的 systemInstruction 会被当成一条真实指令，
+        // 反而干扰输出。
+        val sysParts = ArrayList<String>()
+        // 用户自己的提示词排最前：它是人设/规则，后面那些工具说明是补充
+        val userSys = sysPrompt()
+        if (userSys.isNotEmpty()) sysParts += userSys
         // 两种模型都就绪时，告知语言模型它可以用 <draw> 命令调绘图模型
-        if (canDrawFromChat) msgs += Message.system(drawToolPrompt)
+        if (canDrawFromChat) sysParts += drawToolPrompt
+        val systemInstruction = sysParts.joinToString("\n\n").ifEmpty { null }
+
         // 历史按预算裁剪：LiteRT 上下文只有 4096，全塞进去 native 会直接报输入过长。
         // 从最新一轮往前装，装不下的老对话丢掉（界面上还在，只是不再喂给模型）。
         var budget = inputTokenBudget() -
-            (if (canDrawFromChat) estTokens(drawToolPrompt).toInt() else 0) - reserveTokens
+            (if (canDrawFromChat) estTokens(drawToolPrompt).toInt() else 0) -
+            (if (userSys.isNotEmpty()) estTokens(userSys).toInt() else 0) - reserveTokens
         val upto = if (dropLast) s.turns.size - 1 else s.turns.size
         val keep = ArrayList<QaTurn>()
         for (i in upto - 1 downTo 0) {
@@ -4671,6 +4939,7 @@ class MainActivity : Activity() {
             if (t.answer.isNotEmpty()) msgs += Message.model(t.answer)
         }
         return ConversationConfig(
+            systemInstruction = systemInstruction?.let { Contents.of(it) },
             initialMessages = msgs,
             // 每次重建会话都换随机种子，否则「重新生成」会得到一模一样的回答
             // 采样参数来自模型页（改参数后 doSend 会重建会话来生效）
@@ -4825,6 +5094,8 @@ class MainActivity : Activity() {
                 val o = JSONObject()
                 o.put("id", s.id)
                 o.put("title", s.title)
+                // 空串不写，省得每个 convo 都多一对 "sys": "" 把文件撑大
+                if (s.sysPrompt.isNotEmpty()) o.put("sys", s.sysPrompt)
                 val ts = JSONArray()
                 for (t in s.turns) {
                     ts.put(
@@ -4857,6 +5128,8 @@ class MainActivity : Activity() {
                             o.optLong("id", System.currentTimeMillis() + i),
                             o.optString("title", getString(R.string.s_109)),
                         )
+                        // 老版本（≤2.0.3）的 sessions.json 没有这个键，optString 给空串正好
+                        s.sysPrompt = o.optString("sys", "").take(MAX_SYS_PROMPT)
                         val ts = o.optJSONArray("turns")
                         if (ts != null) {
                             for (j in 0 until ts.length()) {
@@ -4880,6 +5153,24 @@ class MainActivity : Activity() {
         } catch (_: Throwable) {}
         if (sessions.isEmpty()) sessions += ChatSession(System.currentTimeMillis(), getString(R.string.s_109))
         current = sessions.getOrElse(idx) { sessions.first() }
+        migrateLegacySysPrompt()
+    }
+
+    /**
+     * 一次性迁移：2.0.4 早期把系统提示词存在全局 SharedPreferences 里，
+     * 后来改成按对话存。已装过那一版的人如果设过，值不能丢 ——
+     * 挂到当前对话上（那是他当时正在用的那个），然后把旧键删掉。
+     *
+     * 只认旧键、只写当前会话：如果某个对话已经有自己的提示词就不覆盖。
+     */
+    private fun migrateLegacySysPrompt() {
+        val legacy = chatPrefs().getString(KEY_CHAT_SYS_LEGACY, "").orEmpty().trim()
+        if (legacy.isEmpty()) return
+        if (current.sysPrompt.isEmpty()) {
+            current.sysPrompt = legacy.take(MAX_SYS_PROMPT)
+            saveSessions()
+        }
+        chatPrefs().edit().remove(KEY_CHAT_SYS_LEGACY).apply()
     }
 
     // ================= 绘图模式（对话页直接出图） =================

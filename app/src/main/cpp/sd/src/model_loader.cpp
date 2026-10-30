@@ -448,8 +448,22 @@ SDVersion ModelLoader::get_sd_version() const {
         return VERSION_FLUX3;
     }
 
-    if (tensor_storage_map.count("model.diffusion_model.video_embedder.weight") &&
-        tensor_storage_map.count("model.diffusion_model.shared_block_modulation.weight")) {
+    // ---- Ponko 补丁：Comfy-Org 的 diffusion_models 也是**裸名**，同样补一条 ----
+    //
+    // Comfy-Org/MOSS-Image 的 diffusion_models/moss_image_sft_bf16.safetensors 实测 379 个
+    // 张量，前缀统计 model.diffusion_model.=0、model.=0、transformer.=0，键长这样：
+    //     video_embedder.weight
+    //     shared_block_modulation.weight
+    //     layers.0.proj.ffn_down.weight
+    //     final_linear_video.weight
+    //
+    // 这些和 MossImageModel 内部名逐字一致（blocks["video_embedder"]、blocks["layers.N"]、
+    // blocks["final_linear_video"]），**只差 model.diffusion_model. 前缀**。
+    // 所以这里放宽成「带前缀或不带前缀都认」，两种分发方式都能命中。
+    if ((tensor_storage_map.count("model.diffusion_model.video_embedder.weight") ||
+         tensor_storage_map.count("video_embedder.weight")) &&
+        (tensor_storage_map.count("model.diffusion_model.shared_block_modulation.weight") ||
+         tensor_storage_map.count("shared_block_modulation.weight"))) {
         return VERSION_MOSS_IMAGE;
     }
 
@@ -556,6 +570,35 @@ SDVersion ModelLoader::get_sd_version() const {
         if (tensor_storage.name.find("model.diffusion_model.t_block.1.weight") != std::string::npos &&
             tensor_storage_map.find("model.diffusion_model.x_embedder.proj.weight") != tensor_storage_map.end() &&
             tensor_storage_map.find("model.diffusion_model.audio_patchify_proj.weight") == tensor_storage_map.end()) {
+            return VERSION_PIXART;
+        }
+        // ---- Ponko 补丁：diffusers 直接导出的 PixArt（Σ / α）是**裸名**，没有任何前缀 ----
+        //
+        // PixArt-alpha/PixArt-Sigma-XL-2-256x256 的 transformer/diffusion_pytorch_model.safetensors
+        // 里键长这样（实测 603 个张量，前缀计数 transformer.=0、model.diffusion_model.=0）：
+        //     adaln_single.emb.timestep_embedder.linear_1.bias
+        //     adaln_single.linear.weight
+        //     pos_embed.proj.weight
+        //     transformer_blocks.0.attn1.to_q.weight
+        //     caption_projection.linear_1.weight
+        //
+        // 下面那两条现有探测都要求 "model.diffusion_model." 前缀，所以裸名文件探测不出来 ——
+        // 会一路落空、被当成 SD1/SDXL 之类的 UNet，加载时报张量缺失。
+        // 这就是「PixArt 放进去 never generated anything or fails to loads」的根本原因。
+        //
+        // 裸名 + 只有 PixArt 才有的组合来确认：pos_embed.proj（会转成 x_embedder.proj）
+        // 加 adaln_single.linear（会转成 t_block.1）。audio_patchify_proj 的排除条件
+        // 沿用上面那条——LTX-AV 也带 adaln_single，但它走带前缀的名字，这里再确认一次防止误判。
+        //
+        // 判断方式用「含该子串、且不含 model.diffusion_model. 前缀」，这样两种导出都能覆盖：
+        // 纯裸名（adaln_single...）和带一层 transformer. 包装（transformer.adaln_single...）。
+        // 带 model.diffusion_model. 的 ComfyUI 原生格式已经在上面两条里处理过了，这里排除掉。
+        if (tensor_storage.name.find("adaln_single.emb.timestep_embedder.linear_1.bias") != std::string::npos &&
+            tensor_storage.name.find("model.diffusion_model.") == std::string::npos &&
+            (tensor_storage_map.count("pos_embed.proj.weight") || tensor_storage_map.count("transformer.pos_embed.proj.weight")) &&
+            (tensor_storage_map.count("adaln_single.linear.weight") || tensor_storage_map.count("transformer.adaln_single.linear.weight")) &&
+            tensor_storage_map.count("audio_patchify_proj.weight") == 0 &&
+            tensor_storage_map.count("model.diffusion_model.audio_patchify_proj.weight") == 0) {
             return VERSION_PIXART;
         }
         if (tensor_storage.name.find("model.diffusion_model.adaln_single.emb.timestep_embedder.linear_1.bias") != std::string::npos) {

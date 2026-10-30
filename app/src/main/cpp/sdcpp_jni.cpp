@@ -4,9 +4,13 @@
 #include <jni.h>
 #include <android/log.h>
 #include <atomic>
+#include <cctype>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
+#include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "stable-diffusion.h"
@@ -50,6 +54,70 @@ SdHandle* g_active = nullptr;  // 同时只允许一个生成（进度回调是�
 
 // 最近一次 new_sd_ctx 的参数字符串（供 Kotlin 写进日志文件，方便定位加载失败）
 std::string g_last_dump;
+
+// ==================== sd.cpp 日志回传 ====================
+//
+// 为什么必须做这件事：sd.cpp 的所有 LOG_WARN / LOG_ERROR 都走 sd_set_log_callback，
+// 而那个回调默认是 nullptr（util.cpp:595）。不注册，消息就被 if (sd_log_cb) 直接丢掉，
+// 连 logcat 都进不去。于是这些最关键的诊断信息一条都到不了任何人手里：
+//
+//   skip incompatible LoRA tensor |x|: model shape = [...], LoRA shape = [...]
+//   model manager skipping direct lora application to row-split tensors
+//   required lora load failed: ...
+//
+// 结果就是「LoRA 挂上去了、出图不对」，从外部完全看不出是张量被跳过、还是根本没加载。
+//
+// 只收 WARN 和 ERROR：INFO 级别每条张量都要打一行（sd3 有几百个），会把有用的淹掉。
+// 环形缓冲 + 去重，避免同一个警告重复几百遍撑爆日志文件。
+constexpr size_t kMaxWarnLines = 40;
+
+std::mutex g_log_mutex;
+std::vector<std::string> g_warn_lines;
+std::set<std::string> g_warn_seen;
+
+void sd_log_trampoline(enum sd_log_level_t level, const char* text, void* /*data*/) {
+    if (text == nullptr) return;
+    // 默认只收 WARN/ERROR，但有几条 INFO 是「LoRA 到底有没有生效」的唯一答案：
+    //   runtime_lora_models:            ← 只有 runtime_lora_models 非空才打
+    //   (N / M) LoRA tensors have been applied
+    //   apply_loras completed
+    // 少了它们，「LoRA 挂了但完全没作用」和「LoRA 一切正常」在日志里长得一模一样 ——
+    // lora_stat() 的第一句就是 if (!runtime_lora_models.empty())，空的时候一个字都不输出。
+    bool interesting = level >= SD_LOG_WARN;
+    if (!interesting && level == SD_LOG_INFO) {
+        std::string lower(text);
+        for (auto& c : lower) c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
+        interesting = lower.find("lora") != std::string::npos;
+    }
+    if (!interesting) return;
+    std::string line(text);
+    // 去掉末尾换行，日志文件里每行一条更整齐
+    while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
+    if (line.empty()) return;
+
+    std::lock_guard<std::mutex> lock(g_log_mutex);
+    if (!g_warn_seen.insert(line).second) return;  // 同一条只留一次
+    if (g_warn_lines.size() >= kMaxWarnLines) return;
+    const char* tag = level == SD_LOG_ERROR ? "E: " : (level == SD_LOG_WARN ? "W: " : "I: ");
+    g_warn_lines.push_back(tag + line);
+    __android_log_print(level == SD_LOG_ERROR ? ANDROID_LOG_ERROR : ANDROID_LOG_WARN,
+                        TAG, "sd.cpp %s", line.c_str());
+}
+
+/** 取出并清空累积的警告。Kotlin 在每次出图结束时调用，写进 DRAW 日志。 */
+std::string take_warn_lines() {
+    std::lock_guard<std::mutex> lock(g_log_mutex);
+    if (g_warn_lines.empty()) return "";
+    std::string out;
+    for (const auto& l : g_warn_lines) {
+        if (!out.empty()) out += "\n";
+        out += l;
+    }
+    g_warn_lines.clear();
+    g_warn_seen.clear();
+    return out;
+}
+
 
 const char* jstr(JNIEnv* env, jstring s, std::string& holder) {
     if (s == nullptr) return nullptr;
@@ -122,6 +190,9 @@ void previewTrampoline(int step, int frame_count, sd_image_t* frames, bool /*is_
 
 extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
     g_vm = vm;
+    // 注册 sd.cpp 的日志回调：不注册的话 WARN/ERROR 全被 util.cpp 的 if (sd_log_cb) 丢掉。
+    // 放在 OnLoad 里一次注册即可 —— 回调是全局的，与具体 ctx 无关。
+    sd_set_log_callback(sd_log_trampoline, nullptr);
     return JNI_VERSION_1_6;
 }
 
@@ -135,6 +206,28 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeInfo(JNIEnv* env, jobject /*thiz*
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_litertchat_app_draw_SdCppEngine_nativeLastParams(JNIEnv* env, jobject /*thiz*/) {
     return env->NewStringUTF(g_last_dump.c_str());
+}
+
+// 取走自上次调用以来 sd.cpp 报的 WARN/ERROR（每行一条），取完即清空。
+// Kotlin 在每次出图结束（成功或失败）时调用，拼进 DRAW 诊断日志。
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_litertchat_app_draw_SdCppEngine_nativeTakeWarnings(JNIEnv* env, jobject /*thiz*/) {
+    return env->NewStringUTF(take_warn_lines().c_str());
+}
+
+// nativeRefImagePreset(handle) -> 模型自带的参考图预设名；不支持参考图时返回 null。
+//
+// 由界面用它决定要不要显示「参考图」入口。硬编码家族列表在 Kotlin 里迟早会和 sd.cpp
+// 漂移（比如 FLUX 家族里只有 Kontext 变体接受参考图），所以直接问 native。
+// 参考图交给没有预设的架构是有害的：pass_to_dit 默认 true，会在模型没预期的情况下
+// 改变图结构。
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_litertchat_app_draw_SdCppEngine_nativeRefImagePreset(JNIEnv* env, jobject /*thiz*/, jlong handle) {
+    SdHandle* h = reinterpret_cast<SdHandle*>(handle);
+    if (h == nullptr || h->ctx == nullptr) return nullptr;
+    const char* preset = sd_get_default_ref_image_preset(h->ctx);
+    if (preset == nullptr || preset[0] == '\0') return nullptr;
+    return env->NewStringUTF(preset);
 }
 
 // nativeListDevices() -> "name\tdescription\n..."（ggml 后端设备清单；没有设备时返回空串）
@@ -257,11 +350,18 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeCreate(
 
 // nativeGenerate(handle, prompt, negative, loraPath, loraScale,
 //                width, height, steps, cfg, seed, sampleMethod, scheduler,
-//                cb, initData, initWidth, initHeight, strength) -> IntArray(ARGB)
+//                cb, pcb, initData, initWidth, initHeight, strength,
+//                refData, refWidths, refHeights) -> IntArray(ARGB)
 //
 // initData 非空 → 图生图（img2img）：RGB888 交错字节（每像素 3 字节，行优先，左上原点），
 // sd.cpp 会把它按 request 尺寸缩放后编码进 latent，并按 strength(<1) 决定起始噪声步数。
 // initData 为空 → 文生图，strength 忽略。
+//
+// refData 非空 → 参考图（ref_images）。**这跟 initData 不是一回事**，别混：
+//   init_image 是「起始 latent 加噪后重绘」，一张，带 strength；
+//   ref_images 是「作为独立 token 交给 DiT」，可以多张，强度由模型自带的
+//   ref_image_preset 决定（Krea2 → krea2_ostris_edit，即 timestep 0 的 style reference）。
+// 两者可以同时给，但正常情况下只需其一。
 extern "C" JNIEXPORT jintArray JNICALL
 Java_com_litertchat_app_draw_SdCppEngine_nativeGenerate(
         JNIEnv* env, jobject /*thiz*/,
@@ -271,7 +371,8 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeGenerate(
         jint width, jint height, jint steps, jfloat cfg, jlong seed,
         jint sampleMethod, jint scheduler,
         jobject cb, jobject pcb,
-        jbyteArray initData, jint initWidth, jint initHeight, jfloat strength) {
+        jbyteArray initData, jint initWidth, jint initHeight, jfloat strength,
+        jobjectArray refData, jintArray refWidths, jintArray refHeights) {
     SdHandle* h = reinterpret_cast<SdHandle*>(handle);
     if (h == nullptr || h->ctx == nullptr) return nullptr;
 
@@ -349,6 +450,44 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeGenerate(
             LOGE("img2img: GetByteArrayElements returned null");
         }
     }
+
+    // ---- 参考图（ref_images）----
+    // 每张都是 RGB888 交错字节，指针在 generate_image 期间必须有效 → 统一在函数末尾释放。
+    std::vector<sd_image_t> refImages;
+    std::vector<std::pair<jbyteArray, jbyte*>> refHolds;
+    if (refData != nullptr) {
+        const jsize refN = env->GetArrayLength(refData);
+        std::vector<jint> rw(static_cast<size_t>(refN), 0);
+        std::vector<jint> rh(static_cast<size_t>(refN), 0);
+        if (refWidths != nullptr) env->GetIntArrayRegion(refWidths, 0, refN, rw.data());
+        if (refHeights != nullptr) env->GetIntArrayRegion(refHeights, 0, refN, rh.data());
+        refImages.reserve(static_cast<size_t>(refN));
+        for (jsize i = 0; i < refN; ++i) {
+            auto arr = static_cast<jbyteArray>(env->GetObjectArrayElement(refData, i));
+            if (arr == nullptr) continue;
+            jbyte* bytes    = env->GetByteArrayElements(arr, nullptr);
+            const jsize len = env->GetArrayLength(arr);
+            const size_t need = static_cast<size_t>(rw[i]) * static_cast<size_t>(rh[i]) * 3;
+            if (bytes == nullptr || rw[i] <= 0 || rh[i] <= 0 || static_cast<size_t>(len) < need) {
+                LOGE("ref image %d rejected: %dx%d, %d bytes (need %zu)", i, rw[i], rh[i], len, need);
+                if (bytes != nullptr) env->ReleaseByteArrayElements(arr, bytes, JNI_ABORT);
+                env->DeleteLocalRef(arr);
+                continue;
+            }
+            sd_image_t img;
+            img.width   = static_cast<uint32_t>(rw[i]);
+            img.height  = static_cast<uint32_t>(rh[i]);
+            img.channel = 3;
+            img.data    = reinterpret_cast<uint8_t*>(bytes);
+            refImages.push_back(img);
+            refHolds.emplace_back(arr, bytes);
+        }
+        if (!refImages.empty()) {
+            g.ref_images       = refImages.data();
+            g.ref_images_count = static_cast<int>(refImages.size());
+            LOGI("ref images: %d", static_cast<int>(refImages.size()));
+        }
+    }
     if (useLora) {
         lora.is_high_noise = false;
         lora.multiplier    = loraScale;
@@ -397,6 +536,10 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeGenerate(
 
     if (initBytes != nullptr && initData != nullptr) {
         env->ReleaseByteArrayElements(initData, initBytes, JNI_ABORT);
+    }
+    for (auto& hold : refHolds) {
+        env->ReleaseByteArrayElements(hold.first, hold.second, JNI_ABORT);
+        env->DeleteLocalRef(hold.first);
     }
     if (h->cb) { env->DeleteGlobalRef(h->cb); h->cb = nullptr; h->cb_mid = nullptr; }
     if (h->pcb) { env->DeleteGlobalRef(h->pcb); h->pcb = nullptr; h->pcb_mid = nullptr; }

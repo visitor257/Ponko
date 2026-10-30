@@ -551,6 +551,12 @@ SD_API const char* sd_get_model_version_name(const sd_ctx_t* sd_ctx);
 SD_API enum sample_method_t sd_get_default_sample_method(const sd_ctx_t* sd_ctx);
 SD_API enum scheduler_t sd_get_default_scheduler(const sd_ctx_t* sd_ctx, enum sample_method_t sample_method);
 
+// Ponko: which reference-image preset the loaded model uses, or "" when it takes none.
+// Lets a front-end decide whether to offer a reference-image slot at all: passing ref
+// images to an architecture with no preset feeds them to the DiT anyway (pass_to_dit
+// defaults to true) and changes the graph it expects.
+SD_API const char* sd_get_default_ref_image_preset(const sd_ctx_t* sd_ctx);
+
 SD_API void sd_img_gen_params_init(sd_img_gen_params_t* sd_img_gen_params);
 SD_API char* sd_img_gen_params_to_str(const sd_img_gen_params_t* sd_img_gen_params);
 SD_API bool generate_image(sd_ctx_t* sd_ctx,

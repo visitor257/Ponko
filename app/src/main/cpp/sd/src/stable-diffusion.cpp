@@ -751,6 +751,19 @@ enum scheduler_t sd_get_default_scheduler(const sd_ctx_t* sd_ctx, enum sample_me
     return sd::pipeline::default_scheduler(sd_ctx != nullptr ? sd_ctx->sd : nullptr, sample_method);
 }
 
+const char* sd_get_default_ref_image_preset(const sd_ctx_t* sd_ctx) {
+    if (sd_ctx == nullptr || sd_ctx->sd == nullptr) {
+        return "";
+    }
+    // get_default_ref_image_preset() returns "default" when the model definition set none.
+    static thread_local std::string preset;
+    preset = sd_ctx->sd->get_default_ref_image_preset(sd_ctx->sd->version);
+    if (preset == "default") {
+        return "";
+    }
+    return preset.c_str();
+}
+
 SD_API bool generate_image(sd_ctx_t* sd_ctx,
                            const sd_img_gen_params_t* params,
                            sd_image_generation_result_t** result_out) {

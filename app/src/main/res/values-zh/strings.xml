@@ -727,7 +727,20 @@
 <string name="s_758">已保存到 %1$s/%2$s</string>
 <string name="s_759">已保存到 %1$s（公共「文档」目录需要存储权限，本 App 没有申请）</string>
 <string name="s_760">保存失败：%1$s %2$s</string>
-<string name="s_761">FLUX.3 Klein（需要 LLM 编码器 + Flux2 VAE）</string>
-<string name="s_762">MOSS-Image（需要 LLM 编码器 + Flux2 VAE）</string>
-<string name="s_763">Fibo 2.0（需要 LLM 编码器 + Flux2 VAE）</string>
+<string name="s_770">对话设置</string>
+<string name="s_771">系统提示词</string>
+<string name="s_772">只属于当前这个对话，每个对话各存一份。每轮都会先于你的第一句话发给模型，模型把它当作长期指令，而不是聊天里说过的话。留空则什么都不发。</string>
+<string name="s_773">保存</string>
+<string name="s_775">例如：始终用中文回答，控制在三句以内。</string>
+<string name="s_776">系统提示词已保存</string>
+
+    <string name="s_763">Fibo 2.0（需要 LLM 编码器 + Flux2 VAE）</string>
+    <string name="s_762">MOSS-Image（需要 LLM 编码器 + Flux2 VAE）</string>
+    <string name="s_761">FLUX.3 Klein（需要 LLM 编码器 + Flux2 VAE）</string>
+    <string name="s_764">PixArt Sigma / Alpha（需要 T5-XXL + SDXL 或 SD1.5 VAE）</string>
+    <string name="s_765">参考图</string>
+    <string name="s_766">给当前模型看的参考图，它会参考这些图而不只是提示词。适用于 Krea2 的 style reference LoRA、FLUX Kontext、Qwen-Image-Edit 等。与图生图那页的「起始图」不是一回事。</string>
+    <string name="s_767">添加参考图</string>
+    <string name="v_064">参考图最多 %1$d 张</string>
+    <string name="v_065">已选 %1$d / %2$d — 点缩略图可移除</string>
 </resources>

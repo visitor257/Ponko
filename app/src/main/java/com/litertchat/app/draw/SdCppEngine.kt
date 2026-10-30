@@ -91,6 +91,15 @@ object SdCppEngine {
     /** 最近一次 new_sd_ctx 的完整参数（诊断加载失败用） */
     external fun nativeLastParams(): String
 
+    /**
+     * 取走 sd.cpp 自上次调用以来报的 WARN/ERROR（每行一条），取完即清空。
+     *
+     * sd.cpp 的日志回调默认是 nullptr，不注册就整条丢掉 —— 包括
+     * 「skip incompatible LoRA tensor」和「skipping ... row-split tensors」这两类
+     * 决定 LoRA 是否真的生效的消息。每次出图结束调一次，写进 DRAW 诊断日志。
+     */
+    external fun nativeTakeWarnings(): String
+
     /** slots 长度 = SLOT_KEYS.size，元素可为 null（该槽位不填）。 */
     external fun nativeCreate(
         modelPath: String,
@@ -121,7 +130,13 @@ object SdCppEngine {
         initWidth: Int,
         initHeight: Int,
         strength: Float,
+        refData: Array<ByteArray>?,
+        refWidths: IntArray?,
+        refHeights: IntArray?,
     ): IntArray?
+
+    /** 已加载模型自带的参考图预设名；不支持参考图时返回 null（见 nativeRefImagePreset 注释） */
+    external fun nativeRefImagePreset(handle: Long): String?
 
     external fun nativeCancel(handle: Long)
 
@@ -134,6 +149,9 @@ object SdCppEngine {
 
     /** 最近一次 new_sd_ctx 用的参数（多行文本） */
     fun lastParams(): String = runCatching { nativeLastParams() }.getOrDefault("")
+
+    /** 取走累积的 sd.cpp 警告（每行一条）；没有则返回空串。取完清空。 */
+    fun takeWarnings(): String = runCatching { nativeTakeWarnings() }.getOrDefault("")
 
     /** 后端设备清单（名字 -> 描述）；取不到时返回空表。 */
     fun listDevices(): List<Pair<String, String>> =
@@ -192,6 +210,10 @@ object SdCppEngine {
      *
      *  initImage 非空则会走图生图（img2img）：它会被缩放到 width×height 后作为初始 latent，
      *  strength(<1) 决定从第几步开始去噪（越小越接近原图）。
+     *
+     *  refImages 非空则走「参考图」通路：每张作为独立 token 交给 DiT，与 initImage 无关。
+     *  只对自带参考图预设的架构有效（Krea2 style reference LoRA、FLUX Kontext 等），
+     *  支持与否用 nativeRefImagePreset() 查。
      */
     fun render(
         handle: Long,
@@ -212,6 +234,7 @@ object SdCppEngine {
         initWidth: Int = 0,
         initHeight: Int = 0,
         strength: Float = 1.0f,
+        refImages: List<RefImage> = emptyList(),
     ): Bitmap? {
         val effectiveSeed = if (seed < 0) (System.currentTimeMillis() % 1_000_000_000L) else seed
         val useInit = initImage != null && initImage.isNotEmpty() && initWidth > 0 && initHeight > 0
@@ -223,10 +246,16 @@ object SdCppEngine {
             if (useInit) initWidth else 0,
             if (useInit) initHeight else 0,
             if (useInit) strength else 1.0f,
+            if (refImages.isEmpty()) null else refImages.map { it.rgb }.toTypedArray(),
+            if (refImages.isEmpty()) null else refImages.map { it.width }.toIntArray(),
+            if (refImages.isEmpty()) null else refImages.map { it.height }.toIntArray(),
         ) ?: return null
         if (px.isEmpty()) return null
         return Bitmap.createBitmap(px, width, height, Bitmap.Config.ARGB_8888)
     }
+
+    /** 一张参考图：RGB888 交错字节 + 尺寸 */
+    class RefImage(val width: Int, val height: Int, val rgb: ByteArray)
 
         /** 预览小图（RGB888）→ Bitmap（ARGB_8888）；非法输入返回 null */
     fun rgbToBitmap(width: Int, height: Int, rgb: ByteArray): Bitmap? {
