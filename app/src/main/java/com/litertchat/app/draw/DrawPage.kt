@@ -141,6 +141,13 @@ class DrawPage(
         const val FAM_MOSS = "moss"
         /** Fibo 2.0：LLM 编码器 + Flux2 VAE */
         const val FAM_FIBO2 = "fibo2"
+        /**
+         * PixArt Σ / α：扩散模型 + T5-XXL + VAE（Σ 用 SDXL VAE，α 用 SD1.5 VAE）。
+         *
+         * 它**只用 T5**，没有 CLIP —— caption_channels 4096 就是 T5-XXL 的 hidden size。
+         * 所以槽位模板里不给 clip_l / clip_g，给了反而让人以为要填。
+         */
+        const val FAM_PIXART = "pixart"
 
         /** 家族显示名 */
         fun familyLabelRes(family: String): Int = when (family) {
@@ -157,6 +164,7 @@ class DrawPage(
             FAM_FLUX3 -> R.string.s_761
             FAM_MOSS -> R.string.s_762
             FAM_FIBO2 -> R.string.s_763
+            FAM_PIXART -> R.string.s_764
             else -> R.string.s_344
         }
 
@@ -206,6 +214,9 @@ class DrawPage(
                 family == FAM_VIDEO -> listOf(
                     "diffusion" to true, "clip_vision" to false, "t5xxl" to false, "llm" to false,
                     "vae" to true, "audio_vae" to false)
+                // PixArt 只要扩散模型 + T5-XXL + VAE，没有 CLIP
+                family == FAM_PIXART -> listOf(
+                    "diffusion" to true, "t5xxl" to true, "vae" to true)
                 else -> listOf(
                     "diffusion" to true, "vae" to false, "clip_l" to false, "clip_g" to false,
                     "clip_vision" to false, "t5xxl" to false, "llm" to false, "llm_vision" to false,
@@ -215,8 +226,11 @@ class DrawPage(
             // 视频走 TinyVideoAutoEncoder（权重格式不同）、Qwen / HiDream 的 VAE 各走特殊路径，先不暴露。
             // Ideogram4 / Krea2 / Klein 的 VAE 同样各有专用实现（Flux2 VAE / Wan VAE），
             // TAESD 那套编解码器对它们不成立，所以这里一并排除。
+            // PixArt 也排除：它的 VAE 缩放因子由 configure_pixart_vae 按架构定（Σ 用 SDXL VAE
+            // 的 0.13025、α 用 0.18215），换成 TAESD 会绕过那段判断，颜色对不上。
             val noTaesd = family == FAM_VIDEO || family == FAM_QWEN || family == FAM_HIDREAM ||
-                family == FAM_IDEOGRAM || family == FAM_KREA2 || family == FAM_KLEIN
+                family == FAM_IDEOGRAM || family == FAM_KREA2 || family == FAM_KLEIN ||
+                family == FAM_PIXART
             return if (noTaesd) base else base + ("taesd" to false)
         }
 

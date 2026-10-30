@@ -973,7 +973,7 @@ static bool is_diffusers_controlnet_name(const std::string& name) {
     return false;
 }
 
-static std::string convert_diffusers_dit_to_original_pixart(std::string name) {
+static std::string convert_diffusers_dit_to_original_pixart_bare(std::string name) {
     static const std::vector<std::pair<std::string, std::string>> prefix_map = {
         {"pos_embed.proj.", "x_embedder.proj."},
         {"adaln_single.emb.timestep_embedder.linear_1.", "t_embedder.mlp.0."},
@@ -1033,6 +1033,39 @@ static std::string convert_diffusers_dit_to_original_pixart(std::string name) {
         }
     }
     return prefix + name;
+}
+
+// ---- Ponko 补丁：裸名 PixArt 需要补 "model.diffusion_model." ----
+//
+// 上面那个函数把 diffusers 的键转成内部名（pos_embed.proj → x_embedder.proj 等），
+// 但它假定调用方之后会再补 "model.diffusion_model." —— 那是靠通用的
+// {"transformer.", "model.diffusion_model."} 映射完成的。而 diffusers 直接保存的
+// PixArt 张量是**裸名**（没有 "transformer." 这一层，因为 Transformer2DModel 的
+// state_dict 就是它的直属子模块），所以那一步永远不触发，转换结果缺前缀，
+// PixArtModel 按 "model.diffusion_model.xxx" 找张量时全部落空。
+//
+// 这里统一补：只在结果确实没有任何已知顶层前缀时才加，避免对已经转换过一次的名字重复加。
+//
+// 另外先剥掉可能存在的 "transformer." 包装层：有些导出（diffusers 的 pipeline 整体
+// state_dict、或第三方转换脚本）会把整棵 transformer 放在 transformer. 下。对这种名字，
+// 上面的专用映射一条都不匹配（它们都以裸名开头），随后通用映射只把它改成
+// "model.diffusion_model.pos_embed.proj.weight" —— 前缀有了，但映射没做，一样找不到张量。
+static std::string convert_diffusers_dit_to_original_pixart(std::string name) {
+    static const std::string wrapper = "transformer.";
+    if (starts_with(name, wrapper)) {
+        name = name.substr(wrapper.size());
+    }
+    const std::string out = convert_diffusers_dit_to_original_pixart_bare(name);
+    static const std::vector<std::string> known_prefixes = {
+        "model.", "first_stage_model.", "cond_stage_model.", "conditioner.",
+        "text_encoders.", "vae.", "lora.", "model.diffusion_model.",
+    };
+    for (const auto& prefix : known_prefixes) {
+        if (starts_with(out, prefix)) {
+            return out;
+        }
+    }
+    return "model.diffusion_model." + out;
 }
 
 static std::string convert_moss_image_dit_name(std::string name) {
