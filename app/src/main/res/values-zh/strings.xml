@@ -727,4 +727,11 @@
 <string name="s_758">已保存到 %1$s/%2$s</string>
 <string name="s_759">已保存到 %1$s（公共「文档」目录需要存储权限，本 App 没有申请）</string>
 <string name="s_760">保存失败：%1$s %2$s</string>
+<string name="s_770">对话设置</string>
+<string name="s_771">系统提示词</string>
+<string name="s_772">只属于当前这个对话，每个对话各存一份。每轮都会先于你的第一句话发给模型，模型把它当作长期指令，而不是聊天里说过的话。留空则什么都不发。</string>
+<string name="s_773">保存</string>
+<string name="s_775">例如：始终用中文回答，控制在三句以内。</string>
+<string name="s_776">系统提示词已保存</string>
+
 </resources>

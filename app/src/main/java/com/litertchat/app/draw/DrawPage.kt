@@ -2381,7 +2381,24 @@ class DrawPage(
             throw e
         } finally {
             DrawCore.uiBusy = false
+            // 兜底：无论成功、取消还是抛异常，都把 sd.cpp 期间的 WARN/ERROR 落进日志。
+            // 这是定位「LoRA 挂了却不生效」「某个张量被跳过」的唯一入口 ——
+            // 那些消息 sd.cpp 只通过回调发出，App 不注册回调就会整条丢掉。
+            flushSdWarnings(::gstage)
         }
+    }
+
+    /**
+     * 把 sd.cpp 累积的警告写进 DRAW 日志；没有就什么都不写（免得每张图都多两行空标题）。
+     *
+     * [sink] 由调用方传入：t2i 和 i2i 各有自己的局部 gstage（写不同的日志文件），
+     * 所以这里不能直接引用某一个。
+     */
+    private inline fun flushSdWarnings(sink: (String) -> Unit) {
+        val w = runCatching { SdCppEngine.takeWarnings() }.getOrDefault("")
+        if (w.isEmpty()) return
+        sink("  -- sd.cpp warnings --")
+        w.lineSequence().filter { it.isNotBlank() }.forEach { sink("  $it") }
     }
 
     /** 采样器选择：索引 0 = 自动；其余按 SdCppEngine.Sampler 顺序 */
@@ -2616,6 +2633,10 @@ class DrawPage(
                 )
                 runCatching { gs.delete() }
                 throw e
+            } finally {
+                // 图生图这条路径原本没有 finally，补上：sd.cpp 的 WARN/ERROR 必须落盘，
+                // 否则 LoRA 不生效时日志里什么都看不到（同 text2img 的理由）
+                flushSdWarnings(::gstage)
             }
         } ?: throw IllegalStateException(c.getString(R.string.s_147))
         onProgress(steps, steps)

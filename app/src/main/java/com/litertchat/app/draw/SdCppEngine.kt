@@ -91,6 +91,15 @@ object SdCppEngine {
     /** 最近一次 new_sd_ctx 的完整参数（诊断加载失败用） */
     external fun nativeLastParams(): String
 
+    /**
+     * 取走 sd.cpp 自上次调用以来报的 WARN/ERROR（每行一条），取完即清空。
+     *
+     * sd.cpp 的日志回调默认是 nullptr，不注册就整条丢掉 —— 包括
+     * 「skip incompatible LoRA tensor」和「skipping ... row-split tensors」这两类
+     * 决定 LoRA 是否真的生效的消息。每次出图结束调一次，写进 DRAW 诊断日志。
+     */
+    external fun nativeTakeWarnings(): String
+
     /** slots 长度 = SLOT_KEYS.size，元素可为 null（该槽位不填）。 */
     external fun nativeCreate(
         modelPath: String,
@@ -134,6 +143,9 @@ object SdCppEngine {
 
     /** 最近一次 new_sd_ctx 用的参数（多行文本） */
     fun lastParams(): String = runCatching { nativeLastParams() }.getOrDefault("")
+
+    /** 取走累积的 sd.cpp 警告（每行一条）；没有则返回空串。取完清空。 */
+    fun takeWarnings(): String = runCatching { nativeTakeWarnings() }.getOrDefault("")
 
     /** 后端设备清单（名字 -> 描述）；取不到时返回空表。 */
     fun listDevices(): List<Pair<String, String>> =

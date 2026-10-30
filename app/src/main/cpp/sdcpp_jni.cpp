@@ -4,8 +4,11 @@
 #include <jni.h>
 #include <android/log.h>
 #include <atomic>
+#include <cctype>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -50,6 +53,70 @@ SdHandle* g_active = nullptr;  // 同时只允许一个生成（进度回调是�
 
 // 最近一次 new_sd_ctx 的参数字符串（供 Kotlin 写进日志文件，方便定位加载失败）
 std::string g_last_dump;
+
+// ==================== sd.cpp 日志回传 ====================
+//
+// 为什么必须做这件事：sd.cpp 的所有 LOG_WARN / LOG_ERROR 都走 sd_set_log_callback，
+// 而那个回调默认是 nullptr（util.cpp:595）。不注册，消息就被 if (sd_log_cb) 直接丢掉，
+// 连 logcat 都进不去。于是这些最关键的诊断信息一条都到不了任何人手里：
+//
+//   skip incompatible LoRA tensor |x|: model shape = [...], LoRA shape = [...]
+//   model manager skipping direct lora application to row-split tensors
+//   required lora load failed: ...
+//
+// 结果就是「LoRA 挂上去了、出图不对」，从外部完全看不出是张量被跳过、还是根本没加载。
+//
+// 只收 WARN 和 ERROR：INFO 级别每条张量都要打一行（sd3 有几百个），会把有用的淹掉。
+// 环形缓冲 + 去重，避免同一个警告重复几百遍撑爆日志文件。
+constexpr size_t kMaxWarnLines = 40;
+
+std::mutex g_log_mutex;
+std::vector<std::string> g_warn_lines;
+std::set<std::string> g_warn_seen;
+
+void sd_log_trampoline(enum sd_log_level_t level, const char* text, void* /*data*/) {
+    if (text == nullptr) return;
+    // 默认只收 WARN/ERROR，但有几条 INFO 是「LoRA 到底有没有生效」的唯一答案：
+    //   runtime_lora_models:            ← 只有 runtime_lora_models 非空才打
+    //   (N / M) LoRA tensors have been applied
+    //   apply_loras completed
+    // 少了它们，「LoRA 挂了但完全没作用」和「LoRA 一切正常」在日志里长得一模一样 ——
+    // lora_stat() 的第一句就是 if (!runtime_lora_models.empty())，空的时候一个字都不输出。
+    bool interesting = level >= SD_LOG_WARN;
+    if (!interesting && level == SD_LOG_INFO) {
+        std::string lower(text);
+        for (auto& c : lower) c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
+        interesting = lower.find("lora") != std::string::npos;
+    }
+    if (!interesting) return;
+    std::string line(text);
+    // 去掉末尾换行，日志文件里每行一条更整齐
+    while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
+    if (line.empty()) return;
+
+    std::lock_guard<std::mutex> lock(g_log_mutex);
+    if (!g_warn_seen.insert(line).second) return;  // 同一条只留一次
+    if (g_warn_lines.size() >= kMaxWarnLines) return;
+    const char* tag = level == SD_LOG_ERROR ? "E: " : (level == SD_LOG_WARN ? "W: " : "I: ");
+    g_warn_lines.push_back(tag + line);
+    __android_log_print(level == SD_LOG_ERROR ? ANDROID_LOG_ERROR : ANDROID_LOG_WARN,
+                        TAG, "sd.cpp %s", line.c_str());
+}
+
+/** 取出并清空累积的警告。Kotlin 在每次出图结束时调用，写进 DRAW 日志。 */
+std::string take_warn_lines() {
+    std::lock_guard<std::mutex> lock(g_log_mutex);
+    if (g_warn_lines.empty()) return "";
+    std::string out;
+    for (const auto& l : g_warn_lines) {
+        if (!out.empty()) out += "\n";
+        out += l;
+    }
+    g_warn_lines.clear();
+    g_warn_seen.clear();
+    return out;
+}
+
 
 const char* jstr(JNIEnv* env, jstring s, std::string& holder) {
     if (s == nullptr) return nullptr;
@@ -122,6 +189,9 @@ void previewTrampoline(int step, int frame_count, sd_image_t* frames, bool /*is_
 
 extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
     g_vm = vm;
+    // 注册 sd.cpp 的日志回调：不注册的话 WARN/ERROR 全被 util.cpp 的 if (sd_log_cb) 丢掉。
+    // 放在 OnLoad 里一次注册即可 —— 回调是全局的，与具体 ctx 无关。
+    sd_set_log_callback(sd_log_trampoline, nullptr);
     return JNI_VERSION_1_6;
 }
 
@@ -135,6 +205,13 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeInfo(JNIEnv* env, jobject /*thiz*
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_litertchat_app_draw_SdCppEngine_nativeLastParams(JNIEnv* env, jobject /*thiz*/) {
     return env->NewStringUTF(g_last_dump.c_str());
+}
+
+// 取走自上次调用以来 sd.cpp 报的 WARN/ERROR（每行一条），取完即清空。
+// Kotlin 在每次出图结束（成功或失败）时调用，拼进 DRAW 诊断日志。
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_litertchat_app_draw_SdCppEngine_nativeTakeWarnings(JNIEnv* env, jobject /*thiz*/) {
+    return env->NewStringUTF(take_warn_lines().c_str());
 }
 
 // nativeListDevices() -> "name\tdescription\n..."（ggml 后端设备清单；没有设备时返回空串）
