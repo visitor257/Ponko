@@ -731,7 +731,6 @@ Try a different word, or tap Clear above.</string>
 <string name="s_771">System prompt</string>
 <string name="s_772">Belongs to this conversation only — each one keeps its own. Sent ahead of every message, before your first turn, and the model treats it as standing instructions rather than as something said in the chat. Leave it empty to send nothing.</string>
 <string name="s_773">Save</string>
-<string name="s_774">Clear</string>
 <string name="s_775">e.g. Always answer in English, keep it under three sentences.</string>
 <string name="s_776">System prompt saved</string>
 

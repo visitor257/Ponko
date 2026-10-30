@@ -2831,19 +2831,12 @@ class MainActivity : Activity() {
         }
         sysSheetPanel.addView(sysPromptEdit, matchWrap().apply { topMargin = dp(10) })
 
-        // 底部两个按钮：清空在左、保存在右（主操作靠右）
-        val btnRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.END
-        }
-        btnRow.addView(smallButton(getString(R.string.s_774)) {
-            sysPromptEdit.setText("")
-            saveSysPrompt("")
-        }, wrapWrap().apply { rightMargin = dp(8) })
-        btnRow.addView(smallButton(getString(R.string.s_773)) {
+        // 底部只有一个保存按钮，左右撑满 —— 和模型页的「选择模型 / 加载模型」同一套外观。
+        // 原来并排放了「清空」，但清空要点两下（先清输入框、再存空值），
+        // 而且清空本身就是「保存一个空串」，用保存按钮就能做到，没必要单列。
+        sysSheetPanel.addView(actionButton(getString(R.string.s_773)) {
             saveSysPrompt(sysPromptEdit.text.toString())
-        }, wrapWrap())
-        sysSheetPanel.addView(btnRow, matchWrap().apply { topMargin = dp(12) })
+        }, matchWrap().apply { topMargin = dp(14) })
 
         rootFrame.addView(sysSheetPanel, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT
@@ -2857,9 +2850,9 @@ class MainActivity : Activity() {
         saveSessions()
         toast(getString(R.string.s_776))
         closeChatSettingsSheet()
-        // LiteRT 的会话在创建时就把 initialMessages 定死了，不重建不会生效；
-        // gguf 每次请求现拼参数，不用管。
-        if (engine != null) rebuildConversation(silent = true)
+        // LiteRT：systemInstruction 是建会话时写进提示模板的，不重建就等于没改。
+        // gguf：llama.cpp 每次推理现拼 user 消息，已经带上了新提示词，不用重建。
+        if (engine != null && llamaModel == null) rebuildConversation(silent = true)
     }
 
     private fun openChatSettingsSheet() {
@@ -4907,13 +4900,24 @@ class MainActivity : Activity() {
         reserveTokens: Int = 900,
     ): ConversationConfig {
         val msgs = mutableListOf<Message>()
-        // 用户自己的系统提示词排在最前：它是人设/规则，后面那些工具说明是补充。
-        // 用户没写就什么都不加（空串会让 native 拿到一个空的 systemInstruction，
-        // LiteRT 会把它当成一条真实指令，反而可能干扰输出）。
+        // 系统提示词走 systemInstruction，**不能**塞进 initialMessages。
+        //
+        // 这是改提示词「看起来没生效」的根因：initialMessages 里的一条 system 消息只会
+        // 作为普通历史内容回放，模型把它当成"聊天里说过的话"，而不是会覆盖行为的系统指令。
+        // 所以把「你是猫」改成「你是狗」时，新会话里是 4 轮扮演猫的历史 + 一句"你是狗"，
+        // 历史赢，模型接着说猫。
+        //
+        // SDK 真正读取的是 ConversationConfig.systemInstruction（ChatCore 一直是对的，
+        // 这里之前写错了）。空串必须给 null：空的 systemInstruction 会被当成一条真实指令，
+        // 反而干扰输出。
+        val sysParts = ArrayList<String>()
+        // 用户自己的提示词排最前：它是人设/规则，后面那些工具说明是补充
         val userSys = sysPrompt()
-        if (userSys.isNotEmpty()) msgs += Message.system(userSys)
+        if (userSys.isNotEmpty()) sysParts += userSys
         // 两种模型都就绪时，告知语言模型它可以用 <draw> 命令调绘图模型
-        if (canDrawFromChat) msgs += Message.system(drawToolPrompt)
+        if (canDrawFromChat) sysParts += drawToolPrompt
+        val systemInstruction = sysParts.joinToString("\n\n").ifEmpty { null }
+
         // 历史按预算裁剪：LiteRT 上下文只有 4096，全塞进去 native 会直接报输入过长。
         // 从最新一轮往前装，装不下的老对话丢掉（界面上还在，只是不再喂给模型）。
         var budget = inputTokenBudget() -
@@ -4934,6 +4938,7 @@ class MainActivity : Activity() {
             if (t.answer.isNotEmpty()) msgs += Message.model(t.answer)
         }
         return ConversationConfig(
+            systemInstruction = systemInstruction?.let { Contents.of(it) },
             initialMessages = msgs,
             // 每次重建会话都换随机种子，否则「重新生成」会得到一模一样的回答
             // 采样参数来自模型页（改参数后 doSend 会重建会话来生效）
