@@ -130,7 +130,13 @@ object SdCppEngine {
         initWidth: Int,
         initHeight: Int,
         strength: Float,
+        refData: Array<ByteArray>?,
+        refWidths: IntArray?,
+        refHeights: IntArray?,
     ): IntArray?
+
+    /** 已加载模型自带的参考图预设名；不支持参考图时返回 null（见 nativeRefImagePreset 注释） */
+    external fun nativeRefImagePreset(handle: Long): String?
 
     external fun nativeCancel(handle: Long)
 
@@ -204,6 +210,10 @@ object SdCppEngine {
      *
      *  initImage 非空则会走图生图（img2img）：它会被缩放到 width×height 后作为初始 latent，
      *  strength(<1) 决定从第几步开始去噪（越小越接近原图）。
+     *
+     *  refImages 非空则走「参考图」通路：每张作为独立 token 交给 DiT，与 initImage 无关。
+     *  只对自带参考图预设的架构有效（Krea2 style reference LoRA、FLUX Kontext 等），
+     *  支持与否用 nativeRefImagePreset() 查。
      */
     fun render(
         handle: Long,
@@ -224,6 +234,7 @@ object SdCppEngine {
         initWidth: Int = 0,
         initHeight: Int = 0,
         strength: Float = 1.0f,
+        refImages: List<RefImage> = emptyList(),
     ): Bitmap? {
         val effectiveSeed = if (seed < 0) (System.currentTimeMillis() % 1_000_000_000L) else seed
         val useInit = initImage != null && initImage.isNotEmpty() && initWidth > 0 && initHeight > 0
@@ -235,10 +246,16 @@ object SdCppEngine {
             if (useInit) initWidth else 0,
             if (useInit) initHeight else 0,
             if (useInit) strength else 1.0f,
+            if (refImages.isEmpty()) null else refImages.map { it.rgb }.toTypedArray(),
+            if (refImages.isEmpty()) null else refImages.map { it.width }.toIntArray(),
+            if (refImages.isEmpty()) null else refImages.map { it.height }.toIntArray(),
         ) ?: return null
         if (px.isEmpty()) return null
         return Bitmap.createBitmap(px, width, height, Bitmap.Config.ARGB_8888)
     }
+
+    /** 一张参考图：RGB888 交错字节 + 尺寸 */
+    class RefImage(val width: Int, val height: Int, val rgb: ByteArray)
 
         /** 预览小图（RGB888）→ Bitmap（ARGB_8888）；非法输入返回 null */
     fun rgbToBitmap(width: Int, height: Int, rgb: ByteArray): Bitmap? {

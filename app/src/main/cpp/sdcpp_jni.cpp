@@ -10,6 +10,7 @@
 #include <mutex>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "stable-diffusion.h"
@@ -214,6 +215,21 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeTakeWarnings(JNIEnv* env, jobject
     return env->NewStringUTF(take_warn_lines().c_str());
 }
 
+// nativeRefImagePreset(handle) -> 模型自带的参考图预设名；不支持参考图时返回 null。
+//
+// 由界面用它决定要不要显示「参考图」入口。硬编码家族列表在 Kotlin 里迟早会和 sd.cpp
+// 漂移（比如 FLUX 家族里只有 Kontext 变体接受参考图），所以直接问 native。
+// 参考图交给没有预设的架构是有害的：pass_to_dit 默认 true，会在模型没预期的情况下
+// 改变图结构。
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_litertchat_app_draw_SdCppEngine_nativeRefImagePreset(JNIEnv* env, jobject /*thiz*/, jlong handle) {
+    SdHandle* h = reinterpret_cast<SdHandle*>(handle);
+    if (h == nullptr || h->ctx == nullptr) return nullptr;
+    const char* preset = sd_get_default_ref_image_preset(h->ctx);
+    if (preset == nullptr || preset[0] == '\0') return nullptr;
+    return env->NewStringUTF(preset);
+}
+
 // nativeListDevices() -> "name\tdescription\n..."（ggml 后端设备清单；没有设备时返回空串）
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_litertchat_app_draw_SdCppEngine_nativeListDevices(JNIEnv* env, jobject /*thiz*/) {
@@ -334,11 +350,18 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeCreate(
 
 // nativeGenerate(handle, prompt, negative, loraPath, loraScale,
 //                width, height, steps, cfg, seed, sampleMethod, scheduler,
-//                cb, initData, initWidth, initHeight, strength) -> IntArray(ARGB)
+//                cb, pcb, initData, initWidth, initHeight, strength,
+//                refData, refWidths, refHeights) -> IntArray(ARGB)
 //
 // initData 非空 → 图生图（img2img）：RGB888 交错字节（每像素 3 字节，行优先，左上原点），
 // sd.cpp 会把它按 request 尺寸缩放后编码进 latent，并按 strength(<1) 决定起始噪声步数。
 // initData 为空 → 文生图，strength 忽略。
+//
+// refData 非空 → 参考图（ref_images）。**这跟 initData 不是一回事**，别混：
+//   init_image 是「起始 latent 加噪后重绘」，一张，带 strength；
+//   ref_images 是「作为独立 token 交给 DiT」，可以多张，强度由模型自带的
+//   ref_image_preset 决定（Krea2 → krea2_ostris_edit，即 timestep 0 的 style reference）。
+// 两者可以同时给，但正常情况下只需其一。
 extern "C" JNIEXPORT jintArray JNICALL
 Java_com_litertchat_app_draw_SdCppEngine_nativeGenerate(
         JNIEnv* env, jobject /*thiz*/,
@@ -348,7 +371,8 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeGenerate(
         jint width, jint height, jint steps, jfloat cfg, jlong seed,
         jint sampleMethod, jint scheduler,
         jobject cb, jobject pcb,
-        jbyteArray initData, jint initWidth, jint initHeight, jfloat strength) {
+        jbyteArray initData, jint initWidth, jint initHeight, jfloat strength,
+        jobjectArray refData, jintArray refWidths, jintArray refHeights) {
     SdHandle* h = reinterpret_cast<SdHandle*>(handle);
     if (h == nullptr || h->ctx == nullptr) return nullptr;
 
@@ -426,6 +450,44 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeGenerate(
             LOGE("img2img: GetByteArrayElements returned null");
         }
     }
+
+    // ---- 参考图（ref_images）----
+    // 每张都是 RGB888 交错字节，指针在 generate_image 期间必须有效 → 统一在函数末尾释放。
+    std::vector<sd_image_t> refImages;
+    std::vector<std::pair<jbyteArray, jbyte*>> refHolds;
+    if (refData != nullptr) {
+        const jsize refN = env->GetArrayLength(refData);
+        std::vector<jint> rw(static_cast<size_t>(refN), 0);
+        std::vector<jint> rh(static_cast<size_t>(refN), 0);
+        if (refWidths != nullptr) env->GetIntArrayRegion(refWidths, 0, refN, rw.data());
+        if (refHeights != nullptr) env->GetIntArrayRegion(refHeights, 0, refN, rh.data());
+        refImages.reserve(static_cast<size_t>(refN));
+        for (jsize i = 0; i < refN; ++i) {
+            auto arr = static_cast<jbyteArray>(env->GetObjectArrayElement(refData, i));
+            if (arr == nullptr) continue;
+            jbyte* bytes    = env->GetByteArrayElements(arr, nullptr);
+            const jsize len = env->GetArrayLength(arr);
+            const size_t need = static_cast<size_t>(rw[i]) * static_cast<size_t>(rh[i]) * 3;
+            if (bytes == nullptr || rw[i] <= 0 || rh[i] <= 0 || static_cast<size_t>(len) < need) {
+                LOGE("ref image %d rejected: %dx%d, %d bytes (need %zu)", i, rw[i], rh[i], len, need);
+                if (bytes != nullptr) env->ReleaseByteArrayElements(arr, bytes, JNI_ABORT);
+                env->DeleteLocalRef(arr);
+                continue;
+            }
+            sd_image_t img;
+            img.width   = static_cast<uint32_t>(rw[i]);
+            img.height  = static_cast<uint32_t>(rh[i]);
+            img.channel = 3;
+            img.data    = reinterpret_cast<uint8_t*>(bytes);
+            refImages.push_back(img);
+            refHolds.emplace_back(arr, bytes);
+        }
+        if (!refImages.empty()) {
+            g.ref_images       = refImages.data();
+            g.ref_images_count = static_cast<int>(refImages.size());
+            LOGI("ref images: %d", static_cast<int>(refImages.size()));
+        }
+    }
     if (useLora) {
         lora.is_high_noise = false;
         lora.multiplier    = loraScale;
@@ -474,6 +536,10 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeGenerate(
 
     if (initBytes != nullptr && initData != nullptr) {
         env->ReleaseByteArrayElements(initData, initBytes, JNI_ABORT);
+    }
+    for (auto& hold : refHolds) {
+        env->ReleaseByteArrayElements(hold.first, hold.second, JNI_ABORT);
+        env->DeleteLocalRef(hold.first);
     }
     if (h->cb) { env->DeleteGlobalRef(h->cb); h->cb = nullptr; h->cb_mid = nullptr; }
     if (h->pcb) { env->DeleteGlobalRef(h->pcb); h->pcb = nullptr; h->pcb_mid = nullptr; }

@@ -81,6 +81,10 @@ class DrawPage(
         /** 打标模型/标签表目录：filesDir/tagger */
         const val TAGGER_DIR = "tagger"
         private const val REQ_IMAGE = 0x5D02
+        /** 选参考图（ref_images，与图生图那张起始图不是一回事） */
+        private const val REQ_REF_IMAGE = 0x5D03
+        /** 参考图上限：Krea2 style reference LoRA 训练时就是 1~2 张 */
+        private const val MAX_REF_IMAGES = 2
         private const val REQ_TAGGER_IMAGE = 0x5D03
 
         /** LCM-LoRA：HuggingFace 官方仓库路径（文件实名为 pytorch_lora_weights.safetensors） */
@@ -459,6 +463,13 @@ class DrawPage(
     /** 图生图选中的参考图（仅内存，进程结束即失效） */
     private var i2iBitmap: Bitmap? = null
 
+    // ---- 参考图（ref_images）----
+    private lateinit var refCard: LinearLayout
+    private lateinit var refPickBtn: Button
+    private lateinit var refRow: LinearLayout
+    /** 已选的参考图，最多 MAX_REF_IMAGES 张 */
+    private val refBitmaps = ArrayList<Bitmap>()
+
     // ---- Tagger 专属控件 ----
     private lateinit var tabTagger: TextView
     private lateinit var taggerContent: LinearLayout
@@ -659,6 +670,30 @@ class DrawPage(
         }
         paramCard.addView(loraHint)
         t2iContent.addView(paramCard)
+
+        // ---- 参考图（ref_images）----
+        // 只在已加载模型自带 ref_image_preset 时显示：把参考图交给没有预设的架构是有害的
+        // （pass_to_dit 默认 true，会在模型没预期的形状下改动图）。支持与否问 native，
+        // 不在 Kotlin 里硬编码家族 —— FLUX 家族里只有 Kontext 变体接受参考图。
+        refCard = card()
+        refCard.visibility = View.GONE
+        refCard.addView(title(c.getString(R.string.s_765)))
+        refCard.addView(body(c.getString(R.string.s_766)))
+        refPickBtn = Button(c).apply {
+            text = c.getString(R.string.s_767)
+            textSize = 12.5f
+            isAllCaps = false
+            setBackgroundColor(pal.softBtn)
+            setTextColor(textColor)
+            setOnClickListener { pickRefImage() }
+        }
+        refCard.addView(refPickBtn, matchWrap(top = 10))
+        refRow = LinearLayout(c).apply {
+            orientation = LinearLayout.HORIZONTAL
+            visibility = View.GONE
+        }
+        refCard.addView(refRow, matchWrap(top = 8))
+        t2iContent.addView(refCard)
         t2iContent.addView(defaultButtonsRow("t2i"), matchWrap(top = 10))
 
         // ---- 图生图页面 ----
@@ -1423,6 +1458,75 @@ class DrawPage(
         act.startActivityForResult(i, REQ_IMAGE)
     }
 
+    private fun pickRefImage() {
+        if (refBitmaps.size >= MAX_REF_IMAGES) {
+            toast(c.getString(R.string.v_064, MAX_REF_IMAGES))
+            return
+        }
+        val i = android.content.Intent(android.content.Intent.ACTION_GET_CONTENT).apply {
+            addCategory(android.content.Intent.CATEGORY_OPENABLE)
+            type = "image/*"
+        }
+        act.startActivityForResult(i, REQ_REF_IMAGE)
+    }
+
+    /**
+     * 参考图是否可用（模型自带 ref_image_preset）。
+     * 顺带把卡片显隐定下来 —— 加载模型后才会有答案，所以加载完要再调一次。
+     */
+    private fun refreshRefImageUi() {
+        if (!::refCard.isInitialized) return
+        val usable = refSupported()
+        refCard.visibility = if (usable) View.VISIBLE else View.GONE
+        // 换了个不支持参考图的模型，就把已选的清掉，免得下次误用
+        if (!usable && refBitmaps.isNotEmpty()) {
+            refBitmaps.clear()
+            refreshRefPreview()
+        }
+    }
+
+    /** 问 native：当前句柄的模型接受参考图吗。句柄没了就当作不支持。 */
+    private fun refSupported(): Boolean {
+        if (sdHandle == 0L) return false
+        val preset = runCatching { SdCppEngine.nativeRefImagePreset(sdHandle) }.getOrNull()
+        return !preset.isNullOrEmpty()
+    }
+
+    private fun applyRefImage(bmp: Bitmap) {
+        if (refBitmaps.size >= MAX_REF_IMAGES) return
+        refBitmaps.add(bmp)
+        refreshRefPreview()
+    }
+
+    /** 重建缩略图行；点缩略图 = 移除那一张 */
+    private fun refreshRefPreview() {
+        if (!::refRow.isInitialized) return
+        refRow.removeAllViews()
+        if (refBitmaps.isEmpty()) {
+            refRow.visibility = View.GONE
+            refPickBtn.isEnabled = true
+            refPickBtn.text = c.getString(R.string.s_767)
+            return
+        }
+        refRow.visibility = View.VISIBLE
+        refPickBtn.isEnabled = refBitmaps.size < MAX_REF_IMAGES
+        refPickBtn.text = c.getString(R.string.v_065, refBitmaps.size, MAX_REF_IMAGES)
+        val side = dp(64)
+        for ((idx, bmp) in refBitmaps.withIndex()) {
+            val iv = ImageView(c).apply {
+                setImageBitmap(bmp)
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                setBackgroundColor(pal.border)
+                isClickable = true
+                setOnClickListener {
+                    refBitmaps.removeAt(idx)
+                    refreshRefPreview()
+                }
+            }
+            refRow.addView(iv, LinearLayout.LayoutParams(side, side).apply { rightMargin = dp(8) })
+        }
+    }
+
     /** 解码选中的图片；超过 2048 像素则按比例下采样，避免 OOM */
     private fun decodePickedImage(uri: Uri): Bitmap? = runCatching {
         val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -2092,6 +2196,8 @@ class DrawPage(
             }
             statusText.post { statusText.text = summary }
             statusText.post { refreshQuantText() }
+            // 参考图卡片能不能显示，取决于刚加载的模型带不带 ref_image_preset
+            statusText.post { refreshRefImageUi() }
             // 参数快照同步给 API（此时控件都已建好）
             statusText.post { runCatching { syncDrawCore() } }
             // mmap 是**惰性**的：这里"加载成功"只说明元数据读通了、句柄建起来了，
@@ -2119,6 +2225,8 @@ class DrawPage(
             statusText.text = c.getString(R.string.s_115)
         } catch (_: Throwable) {}
         refreshQuantText()
+        // 句柄没了，参考图卡片要藏起来，已选的也别留着
+        refreshRefImageUi()
     }
 
     fun hasModel(): Boolean = listSets().isNotEmpty()
@@ -2282,6 +2390,7 @@ class DrawPage(
         prompt: String,
         onProgress: (Int, Int) -> Unit = { _, _ -> },
         onPreview: ((Int, Int, Int, ByteArray) -> Unit)? = null,
+        withRefImages: Boolean = true,
     ): ImageData {
         // 绘图接口正在出图时别插队：同一个 native 句柄同时跑两个任务会错乱
         if (DrawCore.busy) throw IllegalStateException(c.getString(R.string.s_428))
@@ -2397,6 +2506,14 @@ class DrawPage(
                     onPreview = onPreview?.let { f ->
                         SdCppEngine.PreviewCallback { st, w, h, rgb -> f(st, w, h, rgb) }
                     },
+                    // 参考图：只把「模型确实支持」的那些传下去。
+                    // 界面在换模型时会清空，但 API 路径（MainActivity / 插件）不经过界面，
+                    // 所以这里再用 native 的答案兜一次，避免把 ref 塞给不认识它的架构。
+                    refImages = if (withRefImages && refBitmaps.isNotEmpty() && refSupported()) {
+                        refBitmaps.map {
+                            SdCppEngine.RefImage(it.width, it.height, SdCppEngine.bitmapToRgb888(it))
+                        }
+                    } else emptyList(),
                 )
             } ?: throw IllegalStateException(c.getString(R.string.s_147))
             onProgress(steps, steps)
@@ -2715,7 +2832,8 @@ class DrawPage(
     }
 
     fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?): Boolean {
-        if (requestCode != REQ_IMAGE && requestCode != REQ_TAGGER_IMAGE) return false
+        if (requestCode != REQ_IMAGE && requestCode != REQ_TAGGER_IMAGE &&
+            requestCode != REQ_REF_IMAGE) return false
         if (resultCode != Activity.RESULT_OK) return true
         val uri = data?.data ?: return true
         scope.launch {
@@ -2724,6 +2842,8 @@ class DrawPage(
                 toast(c.getString(R.string.s_215))
             } else if (requestCode == REQ_IMAGE) {
                 applyPickedImage(bmp)
+            } else if (requestCode == REQ_REF_IMAGE) {
+                applyRefImage(bmp)
             } else {
                 applyTaggerImage(bmp)
             }
