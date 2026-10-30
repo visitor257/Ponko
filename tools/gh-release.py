@@ -1,7 +1,16 @@
 # -*- coding: utf-8 -*-
 # Ponko · (c) 2026 visitor257 · MIT License · github.com/visitor257/Ponko
 """在 GitHub 上为 visitor257/Ponko 创建 Release 并上传 APK 附件。
-Release 说明为中英双语（英文在前，中文在后）。"""
+Release 说明为中英双语（英文在前，中文在后）。
+
+用法（推荐带参数，不必改下面的常量）:
+    python tools/gh-release.py --tag v2.0.5 --name "Ponko v2.0.5" \
+        --notes tools/release-notes/v2.0.5.md --apk C:\\PonkoBuild\\Ponko-release.apk
+
+⚠ **正式版附件名一律是 `Ponko-release.apk`**（带版本号是 beta 的命名法）。
+   脚本已强制这一点，不接受 --asset 覆盖。
+"""
+import argparse
 import json
 import os
 import re
@@ -13,6 +22,8 @@ TOKFILE = r"C:\Users\Administrator\Desktop\git_repo_tok.txt"
 APK = r"C:\Users\Administrator\WorkBuddy\智能Agent\LiteRT-Chat\app\build\outputs\apk\release\Ponko-release.apk"
 TAG = "v1.7.2"
 NAME = "Ponko v1.7.2"
+# 正式版附件名固定，不做成参数 —— 免得又传成 Ponko-2.0.4.apk 那种
+ASSET = "Ponko-release.apk"
 
 BODY = """Ponko v1.7.2 - Offline-capable AI app for Android: chat (image, file and document input) + drawing + tagging, each of which can be served over its own OpenAI-compatible API.
 
@@ -181,12 +192,41 @@ def _head_sha():
 
 
 def main():
+    ap = argparse.ArgumentParser(description="创建 Ponko Release 并上传 APK")
+    ap.add_argument("--tag", default=TAG, help="tag 名，如 v2.0.5（默认取脚本常量）")
+    ap.add_argument("--name", default=None, help="Release 标题，默认 'Ponko <tag>'")
+    ap.add_argument("--notes", default=None, help="正文文件路径（UTF-8）；不给则用脚本里的 BODY")
+    ap.add_argument("--apk", default=APK, help="APK 路径")
+    ap.add_argument("--prerelease", action="store_true", help="标为预发布")
+    ap.add_argument("--dry-run", action="store_true", help="只打印将要做什么，不调 API")
+    a = ap.parse_args()
+
+    tag = a.tag
+    name = a.name or ("Ponko " + tag)
+    body = BODY
+    if a.notes:
+        body = open(a.notes, encoding="utf-8").read()
+    apk = a.apk
+
+    if not os.path.exists(apk):
+        raise SystemExit("APK 不存在: " + apk)
+    if tag != TAG or body != BODY:
+        print("tag    :", tag)
+        print("name   :", name)
+        print("正文   :", ("%s (%d 字符)" % (a.notes, len(body))) if a.notes else "脚本内置 BODY")
+        print("APK    : %s (%.2f MB)" % (apk, os.path.getsize(apk) / 1048576.0))
+        print("附件名 :", ASSET)
+        print("预发布 :", a.prerelease)
+    if a.dry_run:
+        print("--dry-run：到此为止，未调用 API")
+        return
+
     api = "https://api.github.com/repos/" + REPO
 
     # 已存在同名 release 就先删掉，保证可重复执行
     try:
         for rel in json.loads(req(api + "/releases?per_page=100").read()):
-            if rel.get("tag_name") == TAG:
+            if rel.get("tag_name") == tag:
                 print("删除已存在的 release:", rel["id"])
                 req(api + "/releases/" + str(rel["id"]), method="DELETE").read()
     except Exception as e:
@@ -194,26 +234,27 @@ def main():
 
     # 同名 tag 已存在时 GitHub 会沿用旧 tag（不会移到新的 target_commitish），先删掉
     try:
-        req(api + "/git/refs/tags/" + TAG, method="DELETE").read()
-        print("删除已存在的 tag:", TAG)
+        req(api + "/git/refs/tags/" + tag, method="DELETE").read()
+        print("删除已存在的 tag:", tag)
     except Exception as e:
         print("删除 tag（不存在则忽略）:", e)
 
     payload = json.dumps({
-        "tag_name": TAG,
+        "tag_name": tag,
         "target_commitish": _head_sha(),
-        "name": NAME,
-        "body": BODY,
+        "name": name,
+        "body": body,
         "draft": False,
-        "prerelease": False,
-    }).encode("utf-8")
-    rel = json.loads(req(api + "/releases", data=payload, ctype="application/json", method="POST").read())
+        "prerelease": bool(a.prerelease),
+    }, ensure_ascii=False).encode("utf-8")
+    rel = json.loads(req(api + "/releases", data=payload,
+                         ctype="application/json; charset=utf-8", method="POST").read())
     print("release 已创建:", rel["html_url"])
     rid = rel["id"]
 
-    data = open(APK, "rb").read()
+    data = open(apk, "rb").read()
     print("APK 大小: %.2f MB" % (len(data) / 1048576.0))
-    up = "https://uploads.github.com/repos/%s/releases/%d/assets?name=Ponko-release.apk" % (REPO, rid)
+    up = "https://uploads.github.com/repos/%s/releases/%d/assets?name=%s" % (REPO, rid, ASSET)
     asset = json.loads(req(up, data=data, ctype="application/vnd.android.package-archive", method="POST").read())
     print("附件已上传:", asset["name"], asset["size"], "bytes")
     print("下载地址:", asset["browser_download_url"])
