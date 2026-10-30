@@ -4,6 +4,7 @@
 #include <jni.h>
 #include <android/log.h>
 #include <atomic>
+#include <cctype>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
@@ -74,7 +75,20 @@ std::vector<std::string> g_warn_lines;
 std::set<std::string> g_warn_seen;
 
 void sd_log_trampoline(enum sd_log_level_t level, const char* text, void* /*data*/) {
-    if (text == nullptr || level < SD_LOG_WARN) return;
+    if (text == nullptr) return;
+    // 默认只收 WARN/ERROR，但有几条 INFO 是「LoRA 到底有没有生效」的唯一答案：
+    //   runtime_lora_models:            ← 只有 runtime_lora_models 非空才打
+    //   (N / M) LoRA tensors have been applied
+    //   apply_loras completed
+    // 少了它们，「LoRA 挂了但完全没作用」和「LoRA 一切正常」在日志里长得一模一样 ——
+    // lora_stat() 的第一句就是 if (!runtime_lora_models.empty())，空的时候一个字都不输出。
+    bool interesting = level >= SD_LOG_WARN;
+    if (!interesting && level == SD_LOG_INFO) {
+        std::string lower(text);
+        for (auto& c : lower) c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
+        interesting = lower.find("lora") != std::string::npos;
+    }
+    if (!interesting) return;
     std::string line(text);
     // 去掉末尾换行，日志文件里每行一条更整齐
     while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
@@ -83,7 +97,8 @@ void sd_log_trampoline(enum sd_log_level_t level, const char* text, void* /*data
     std::lock_guard<std::mutex> lock(g_log_mutex);
     if (!g_warn_seen.insert(line).second) return;  // 同一条只留一次
     if (g_warn_lines.size() >= kMaxWarnLines) return;
-    g_warn_lines.push_back((level == SD_LOG_ERROR ? "E: " : "W: ") + line);
+    const char* tag = level == SD_LOG_ERROR ? "E: " : (level == SD_LOG_WARN ? "W: " : "I: ");
+    g_warn_lines.push_back(tag + line);
     __android_log_print(level == SD_LOG_ERROR ? ANDROID_LOG_ERROR : ANDROID_LOG_WARN,
                         TAG, "sd.cpp %s", line.c_str());
 }
