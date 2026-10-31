@@ -2445,6 +2445,20 @@ class DrawPage(
         // flashAttn 必须记：它是唯一一个「我们和上游默认值不同」的开关，
         // 排查兼容性问题时第一个要看的就是它开没开。
         gstage("  lora=${lora?.name ?: "none"} scale=$loraScale backend=$activeBackend flashAttn=$flashAttn")
+        // 参考图只在这里算一次：Bitmap → RGB888 是逐像素循环，算两遍纯属浪费。
+        // 而且必须记数量 —— sd.cpp 那边「给了参考图」和「没给」在 INFO 层面只差一行
+        // EDIT mode，一旦过滤条件没覆盖到就完全看不出来。这里由 App 自己记，
+        // 排查「加了参考图没效果」时第一个要区分的就是「没传进去」和「传进去但模型没理」。
+        val refImages = if (withRefImages && refBitmaps.isNotEmpty() && refSupported()) {
+            refBitmaps.map { SdCppEngine.RefImage(it.width, it.height, SdCppEngine.bitmapToRgb888(it)) }
+        } else {
+            emptyList()
+        }
+        gstage(
+            if (refImages.isEmpty()) "  refImages=none"
+            else "  refImages=${refImages.size} " +
+                refImages.joinToString(", ") { "${it.width}x${it.height}" }
+        )
         runCatching { gstage("  " + memLine()) }
         // 步进日志：每步都落盘。sd.cpp 一步几秒，写一行的开销可忽略，
         // 换来的是"崩在第 17/20 步"这种能直接定位的信息。
@@ -2509,11 +2523,7 @@ class DrawPage(
                     // 参考图：只把「模型确实支持」的那些传下去。
                     // 界面在换模型时会清空，但 API 路径（MainActivity / 插件）不经过界面，
                     // 所以这里再用 native 的答案兜一次，避免把 ref 塞给不认识它的架构。
-                    refImages = if (withRefImages && refBitmaps.isNotEmpty() && refSupported()) {
-                        refBitmaps.map {
-                            SdCppEngine.RefImage(it.width, it.height, SdCppEngine.bitmapToRgb888(it))
-                        }
-                    } else emptyList(),
+                    refImages = refImages,
                 )
             } ?: throw IllegalStateException(c.getString(R.string.s_147))
             onProgress(steps, steps)

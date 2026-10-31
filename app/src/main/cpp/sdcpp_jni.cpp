@@ -77,17 +77,31 @@ std::set<std::string> g_warn_seen;
 
 void sd_log_trampoline(enum sd_log_level_t level, const char* text, void* /*data*/) {
     if (text == nullptr) return;
-    // 默认只收 WARN/ERROR，但有几条 INFO 是「LoRA 到底有没有生效」的唯一答案：
-    //   runtime_lora_models:            ← 只有 runtime_lora_models 非空才打
-    //   (N / M) LoRA tensors have been applied
-    //   apply_loras completed
-    // 少了它们，「LoRA 挂了但完全没作用」和「LoRA 一切正常」在日志里长得一模一样 ——
-    // lora_stat() 的第一句就是 if (!runtime_lora_models.empty())，空的时候一个字都不输出。
+    // 默认只收 WARN/ERROR，但有些 INFO 是「某个功能到底有没有生效」的唯一答案。
+    // 它们都不含 "lora"，如果只按 lora 过滤就会整条丢掉 —— 参考图那次就是这么漏的：
+    // 日志里既看不到 EDIT mode 也看不到预设名，于是「没传参考图」和「传了但模型没理」
+    // 在报告里长得一模一样，只能靠猜。
+    //
+    // 目前需要放行的 INFO：
+    //   lora                        ← runtime_lora_models: / (N / M) LoRA tensors have been applied
+    //   preset / reference images    ← Using 'krea2_ostris_edit' preset for reference images
+    //   edit mode                    ← EDIT mode（参考图确实进了编码流程）
     bool interesting = level >= SD_LOG_WARN;
     if (!interesting && level == SD_LOG_INFO) {
         std::string lower(text);
         for (auto& c : lower) c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
-        interesting = lower.find("lora") != std::string::npos;
+        static const char* const kKeepSubstrings[] = {
+            "lora",
+            "preset",
+            "reference image",
+            "edit mode",
+        };
+        for (const char* needle : kKeepSubstrings) {
+            if (lower.find(needle) != std::string::npos) {
+                interesting = true;
+                break;
+            }
+        }
     }
     if (!interesting) return;
     std::string line(text);
