@@ -22,8 +22,12 @@ TOKFILE = r"C:\Users\Administrator\Desktop\git_repo_tok.txt"
 APK = r"C:\Users\Administrator\WorkBuddy\智能Agent\LiteRT-Chat\app\build\outputs\apk\release\Ponko-release.apk"
 TAG = "v1.7.2"
 NAME = "Ponko v1.7.2"
-# 正式版附件名固定，不做成参数 —— 免得又传成 Ponko-2.0.4.apk 那种
-ASSET = "Ponko-release.apk"
+# 附件名是固定约定，不做成命令行参数 —— 免得又传成 Ponko-2.0.4.apk 那种。
+# 但正式版和预发布用的是**不同**的固定名，所以这里按 --prerelease 二选一，仍然不接受覆盖：
+#   正式版  Ponko-release.apk   （v1.0 ~ v2.0.4 全部如此）
+#   预发布  Ponko-beta.apk      （v2.1.0-beta 用的就是这个）
+ASSET_RELEASE = "Ponko-release.apk"
+ASSET_BETA = "Ponko-beta.apk"
 
 BODY = """Ponko v1.7.2 - Offline-capable AI app for Android: chat (image, file and document input) + drawing + tagging, each of which can be served over its own OpenAI-compatible API.
 
@@ -210,12 +214,13 @@ def main():
 
     if not os.path.exists(apk):
         raise SystemExit("APK 不存在: " + apk)
+    asset = ASSET_BETA if a.prerelease else ASSET_RELEASE
     if tag != TAG or body != BODY:
         print("tag    :", tag)
         print("name   :", name)
         print("正文   :", ("%s (%d 字符)" % (a.notes, len(body))) if a.notes else "脚本内置 BODY")
         print("APK    : %s (%.2f MB)" % (apk, os.path.getsize(apk) / 1048576.0))
-        print("附件名 :", ASSET)
+        print("附件名 :", asset)
         print("预发布 :", a.prerelease)
     if a.dry_run:
         print("--dry-run：到此为止，未调用 API")
@@ -254,7 +259,7 @@ def main():
 
     data = open(apk, "rb").read()
     print("APK 大小: %.2f MB" % (len(data) / 1048576.0))
-    up = "https://uploads.github.com/repos/%s/releases/%d/assets?name=%s" % (REPO, rid, ASSET)
+    up = "https://uploads.github.com/repos/%s/releases/%d/assets?name=%s" % (REPO, rid, asset)
     asset = json.loads(req(up, data=data, ctype="application/vnd.android.package-archive", method="POST").read())
     print("附件已上传:", asset["name"], asset["size"], "bytes")
     print("下载地址:", asset["browser_download_url"])
