@@ -3,6 +3,7 @@
 // 目标：把 sd.cpp 的 C API 暴露给 Kotlin（可控线程数 / 采样器 / 调度器 / LoRA / 量化类型 / 取消）
 #include <jni.h>
 #include <android/log.h>
+#include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <cstdlib>
@@ -71,9 +72,42 @@ std::string g_last_dump;
 // 环形缓冲 + 去重，避免同一个警告重复几百遍撑爆日志文件。
 constexpr size_t kMaxWarnLines = 40;
 
+// 加载阶段改收全部 INFO。
+//
+// 出图时只收 WARN/ERROR 是对的（一条一步的 INFO 会淹掉有用的），但**加载失败时
+// 一句 WARN 都没有**：sd.cpp 的 init() 在缺张量、形状不符、后端分配失败这些情况下
+// 打的是 LOG_ERROR，可它打完直接 return false；而 App 侧只有出图路径会把这些行刷进
+// 日志，加载路径从来不刷 —— 于是失败现场只剩一句 "new_sd_ctx returned 0"，等于没有信息。
+//
+// 加载期间捕获全部 INFO 还多一个好处：能看到 "Version: PixArt" 那一行，
+// 直接确认版本探测有没有命中。失败时全量交给用户，成功时只留 LoRA 相关的（和出图一致）。
+std::atomic<bool> g_capture_all{false};
+constexpr size_t kMaxCaptureAllLines = 200;
+
 std::mutex g_log_mutex;
 std::vector<std::string> g_warn_lines;
 std::set<std::string> g_warn_seen;
+
+// 切到全量捕获。清掉上一轮残留，免得把上次出图的警告混进来。
+void set_capture_all(bool on) {
+    std::lock_guard<std::mutex> lock(g_log_mutex);
+    if (on) {
+        g_warn_lines.clear();
+        g_warn_seen.clear();
+    }
+    g_capture_all.store(on, std::memory_order_release);
+}
+
+// 加载成功后把 INFO 级别的行丢掉，只留 WARN/ERROR —— 出图期间不该带着几十行加载 INFO。
+void drop_captured_info() {
+    std::lock_guard<std::mutex> lock(g_log_mutex);
+    auto it = std::remove_if(g_warn_lines.begin(), g_warn_lines.end(),
+                             [](const std::string& s) { return s.rfind("I: ", 0) == 0; });
+    g_warn_lines.erase(it, g_warn_lines.end());
+    // 去重集合里存的是去掉级别前缀的原文，和 g_warn_lines 的元素不是同一形态，
+    // 这里没法逐个回填，直接清空即可：最坏后果是同一条 WARN 在之后多出现一次。
+    g_warn_seen.clear();
+}
 
 void sd_log_trampoline(enum sd_log_level_t level, const char* text, void* /*data*/) {
     if (text == nullptr) return;
@@ -87,6 +121,11 @@ void sd_log_trampoline(enum sd_log_level_t level, const char* text, void* /*data
     //   preset / reference images    ← Using 'krea2_ostris_edit' preset for reference images
     //   edit mode                    ← EDIT mode（参考图确实进了编码流程）
     bool interesting = level >= SD_LOG_WARN;
+    const bool capture_all = g_capture_all.load(std::memory_order_acquire);
+    if (!interesting && capture_all) {
+        // 加载期间全收：失败时这就是唯一能说明「哪个张量缺了/形状不对」的来源
+        interesting = level >= SD_LOG_INFO;
+    }
     if (!interesting && level == SD_LOG_INFO) {
         std::string lower(text);
         for (auto& c : lower) c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
@@ -111,7 +150,9 @@ void sd_log_trampoline(enum sd_log_level_t level, const char* text, void* /*data
 
     std::lock_guard<std::mutex> lock(g_log_mutex);
     if (!g_warn_seen.insert(line).second) return;  // 同一条只留一次
-    if (g_warn_lines.size() >= kMaxWarnLines) return;
+    // 加载失败现场动辄几百行（每个缺的张量一行），40 行的出图上限会把真正的原因挤掉
+    const size_t cap = capture_all ? kMaxCaptureAllLines : kMaxWarnLines;
+    if (g_warn_lines.size() >= cap) return;
     const char* tag = level == SD_LOG_ERROR ? "E: " : (level == SD_LOG_WARN ? "W: " : "I: ");
     g_warn_lines.push_back(tag + line);
     __android_log_print(level == SD_LOG_ERROR ? ANDROID_LOG_ERROR : ANDROID_LOG_WARN,
@@ -351,11 +392,20 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeCreate(
     LOGI("new_sd_ctx: %s", dump ? dump : "(null)");
     if (dump) free(dump);
 
+    // 加载期间全量捕获 sd.cpp 日志：init() 失败时它只 return false，
+    // 具体原因（缺张量/形状不符/后端分配失败）全在日志里，不捕获就一律丢失。
+    set_capture_all(true);
     sd_ctx_t* ctx = new_sd_ctx(&p);
+    set_capture_all(false);
+
     if (ctx == nullptr) {
+        // 这里绝不能只留一句「返回 null」：失败原因就在 g_warn_lines 里躺着，
+        // 由 Kotlin 侧 takeWarnings() 取走写进 DRAW 日志。
         LOGE("new_sd_ctx returned null");
         return 0;
     }
+    // 成功时把加载 INFO 丢掉，只留 WARN/ERROR，避免出图日志被几十行加载信息淹没
+    drop_captured_info();
     SdHandle* h = new SdHandle();
     h->ctx = ctx;
     LOGI("ctx created: %p", static_cast<void*>(ctx));

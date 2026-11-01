@@ -1044,28 +1044,20 @@ static std::string convert_diffusers_dit_to_original_pixart_bare(std::string nam
 // state_dict 就是它的直属子模块），所以那一步永远不触发，转换结果缺前缀，
 // PixArtModel 按 "model.diffusion_model.xxx" 找张量时全部落空。
 //
-// 这里统一补：只在结果确实没有任何已知顶层前缀时才加，避免对已经转换过一次的名字重复加。
+// ---- Ponko 补丁：PixArt 的 diffusers 导出可能带一层 "transformer." 包装 ----
 //
-// 另外先剥掉可能存在的 "transformer." 包装层：有些导出（diffusers 的 pipeline 整体
-// state_dict、或第三方转换脚本）会把整棵 transformer 放在 transformer. 下。对这种名字，
-// 上面的专用映射一条都不匹配（它们都以裸名开头），随后通用映射只把它改成
-// "model.diffusion_model.pos_embed.proj.weight" —— 前缀有了，但映射没做，一样找不到张量。
+// 这里**只剥包装层，不加任何前缀**。前缀由调用方负责：
+//   convert_tensor_name() 里先 name.substr(prefix.size()) 剥掉 "model.diffusion_model."，
+//   调完本函数再 name = prefix + name 加回去。
+// 早先这里自己补了一次 "model.diffusion_model."，结果前缀被加两遍，
+// 变成 model.diffusion_model.model.diffusion_model.x_embedder.proj.weight，
+// PixArtModel 一个张量都找不到 —— 加载直接失败。（beta.1 / beta.2 的回归）
 static std::string convert_diffusers_dit_to_original_pixart(std::string name) {
     static const std::string wrapper = "transformer.";
     if (starts_with(name, wrapper)) {
         name = name.substr(wrapper.size());
     }
-    const std::string out = convert_diffusers_dit_to_original_pixart_bare(name);
-    static const std::vector<std::string> known_prefixes = {
-        "model.", "first_stage_model.", "cond_stage_model.", "conditioner.",
-        "text_encoders.", "vae.", "lora.", "model.diffusion_model.",
-    };
-    for (const auto& prefix : known_prefixes) {
-        if (starts_with(out, prefix)) {
-            return out;
-        }
-    }
-    return "model.diffusion_model." + out;
+    return convert_diffusers_dit_to_original_pixart_bare(std::move(name));
 }
 
 static std::string convert_moss_image_dit_name_bare(std::string name) {
@@ -1078,31 +1070,16 @@ static std::string convert_moss_image_dit_name_bare(std::string name) {
     return name;
 }
 
-// ---- Ponko 补丁：裸名 MOSS 也要补 "model.diffusion_model." ----
+// ---- Ponko 补丁：MOSS 的 diffusers 导出可能带一层 "transformer." 包装 ----
 //
-// 和 PixArt 那边同因不同款。Comfy-Org 的 diffusion_models 目录放的是**裸名**张量
-// （video_embedder.weight、layers.0.proj.ffn_down.weight …），而通用映射
-// {"transformer."/"unet."/"diffusion_model." → "model.diffusion_model."} 只认带前缀的名字，
-// 裸名一路不匹配，最后 MossImageModel 按带前缀的名字找不到任何张量 —— 这就是
-// "Moss models won't load"。
-//
-// 顺手也剥掉可选的 "transformer." 包装层，覆盖 diffusers 整体 state_dict 那种导出。
+// 同 PixArt：只剥包装层，**不加前缀**。调用方 convert_tensor_name() 负责剥/加
+// "model.diffusion_model."，这里再补一次就会变成双前缀，模型一个张量都找不到。
 static std::string convert_moss_image_dit_name(std::string name) {
     static const std::string wrapper = "transformer.";
     if (starts_with(name, wrapper)) {
         name = name.substr(wrapper.size());
     }
-    name = convert_moss_image_dit_name_bare(std::move(name));
-    static const std::vector<std::string> known_prefixes = {
-        "model.", "first_stage_model.", "cond_stage_model.", "conditioner.",
-        "text_encoders.", "vae.", "lora.",
-    };
-    for (const auto& prefix : known_prefixes) {
-        if (starts_with(name, prefix)) {
-            return name;
-        }
-    }
-    return "model.diffusion_model." + name;
+    return convert_moss_image_dit_name_bare(std::move(name));
 }
 
 static std::string convert_ming_image_dit_name(std::string name) {
