@@ -1,4 +1,5 @@
 @echo off
+rem Ponko (c) 2026 visitor257 - MIT License - github.com/visitor257/Ponko
 REM Ponko icon signature stamper -- double-click to run.
 REM
 REM Why a .bat: a GUI launched from an agent session can be reclaimed when that
