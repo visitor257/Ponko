@@ -20,6 +20,9 @@
 #include "core/layer_split_partition.h"
 #include "core/probe/conv_direct.h"
 #include "core/probe/flash_attn.h"
+// Ponko: 预览投影要读 AutoEncoderKL::scale_factor，用来区分 PixArt Alpha（SD1.5 VAE）
+// 和 Sigma（SDXL VAE）—— 两者都是 4 通道，但从 latent 到 RGB 的系数不同。
+#include "model/vae/auto_encoder_kl.hpp"
 #include "model.h"
 #include "model_definition.h"
 
@@ -2115,6 +2118,25 @@ void StableDiffusionGGML::preview_image(int step,
             } else if (sd_version_is_sd1(version) || sd_version_is_sd2(version)) {
                 latent_rgb_proj = sd_latent_rgb_proj;
                 latent_rgb_bias = sd_latent_rgb_bias;
+            } else if (sd_version_is_pixart(version)) {
+                // PixArt 也是 4 通道，以前落到下面的 else 分支 → 预览直接不显示。
+                //
+                // 但 Alpha 和 Sigma 用的**不是同一个 VAE**：Alpha-512 用 SD1.5 的
+                // （scale 0.18215），Sigma 用 SDXL 的（0.13025）。两边 latent 空间不同，
+                // 投影系数不能混用 —— 混了预览会偏色，看着像模型坏了。
+                // 这里不硬编码版本名，直接读 first_stage_model 的实际缩放因子：
+                // 那个值正是 configure_pixart_vae() 按 csize_embedder 有没有来设的。
+                float vae_scale = 0.13025f;
+                if (auto kl = std::dynamic_pointer_cast<AutoEncoderKL>(first_stage_model)) {
+                    vae_scale = kl->scale_factor;
+                }
+                if (vae_scale > 0.15f) {
+                    latent_rgb_proj = sd_latent_rgb_proj;
+                    latent_rgb_bias = sd_latent_rgb_bias;
+                } else {
+                    latent_rgb_proj = sdxl_latent_rgb_proj;
+                    latent_rgb_bias = sdxl_latent_rgb_bias;
+                }
             } else {
                 LOG_WARN("No latent to RGB projection known for this model");
                 return;
