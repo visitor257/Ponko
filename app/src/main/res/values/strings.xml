@@ -743,4 +743,6 @@ Try a different word, or tap Clear above.</string>
     <string name="s_767">Add reference image</string>
     <string name="v_064">At most %1$d reference images</string>
     <string name="v_065">%1$d / %2$d selected - tap a thumbnail to remove</string>
+    <string name="s_768">Tokenizer JSON</string>
+    <string name="s_769">Pick a tokenizer.json file for this slot</string>
 </resources>

@@ -310,6 +310,10 @@ enum SlotIndex {
     SLOT_VAE,
     SLOT_AUDIO_VAE,
     SLOT_TAESD,           // 可选：TAESD 小自编码器（替代 VAE 做编解码，CPU 出图更快）
+    // 可选：外部 tokenizer.json。MOSS-Image / Lens / PiD 没有内置词表回退，
+    // sd.cpp 在 LLMEmbedder 里对这三个架构直接 throw，必须由这里给文件。
+    // 追加在末尾而不是插到 llm 旁边：已有模型集按位置存，插中间会让它们全部错位。
+    SLOT_TOKENIZER,
     SLOT_COUNT
 };
 
@@ -373,6 +377,10 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeCreate(
     // TAESD：非空即启用（sd.cpp 里加载成功就把编解码换成 TAE，不再走上面的 vae_path）。
     // 需要含编码器 + 解码器的完整权重——图生图要用编码器，纯解码器权重在 Kotlin 侧就被拦下了。
     p.taesd_path            = slotPtr[SLOT_TAESD];
+    // 外部 tokenizer.json。MOSS-Image / Lens / PiD 必需 —— 这三个架构没有内置词表回退，
+    // sd.cpp 的 LLMEmbedder 在 tokenizers.has(MAIN) 为假时直接 throw。
+    // 其余架构留空即可，它们会走 src/tokenizers/vocab 里内嵌的词表。
+    p.tokenizer             = slotPtr[SLOT_TOKENIZER];
     p.n_threads    = (nThreads > 0) ? nThreads : sd_get_num_physical_cores();
     // wtype < 0 表示「保持模型原样」——此时【不能】覆盖，保留 sd_ctx_params_init 给的
     // SD_TYPE_COUNT。实测把 -1 强转成 sd_type_t 会让 sd.cpp 内部查表越界，native 直接崩溃。

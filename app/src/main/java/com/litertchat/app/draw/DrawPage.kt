@@ -186,6 +186,7 @@ class DrawPage(
             "llm_vision" -> R.string.s_356
             "vae" -> R.string.s_357
             "taesd" -> R.string.s_442
+            "tokenizer" -> R.string.s_768
             else -> R.string.s_358
         }
 
@@ -213,8 +214,14 @@ class DrawPage(
                 // 三个 LLM 编码器架构：扩散模型 + LLM 必填；llm_vision 只在用参考图时才需要，
                 // 所以标可选 —— 标必填会让纯文生图的人卡在"缺文件"上。
                 family == FAM_IDEOGRAM || family == FAM_KREA2 || family == FAM_KLEIN ||
-                    family == FAM_FLUX3 || family == FAM_MOSS || family == FAM_FIBO2 -> listOf(
+                    family == FAM_FLUX3 || family == FAM_FIBO2 -> listOf(
                     "diffusion" to true, "llm" to true, "llm_vision" to false, "vae" to true)
+                // MOSS 单独一支：它比上面几个多一个**必填**的外部 tokenizer.json。
+                // sd.cpp 里 MOSS-Image（连同 Lens、PiD）没有内置词表回退，
+                // LLMEmbedder 在 tokenizers.has(MAIN) 为假时直接 throw，
+                // 所以这里必须把 tokenizer 标成必填，否则用户会在加载时撞上一句异常。
+                family == FAM_MOSS -> listOf(
+                    "diffusion" to true, "llm" to true, "vae" to true, "tokenizer" to true)
                 family == FAM_VIDEO -> listOf(
                     "diffusion" to true, "clip_vision" to false, "t5xxl" to false, "llm" to false,
                     "vae" to true, "audio_vae" to false)
@@ -1850,8 +1857,12 @@ class DrawPage(
         try {
             val name = queryDisplayName(uri) ?: return@withContext c.getString(R.string.s_106)
             val ext = name.substringAfterLast('.', "").lowercase()
-            if (ext !in listOf("gguf", "safetensors", "ckpt", "pt")) {
-                return@withContext c.getString(R.string.s_368)
+            // tokenizer 槽要的是 tokenizer.json，得单独放行 —— 它是唯一吃纯文本的槽位，
+            // 其余槽位都是权重文件，.json 进去说明选错了。
+            val isTokenizerSlot = slotKey == "tokenizer"
+            val allowedExt = if (isTokenizerSlot) listOf("json") else listOf("gguf", "safetensors", "ckpt", "pt")
+            if (ext !in allowedExt) {
+                return@withContext c.getString(if (isTokenizerSlot) R.string.s_769 else R.string.s_368)
             }
             val key = slotKey ?: if (pendingKind == KIND_SINGLE) "model" else "diffusion"
             // TAESD 只认 sd.cpp 读得动的两种格式；.ckpt / .pt 是 torch 系，

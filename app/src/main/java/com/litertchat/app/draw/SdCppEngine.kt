@@ -194,6 +194,9 @@ object SdCppEngine {
         "model", "diffusion", "high_noise", "uncond",
         "clip_l", "clip_g", "clip_vision", "t5xxl",
         "llm", "llm_vision", "vae", "audio_vae", "taesd",
+        // 外部 tokenizer.json。顺序必须与 native 的 SlotIndex 末尾一致 ——
+        // 追加在最后而不是插进 llm 旁边，否则已有模型集会整体错位。
+        "tokenizer",
     )
 
     /** 把槽位表（key -> 文件绝对路径）转成 JNI 要的定长数组 */
