@@ -2173,6 +2173,10 @@ class DrawPage(
                 // 但**保留** logs/draw.log：这条失败照样值得被报出来。
                 stage("5 create failed: new_sd_ctx returned 0")
                 runCatching { stage("4 params: " + SdCppEngine.lastParams().replace("\n", "  |  ")) }
+                // sd.cpp 拒绝加载时**已经打过具体原因**（缺张量/形状不符/后端失败），
+                // 但那些行只在 g_warn_lines 里躺着，不在这里取一次就永远看不到。
+                // 以前加载失败只剩一句"返回 null"，等于没有信息 —— PixArt 那次就是这样。
+                flushSdWarnings(::stage)
                 LogBook.w(c, LogBook.DRAW, "=== load failed: sd.cpp returned null (process alive) ===")
                 runCatching { stageFile.delete() }
                 return c.getString(R.string.s_059)
@@ -2203,6 +2207,9 @@ class DrawPage(
             // mmap 是**惰性**的：这里"加载成功"只说明元数据读通了、句柄建起来了，
             // 权重还没真正全部读进内存。Flux / SD3.5-Large 这类会在这里成功、
             // 到第一次推理才 OOM —— 所以下面一句要写明白，别让日志误导人。
+            // 加载成功也刷一次：sd.cpp 在加载期打的 WARN/ERROR（张量被跳过、后端回退、
+            // 参数被忽略）只有在这里取才不会丢，而且它们往往就是后面出图异常的伏笔。
+            flushSdWarnings(::stage)
             LogBook.w(c, LogBook.DRAW, "=== load OK (backend=$used, threads=$nThreads)" +
                 " note: mmap is lazy, weights not yet all resident ===")
             runCatching { stageFile.delete() }
