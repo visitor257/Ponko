@@ -1,4 +1,5 @@
 @echo off
+rem Ponko (c) 2026 visitor257 - MIT License - github.com/visitor257/Ponko
 REM Ponko Android build helper - MUST stay pure ASCII.
 REM
 REM Why vcvars is required:
