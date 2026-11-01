@@ -63,18 +63,28 @@ if (-not $KsPass)                       { throw "keystore 口令为空：请在 
 
 $bt = (Get-ChildItem "C:\Android\build-tools" -Directory |
        Sort-Object Name -Descending | Select-Object -First 1).FullName
-$aligned = Join-Path $env:TEMP "ponko_aligned.apk"
-$signed  = Join-Path $env:TEMP "ponko_signed.apk"
+# 中间产物带 pid，且一定在 finally 里删掉。
+# 以前这里固定叫 ponko_aligned.apk / ponko_signed.apk 且用完不删 —— 每签一次就往
+# TEMP 里留两个 60~70 MB 的副本，2026-11-02 一次清理扫出 27 个、合计 1.7 GB。
+$tag     = "ponko-sign-$PID"
+$aligned = Join-Path $env:TEMP "$tag-aligned.apk"
+$signed  = Join-Path $env:TEMP "$tag-signed.apk"
 
-& "$bt\zipalign.exe" -p -f 4 $Apk $aligned
-if ($LASTEXITCODE -ne 0) { throw "zipalign failed" }
+try {
+  & "$bt\zipalign.exe" -p -f 4 $Apk $aligned
+  if ($LASTEXITCODE -ne 0) { throw "zipalign failed" }
 
-& "$bt\apksigner.bat" sign --ks $Ks --ks-pass "pass:$KsPass" --ks-key-alias $Alias --key-pass "pass:$KeyPass" `
-  --min-sdk-version 23 `
-  --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true `
-  --out $signed $aligned
-if ($LASTEXITCODE -ne 0) { throw "apksigner sign failed" }
+  & "$bt\apksigner.bat" sign --ks $Ks --ks-pass "pass:$KsPass" --ks-key-alias $Alias --key-pass "pass:$KeyPass" `
+    --min-sdk-version 23 `
+    --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true `
+    --out $signed $aligned
+  if ($LASTEXITCODE -ne 0) { throw "apksigner sign failed" }
 
-Copy-Item -LiteralPath $signed -Destination $Out -Force
-Write-Host "signed -> $Out"
-& "$bt\apksigner.bat" verify --verbose --min-sdk-version 23 $Out | Select-String "Verifies|scheme"
+  Copy-Item -LiteralPath $signed -Destination $Out -Force
+  Write-Host "signed -> $Out"
+  & "$bt\apksigner.bat" verify --verbose --min-sdk-version 23 $Out | Select-String "Verifies|scheme"
+} finally {
+  foreach ($p in @($aligned, $signed)) {
+    if ($p -and (Test-Path -LiteralPath $p)) { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue }
+  }
+}
