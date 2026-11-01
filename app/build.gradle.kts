@@ -10,11 +10,16 @@ android {
     ndkVersion = "27.3.13750724"
 
     defaultConfig {
+        // namespace 与 applicationId 同为 com.litertchat.app。
+        // beta 线曾在 worktree 里把 applicationId 改成 .beta 以便并存，那条分支不参与
+        // 正式版；正式版必须沿用原包名，否则升级装不上、用户的模型目录也搬不过去。
         applicationId = "com.litertchat.app"
         minSdk = 28
         targetSdk = 36
-        versionCode = 24
-        versionName = "2.0.4"
+        // versionCode 必须严格大于 2.0.4 的 24，否则装机时会被当成旧版本拒绝覆盖。
+        // 这里紧接 24 取 25，与 beta 线的 26~29 无关 —— 两条线包名不同，版本号不必对齐。
+        versionCode = 25
+        versionName = "2.1.0"
         ndk {
             // LiteRT-LM 与 llama.cpp 的 native 都只跑 arm64 真机，去掉 x86_64 可减小 APK
             abiFilters += "arm64-v8a"

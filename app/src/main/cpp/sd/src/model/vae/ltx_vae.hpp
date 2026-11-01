@@ -497,12 +497,12 @@ namespace LTXVAE {
             GGML_ASSERT(out_channels % factor == 0);
 
             blocks["conv"]            = std::make_shared<CausalConv3d>(in_channels,
-                                                            out_channels / factor,
-                                                            3,
-                                                            std::tuple<int, int, int>{1, 1, 1},
-                                                            1,
-                                                            true,
-                                                            force_conv_prec_f32);
+                                                                       out_channels / factor,
+                                                                       3,
+                                                                       std::tuple<int, int, int>{1, 1, 1},
+                                                                       1,
+                                                                       true,
+                                                                       force_conv_prec_f32);
             blocks["skip_downsample"] = std::make_shared<WAN::AvgDown3D>(in_channels, out_channels, factor_t, factor_s);
             blocks["conv_downsample"] = std::make_shared<WAN::AvgDown3D>(out_channels / factor, out_channels, factor_t, factor_s);
         }
@@ -1077,11 +1077,11 @@ namespace LTXVAE {
                                                               patch_size);
             }
             blocks["decoder"]                = std::make_shared<Decoder>(version,
-                                                          tensor_storage_map,
-                                                          prefix,
-                                                          patch_size,
-                                                          false,
-                                                          timestep_conditioning);
+                                                                         tensor_storage_map,
+                                                                         prefix,
+                                                                         patch_size,
+                                                                         false,
+                                                                         timestep_conditioning);
             blocks["per_channel_statistics"] = std::make_shared<PerChannelStatistics>();
         }
 
@@ -1300,7 +1300,7 @@ struct LTXVideoVAE : public VAE {
             feat_map[feat_idx] = get_cache_tensor_by_name(temporal_feat_cache_name(feat_idx));
         }
 
-        auto runner_ctx  = get_context();
+        auto runner_ctx  = get_context(gf);
         int feat_count   = 0;
         ggml_tensor* out = vae.decode_tiled_chunk(&runner_ctx,
                                                   z,
@@ -1313,8 +1313,7 @@ struct LTXVideoVAE : public VAE {
         for (int feat_idx = 0; feat_idx < feat_count && feat_idx < static_cast<int>(feat_map.size()); ++feat_idx) {
             ggml_tensor* feat_cache = feat_map[static_cast<size_t>(feat_idx)];
             if (feat_cache != nullptr) {
-                cache(temporal_feat_cache_name(static_cast<size_t>(feat_idx)), feat_cache);
-                ggml_build_forward_expand(gf, feat_cache);
+                runner_ctx.persist_cache_tensor(temporal_feat_cache_name(static_cast<size_t>(feat_idx)), feat_cache);
             }
         }
 

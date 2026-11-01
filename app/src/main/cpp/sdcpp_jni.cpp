@@ -3,6 +3,7 @@
 // 目标：把 sd.cpp 的 C API 暴露给 Kotlin（可控线程数 / 采样器 / 调度器 / LoRA / 量化类型 / 取消）
 #include <jni.h>
 #include <android/log.h>
+#include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <cstdlib>
@@ -10,6 +11,7 @@
 #include <mutex>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "stable-diffusion.h"
@@ -70,23 +72,75 @@ std::string g_last_dump;
 // 环形缓冲 + 去重，避免同一个警告重复几百遍撑爆日志文件。
 constexpr size_t kMaxWarnLines = 40;
 
+// 加载阶段改收全部 INFO。
+//
+// 出图时只收 WARN/ERROR 是对的（一条一步的 INFO 会淹掉有用的），但**加载失败时
+// 一句 WARN 都没有**：sd.cpp 的 init() 在缺张量、形状不符、后端分配失败这些情况下
+// 打的是 LOG_ERROR，可它打完直接 return false；而 App 侧只有出图路径会把这些行刷进
+// 日志，加载路径从来不刷 —— 于是失败现场只剩一句 "new_sd_ctx returned 0"，等于没有信息。
+//
+// 加载期间捕获全部 INFO 还多一个好处：能看到 "Version: PixArt" 那一行，
+// 直接确认版本探测有没有命中。失败时全量交给用户，成功时只留 LoRA 相关的（和出图一致）。
+std::atomic<bool> g_capture_all{false};
+constexpr size_t kMaxCaptureAllLines = 200;
+
 std::mutex g_log_mutex;
 std::vector<std::string> g_warn_lines;
 std::set<std::string> g_warn_seen;
 
+// 切到全量捕获。清掉上一轮残留，免得把上次出图的警告混进来。
+void set_capture_all(bool on) {
+    std::lock_guard<std::mutex> lock(g_log_mutex);
+    if (on) {
+        g_warn_lines.clear();
+        g_warn_seen.clear();
+    }
+    g_capture_all.store(on, std::memory_order_release);
+}
+
+// 加载成功后把 INFO 级别的行丢掉，只留 WARN/ERROR —— 出图期间不该带着几十行加载 INFO。
+void drop_captured_info() {
+    std::lock_guard<std::mutex> lock(g_log_mutex);
+    auto it = std::remove_if(g_warn_lines.begin(), g_warn_lines.end(),
+                             [](const std::string& s) { return s.rfind("I: ", 0) == 0; });
+    g_warn_lines.erase(it, g_warn_lines.end());
+    // 去重集合里存的是去掉级别前缀的原文，和 g_warn_lines 的元素不是同一形态，
+    // 这里没法逐个回填，直接清空即可：最坏后果是同一条 WARN 在之后多出现一次。
+    g_warn_seen.clear();
+}
+
 void sd_log_trampoline(enum sd_log_level_t level, const char* text, void* /*data*/) {
     if (text == nullptr) return;
-    // 默认只收 WARN/ERROR，但有几条 INFO 是「LoRA 到底有没有生效」的唯一答案：
-    //   runtime_lora_models:            ← 只有 runtime_lora_models 非空才打
-    //   (N / M) LoRA tensors have been applied
-    //   apply_loras completed
-    // 少了它们，「LoRA 挂了但完全没作用」和「LoRA 一切正常」在日志里长得一模一样 ——
-    // lora_stat() 的第一句就是 if (!runtime_lora_models.empty())，空的时候一个字都不输出。
+    // 默认只收 WARN/ERROR，但有些 INFO 是「某个功能到底有没有生效」的唯一答案。
+    // 它们都不含 "lora"，如果只按 lora 过滤就会整条丢掉 —— 参考图那次就是这么漏的：
+    // 日志里既看不到 EDIT mode 也看不到预设名，于是「没传参考图」和「传了但模型没理」
+    // 在报告里长得一模一样，只能靠猜。
+    //
+    // 目前需要放行的 INFO：
+    //   lora                        ← runtime_lora_models: / (N / M) LoRA tensors have been applied
+    //   preset / reference images    ← Using 'krea2_ostris_edit' preset for reference images
+    //   edit mode                    ← EDIT mode（参考图确实进了编码流程）
     bool interesting = level >= SD_LOG_WARN;
+    const bool capture_all = g_capture_all.load(std::memory_order_acquire);
+    if (!interesting && capture_all) {
+        // 加载期间全收：失败时这就是唯一能说明「哪个张量缺了/形状不对」的来源
+        interesting = level >= SD_LOG_INFO;
+    }
     if (!interesting && level == SD_LOG_INFO) {
         std::string lower(text);
         for (auto& c : lower) c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
-        interesting = lower.find("lora") != std::string::npos;
+        static const char* const kKeepSubstrings[] = {
+            "lora",
+            "preset",
+            "reference image",
+            "edit mode",
+        };
+        for (const char* needle : kKeepSubstrings) {
+            if (lower.find(needle) != std::string::npos) {
+                interesting = true;
+                break;
+            }
+        }
     }
     if (!interesting) return;
     std::string line(text);
@@ -96,7 +150,9 @@ void sd_log_trampoline(enum sd_log_level_t level, const char* text, void* /*data
 
     std::lock_guard<std::mutex> lock(g_log_mutex);
     if (!g_warn_seen.insert(line).second) return;  // 同一条只留一次
-    if (g_warn_lines.size() >= kMaxWarnLines) return;
+    // 加载失败现场动辄几百行（每个缺的张量一行），40 行的出图上限会把真正的原因挤掉
+    const size_t cap = capture_all ? kMaxCaptureAllLines : kMaxWarnLines;
+    if (g_warn_lines.size() >= cap) return;
     const char* tag = level == SD_LOG_ERROR ? "E: " : (level == SD_LOG_WARN ? "W: " : "I: ");
     g_warn_lines.push_back(tag + line);
     __android_log_print(level == SD_LOG_ERROR ? ANDROID_LOG_ERROR : ANDROID_LOG_WARN,
@@ -214,6 +270,21 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeTakeWarnings(JNIEnv* env, jobject
     return env->NewStringUTF(take_warn_lines().c_str());
 }
 
+// nativeRefImagePreset(handle) -> 模型自带的参考图预设名；不支持参考图时返回 null。
+//
+// 由界面用它决定要不要显示「参考图」入口。硬编码家族列表在 Kotlin 里迟早会和 sd.cpp
+// 漂移（比如 FLUX 家族里只有 Kontext 变体接受参考图），所以直接问 native。
+// 参考图交给没有预设的架构是有害的：pass_to_dit 默认 true，会在模型没预期的情况下
+// 改变图结构。
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_litertchat_app_draw_SdCppEngine_nativeRefImagePreset(JNIEnv* env, jobject /*thiz*/, jlong handle) {
+    SdHandle* h = reinterpret_cast<SdHandle*>(handle);
+    if (h == nullptr || h->ctx == nullptr) return nullptr;
+    const char* preset = sd_get_default_ref_image_preset(h->ctx);
+    if (preset == nullptr || preset[0] == '\0') return nullptr;
+    return env->NewStringUTF(preset);
+}
+
 // nativeListDevices() -> "name\tdescription\n..."（ggml 后端设备清单；没有设备时返回空串）
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_litertchat_app_draw_SdCppEngine_nativeListDevices(JNIEnv* env, jobject /*thiz*/) {
@@ -239,6 +310,10 @@ enum SlotIndex {
     SLOT_VAE,
     SLOT_AUDIO_VAE,
     SLOT_TAESD,           // 可选：TAESD 小自编码器（替代 VAE 做编解码，CPU 出图更快）
+    // 可选：外部 tokenizer.json。MOSS-Image / Lens / PiD 没有内置词表回退，
+    // sd.cpp 在 LLMEmbedder 里对这三个架构直接 throw，必须由这里给文件。
+    // 追加在末尾而不是插到 llm 旁边：已有模型集按位置存，插中间会让它们全部错位。
+    SLOT_TOKENIZER,
     SLOT_COUNT
 };
 
@@ -302,6 +377,10 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeCreate(
     // TAESD：非空即启用（sd.cpp 里加载成功就把编解码换成 TAE，不再走上面的 vae_path）。
     // 需要含编码器 + 解码器的完整权重——图生图要用编码器，纯解码器权重在 Kotlin 侧就被拦下了。
     p.taesd_path            = slotPtr[SLOT_TAESD];
+    // 外部 tokenizer.json。MOSS-Image / Lens / PiD 必需 —— 这三个架构没有内置词表回退，
+    // sd.cpp 的 LLMEmbedder 在 tokenizers.has(MAIN) 为假时直接 throw。
+    // 其余架构留空即可，它们会走 src/tokenizers/vocab 里内嵌的词表。
+    p.tokenizer             = slotPtr[SLOT_TOKENIZER];
     p.n_threads    = (nThreads > 0) ? nThreads : sd_get_num_physical_cores();
     // wtype < 0 表示「保持模型原样」——此时【不能】覆盖，保留 sd_ctx_params_init 给的
     // SD_TYPE_COUNT。实测把 -1 强转成 sd_type_t 会让 sd.cpp 内部查表越界，native 直接崩溃。
@@ -321,11 +400,20 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeCreate(
     LOGI("new_sd_ctx: %s", dump ? dump : "(null)");
     if (dump) free(dump);
 
+    // 加载期间全量捕获 sd.cpp 日志：init() 失败时它只 return false，
+    // 具体原因（缺张量/形状不符/后端分配失败）全在日志里，不捕获就一律丢失。
+    set_capture_all(true);
     sd_ctx_t* ctx = new_sd_ctx(&p);
+    set_capture_all(false);
+
     if (ctx == nullptr) {
+        // 这里绝不能只留一句「返回 null」：失败原因就在 g_warn_lines 里躺着，
+        // 由 Kotlin 侧 takeWarnings() 取走写进 DRAW 日志。
         LOGE("new_sd_ctx returned null");
         return 0;
     }
+    // 成功时把加载 INFO 丢掉，只留 WARN/ERROR，避免出图日志被几十行加载信息淹没
+    drop_captured_info();
     SdHandle* h = new SdHandle();
     h->ctx = ctx;
     LOGI("ctx created: %p", static_cast<void*>(ctx));
@@ -334,11 +422,18 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeCreate(
 
 // nativeGenerate(handle, prompt, negative, loraPath, loraScale,
 //                width, height, steps, cfg, seed, sampleMethod, scheduler,
-//                cb, initData, initWidth, initHeight, strength) -> IntArray(ARGB)
+//                cb, pcb, initData, initWidth, initHeight, strength,
+//                refData, refWidths, refHeights) -> IntArray(ARGB)
 //
 // initData 非空 → 图生图（img2img）：RGB888 交错字节（每像素 3 字节，行优先，左上原点），
 // sd.cpp 会把它按 request 尺寸缩放后编码进 latent，并按 strength(<1) 决定起始噪声步数。
 // initData 为空 → 文生图，strength 忽略。
+//
+// refData 非空 → 参考图（ref_images）。**这跟 initData 不是一回事**，别混：
+//   init_image 是「起始 latent 加噪后重绘」，一张，带 strength；
+//   ref_images 是「作为独立 token 交给 DiT」，可以多张，强度由模型自带的
+//   ref_image_preset 决定（Krea2 → krea2_ostris_edit，即 timestep 0 的 style reference）。
+// 两者可以同时给，但正常情况下只需其一。
 extern "C" JNIEXPORT jintArray JNICALL
 Java_com_litertchat_app_draw_SdCppEngine_nativeGenerate(
         JNIEnv* env, jobject /*thiz*/,
@@ -348,7 +443,8 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeGenerate(
         jint width, jint height, jint steps, jfloat cfg, jlong seed,
         jint sampleMethod, jint scheduler,
         jobject cb, jobject pcb,
-        jbyteArray initData, jint initWidth, jint initHeight, jfloat strength) {
+        jbyteArray initData, jint initWidth, jint initHeight, jfloat strength,
+        jobjectArray refData, jintArray refWidths, jintArray refHeights) {
     SdHandle* h = reinterpret_cast<SdHandle*>(handle);
     if (h == nullptr || h->ctx == nullptr) return nullptr;
 
@@ -426,6 +522,44 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeGenerate(
             LOGE("img2img: GetByteArrayElements returned null");
         }
     }
+
+    // ---- 参考图（ref_images）----
+    // 每张都是 RGB888 交错字节，指针在 generate_image 期间必须有效 → 统一在函数末尾释放。
+    std::vector<sd_image_t> refImages;
+    std::vector<std::pair<jbyteArray, jbyte*>> refHolds;
+    if (refData != nullptr) {
+        const jsize refN = env->GetArrayLength(refData);
+        std::vector<jint> rw(static_cast<size_t>(refN), 0);
+        std::vector<jint> rh(static_cast<size_t>(refN), 0);
+        if (refWidths != nullptr) env->GetIntArrayRegion(refWidths, 0, refN, rw.data());
+        if (refHeights != nullptr) env->GetIntArrayRegion(refHeights, 0, refN, rh.data());
+        refImages.reserve(static_cast<size_t>(refN));
+        for (jsize i = 0; i < refN; ++i) {
+            auto arr = static_cast<jbyteArray>(env->GetObjectArrayElement(refData, i));
+            if (arr == nullptr) continue;
+            jbyte* bytes    = env->GetByteArrayElements(arr, nullptr);
+            const jsize len = env->GetArrayLength(arr);
+            const size_t need = static_cast<size_t>(rw[i]) * static_cast<size_t>(rh[i]) * 3;
+            if (bytes == nullptr || rw[i] <= 0 || rh[i] <= 0 || static_cast<size_t>(len) < need) {
+                LOGE("ref image %d rejected: %dx%d, %d bytes (need %zu)", i, rw[i], rh[i], len, need);
+                if (bytes != nullptr) env->ReleaseByteArrayElements(arr, bytes, JNI_ABORT);
+                env->DeleteLocalRef(arr);
+                continue;
+            }
+            sd_image_t img;
+            img.width   = static_cast<uint32_t>(rw[i]);
+            img.height  = static_cast<uint32_t>(rh[i]);
+            img.channel = 3;
+            img.data    = reinterpret_cast<uint8_t*>(bytes);
+            refImages.push_back(img);
+            refHolds.emplace_back(arr, bytes);
+        }
+        if (!refImages.empty()) {
+            g.ref_images       = refImages.data();
+            g.ref_images_count = static_cast<int>(refImages.size());
+            LOGI("ref images: %d", static_cast<int>(refImages.size()));
+        }
+    }
     if (useLora) {
         lora.is_high_noise = false;
         lora.multiplier    = loraScale;
@@ -442,14 +576,15 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeGenerate(
     LOGI("generate_image: %s", gdump ? gdump : "(null)");
     if (gdump) free(gdump);
 
-    sd_image_t* out = nullptr;
-    int n = 0;
-    bool ok = generate_image(h->ctx, &g, &out, &n);
-    if (n > 0 && out != nullptr && out->data != nullptr) ok = true;
+    // sd.cpp 新版把"出图 + 张数"合并成一个结果对象，失败时置 nullptr 并由调用方释放。
+    sd_image_generation_result_t* res = nullptr;
+    bool ok = generate_image(h->ctx, &g, &res);
+    const int n = (res != nullptr) ? res->count : 0;
+    sd_image_t* out = (n > 0) ? &res->items[0].image : nullptr;
 
     jintArray result = nullptr;
-    if (ok && n > 0 && out != nullptr && out[0].data != nullptr) {
-        const sd_image_t& img = out[0];
+    if (ok && out != nullptr && out->data != nullptr) {
+        const sd_image_t& img = *out;
         const int w = static_cast<int>(img.width);
         const int hh = static_cast<int>(img.height);
         const int ch = static_cast<int>(img.channel);
@@ -466,14 +601,17 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeGenerate(
         }
         result = env->NewIntArray(total);
         env->SetIntArrayRegion(result, 0, total, px.data());
-        free_sd_images(out, n);
     } else {
-        if (out) free_sd_images(out, n);
         LOGE("generate_image failed (ok=%d, n=%d)", ok ? 1 : 0, n);
     }
+    if (res != nullptr) free_sd_image_generation_result(res);
 
     if (initBytes != nullptr && initData != nullptr) {
         env->ReleaseByteArrayElements(initData, initBytes, JNI_ABORT);
+    }
+    for (auto& hold : refHolds) {
+        env->ReleaseByteArrayElements(hold.first, hold.second, JNI_ABORT);
+        env->DeleteLocalRef(hold.first);
     }
     if (h->cb) { env->DeleteGlobalRef(h->cb); h->cb = nullptr; h->cb_mid = nullptr; }
     if (h->pcb) { env->DeleteGlobalRef(h->pcb); h->pcb = nullptr; h->pcb_mid = nullptr; }

@@ -95,6 +95,8 @@ option(SD_MUSA                       "sd: musa backend" OFF)
 option(SD_BUILD_SHARED_LIBS          "sd: build shared libs" OFF)
 option(SD_BUILD_SHARED_GGML_LIB      "sd: build ggml as a separate shared lib" OFF)
 option(SD_USE_SYSTEM_GGML            "sd: use system-installed GGML library" OFF)
+option(SD_USE_UPSTREAM_GGML          "sd: build with upstream GGML instead of the patched GGML extensions" OFF)
+set(SD_GGML_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/ggml" CACHE PATH "sd: ggml source directory (also supplies private headers for system ggml)")
 #option(SD_BUILD_SERVER               "sd: build server example"                           ON)
 
 set(CMAKE_C_STANDARD 11)
@@ -223,6 +225,8 @@ file(GLOB SD_LIB_SOURCES CONFIGURE_DEPENDS
     "src/core/*.h"
     "src/core/*.cpp"
     "src/core/*.hpp"
+    "src/core/probe/*.h"
+    "src/core/probe/*.cpp"
     "src/extensions/*.h"
     "src/extensions/*.cpp"
     "src/extensions/*.hpp"
@@ -294,6 +298,8 @@ endif()
 
 if(MSVC)
     target_compile_options(${SD_LIB} PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/bigobj>)
+    # ggml backends can throw C++ exceptions through their C API.
+    target_compile_options(${SD_LIB} PRIVATE $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CXX_COMPILER_ID:MSVC>>:/EHsc->)
 endif()
 
 if(APPLE)
@@ -323,26 +329,32 @@ if (NOT SD_USE_SYSTEM_GGML)
 endif()
 
 # deps
-# Only add ggml if it hasn't been added yet
-if (NOT TARGET ggml)
-    if (SD_USE_SYSTEM_GGML)
-        find_package(ggml REQUIRED)
-        if (NOT ggml_FOUND)
-            message(FATAL_ERROR "System-installed GGML library not found.")
-        endif()
-        add_library(ggml ALIAS ggml::ggml)
-    else()
-        add_subdirectory(ggml)
-    endif()
-endif()
+include(cmake/ggml.cmake)
 
 add_subdirectory(thirdparty)
 
 target_sources(${SD_LIB} PRIVATE $<TARGET_OBJECTS:zip>)
 target_link_libraries(${SD_LIB} PUBLIC ggml)
-target_include_directories(${SD_LIB} PUBLIC . src include)
-target_include_directories(${SD_LIB} PRIVATE src/core)
-target_include_directories(${SD_LIB} PUBLIC . thirdparty)
+find_package(Threads REQUIRED)
+target_link_libraries(${SD_LIB} PRIVATE Threads::Threads)
+target_link_libraries(${SD_LIB} PRIVATE onig sd-utf8proc)
+if (SD_CUDA)
+    find_package(CUDAToolkit REQUIRED)
+    # Keep the driver stub on downstream link lines when no driver is installed.
+    target_link_libraries(${SD_LIB} PUBLIC CUDA::cuda_driver)
+    set_property(SOURCE src/core/ggml_extend_backend.cpp APPEND PROPERTY COMPILE_DEFINITIONS SD_USE_CUDA)
+endif()
+if (SD_HIPBLAS)
+    find_package(hip REQUIRED CONFIG HINTS "$ENV{ROCM_PATH}" /opt/rocm)
+    target_link_libraries(${SD_LIB} PRIVATE hip::host)
+    set_property(SOURCE src/core/ggml_extend_backend.cpp APPEND PROPERTY COMPILE_DEFINITIONS SD_USE_HIP)
+    if (GGML_HIP_MMQ_MFMA)
+        set_property(SOURCE src/core/ggml_extend_backend.cpp APPEND PROPERTY COMPILE_DEFINITIONS SD_HIP_MFMA)
+    endif()
+endif()
+target_include_directories(${SD_LIB} PUBLIC include)
+target_include_directories(${SD_LIB} PRIVATE src src/core)
+target_include_directories(${SD_LIB} PUBLIC thirdparty)
 target_compile_features(${SD_LIB} PUBLIC c_std_11 cxx_std_17)
 
 
