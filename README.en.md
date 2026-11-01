@@ -97,7 +97,7 @@ The engine is [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.
   - **PixArt** (new in 2.1.0) is multi-file with three slots: diffusion model + **T5-XXL** + VAE. It uses **no CLIP at all** - `caption_channels` 4096 is T5-XXL's hidden size. The original diffusers export works as-is (`PixArt-alpha/PixArt-Sigma-XL-2-256x256`); no renaming first
   - **MOSS-Image** (new in 2.1.0) is multi-file with four slots: diffusion model + LLM encoder + VAE + **Tokenizer JSON**. That last slot is new in 2.1.0 and only takes a `.json` - MOSS (with Lens and PiD) has no built-in tokenizer fallback and refuses to load without one
   - **SDXL is single-file only**: upstream sd.cpp only recognizes SDXL when the second text encoder sits in the same file as the main model, so a split unet + CLIP-L/CLIP-G SDXL fails to load - use a single-file SDXL (quantized single files around 2.5 GB exist)
-  - Multi-file is really meant for families that upstream ships split apart: Flux, SD3.5, Qwen-Image, MOSS-Image and friends; the smallest set for those is 8 GB+. **8 GB does not mean it will not run** - MOSS (8.4 GB) and SD3.5 Large (8270 MB) both completed on a 15.6 GB phone, just slowly (see [Known limitations](#known-limitations)).
+  - Multi-file is really meant for families that upstream ships split apart: Flux, SD3.5, Qwen-Image, MOSS-Image and friends; the smallest set for those is 8 GB+. **8 GB does not mean it will not run** - whether it runs depends on your device (see [Known limitations](#known-limitations)).
 - **GPU acceleration (optional; build-time-verified only, not tested on a real device)**: switch the run mode to **GPU** on the Models/API page and drawing uses the device's Vulkan backend (both text-to-image and image-to-image); if the device has no Vulkan or init fails it **falls back to CPU automatically**, and the backend actually in use is shown in the drawing status line
 - **TAESD speed-up (optional)**: attach TAESD weights to it under **"Model slots"** on the drawing-model page (fill it in to enable, clear it to disable). It swaps VAE encoding/decoding for a tiny autoencoder, making the final step of CPU generation much faster at the cost of slightly different detail
 - **Inference thread count (global)**: the About page -> "Settings" has a **CPU thread count** field (shown as "input / max"; **the max is the device's real available core count**; **values above it are clamped down and 0 becomes 1**) that governs **all CPU inference** - drawing (stable-diffusion.cpp), chat GGUF (llama.cpp) and tagging (ONNX Runtime) share the same value; it applies the **next time a model is loaded**. (Chat `.litertlm` runs on Google LiteRT-LM, which exposes no thread-count parameter and is therefore not affected.)
@@ -253,8 +253,8 @@ them:
   whether a model fits**
 
 "But my phone has 16GB" usually compares total device RAM against the weight sizes.
-The system itself takes 4–6GB, and Flux alone is 10GB of weights. The report puts all
-three figures side by side so the gap is visible.
+The system itself takes a substantial share of that, and large models run to GB-scale weights.
+The report puts all three figures side by side so the gap is visible.
 
 ### Logs are not translated
 
@@ -315,7 +315,7 @@ powershell -File tools/build-release.ps1
 ```
 
 - `minSdk 28` / `targetSdk 36`, **arm64-v8a only** (native library constraint; a real device is required, emulators won't run it)
-- The first full compile of sd.cpp + ggml takes about 8-9 minutes; with C++ unchanged, incremental builds take ~10 seconds
+- The first full compile of sd.cpp + ggml is the slow one (it scales with core count); with C++ unchanged, incremental builds are quick
 - Main dependencies: `com.google.ai.edge.litertlm:litertlm-android:0.17.0`, `net.ladenthin:llama-android:5.1.0`, `com.microsoft.onnxruntime:onnxruntime-android:1.22.0`, `com.tom-roush:pdfbox-android:2.0.27.0`, `io.noties.markwon:*:4.6.2`
 - Built by CMake: `libstable-diffusion.so` (sd.cpp itself), `libponko_sd.so` (JNI bridge)
 - The Vulkan backend (optional GPU drawing) needs **no Vulkan SDK**: `glslc` and the SPIRV headers come from the NDK, plus a **host compiler** to build the shader generator (MSVC on Windows - `tools/build-release.ps1` loads the `vcvars64` environment for you)
@@ -336,16 +336,13 @@ powershell -File tools/build-release.ps1
 - Chat context defaults to 4096 tokens (adjustable on the Models/API page; on the LiteRT-LM side it cannot exceed the limit built into the model); beyond that it relies on llama.cpp's context-shift sliding window
 - The GGUF chat path currently uses CPU only (the binding used does not include GPU backends)
 - "Disable thinking" depends on the model's own chat template; some models may still emit reasoning
-- Drawing is CPU-only by default: 256×256 with LCM-LoRA at 6 steps takes about a minute; 512×512 is noticeably slower. Switch the run mode to GPU to try Vulkan acceleration; devices without it fall back to CPU (the backend in use is shown in the drawing status line). Per-step cost varies widely by architecture - measured on one device at the same resolution: **PixArt ~19 s/step**, **MOSS ~124 s/step**, **Krea2 ~85 s/step**
+- Drawing is CPU-only by default, and 512×512 is noticeably slower than 256×256. Switch the run mode to GPU to try Vulkan acceleration; devices without it fall back to CPU (the backend in use is shown in the drawing status line). **Per-step cost varies a lot by architecture** - parameter count, whether it predicts flow, and the size of the text encoder all matter, so do not extrapolate one model's speed to another
 - **GPU support is "theoretical" for now and NOT verified on a real device**: only drawing (Vulkan), tagging (NNAPI) and `.litertlm` chat carry GPU code, and all three have only been verified at build time - none of them has been tested on an actual phone. When the driver is unstable or the VRAM is too small the app falls back to CPU automatically (the drawing status line shows the backend in use); GGUF chat has no GPU backend at all and is CPU-only
 - The quantization level is baked into the model file; the app only reads and displays it, never converts
-- **The only reliable way to know if a large model runs is to run it. Weights exceeding available memory does not predict a crash.** On one 15.6 GB / 4 threads / CPU-only device, all of the following **completed** - including the ones whose weights far exceed available memory:
-  - **PixArt Sigma** (~0.6B, 4.3 GB of weights): **591 s** for 256×256 / 20 steps, 3238 MB free at the lowest
-  - **MOSS-Image** (8.4 GB of weights, including a 9B text encoder): **42 minutes** for 256×256 / 20 steps / CFG 1.0, **5191 MB** free at the lowest - twice the file size of the one above, and it used *less* memory. Lazy mmap plus segmented compute keep the peak far below the weight total. The model card's 1024×1024 / 50 steps / CFG 3.0 is hours on CPU (above CFG 1 the guidance runs two transformer forwards per step), but that is **untested**, not unachievable
-  - **SD3.5 Large Q4_0** (8270 MB of weights): 256 and 512, 2/8/20 steps, CFG 1.0-4.5, LoRA 0.0-2.0 - **18 renders, no crash**, 2 to 31 minutes, 4670 MB free at the lowest
-  - **Krea2** (~15B): **91.7 minutes** for 512×512 at 8 steps - **slow, but it finished, and the output was good**. 1024×1024 extrapolates to the six-hour range
-- **Slow is not the same as unable to run.** The 91.7 minutes for Krea2 and the 42 minutes for MOSS above are both **completed** renders. If that is too slow, lower the resolution or the step count, or use a smaller quantization.
-- **What does crash is "weights plus activations genuinely do not fit"**: the usual symptom is **loading succeeds, then it dies while rendering** (loading succeeds because mmap is lazy, so the weights are not resident yet). Those crashes land in the [diagnostics log](#diagnostics), where model sizes sit next to `availMem` and the shortfall is visible at a glance.
+- **Whether a large model runs depends on your device, not on the model's size.** Weights exceeding available memory does not predict a crash: mmap is lazy and segmented compute is on, so the peak sits far below the weight total. **The only reliable test is to run it on your own machine** - do not draw conclusions from measurements taken on someone else's phone
+- **⚠ How long a render takes depends on your device; do not copy numbers from elsewhere.** The same model can differ several-fold in per-step cost across SoC, memory bandwidth, thermals and thread count. If it is too slow, lower the resolution or the step count, or use a smaller quantization
+- **What does crash is "weights plus activations genuinely do not fit"**: the usual symptom is **loading succeeds, then it dies while rendering** (loading succeeds because mmap is lazy, so the weights are not resident yet). Those crashes land in the [diagnostics log](#diagnostics), where model sizes sit next to `availMem` and the shortfall is visible at a glance
+- **Not yet verified**: PixArt **Alpha** (the 512 variant) has never been tested, only Sigma; MOSS has never been run at its recommended CFG either, and negative prompts have not been exercised at all
 - **Not yet verified**: PixArt **Alpha** (the 512 variant) has never been tested, only Sigma; MOSS has never been run at its recommended CFG - the 42 minutes above is 256×256 at CFG 1.0, and negative prompts have not been exercised at all
 - The drawing native library is built with `-march=armv8.2-a+dotprod+fp16`, requiring a 64-bit ARM device from 2019 or later
 - Tagging supports Danbooru-style ONNX taggers (WD14 and its derivatives; the tag list must be in `tag_id,name,category,count` format); the `.onnx` and the tag-list CSV must be imported as a matching pair
