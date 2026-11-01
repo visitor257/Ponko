@@ -743,4 +743,6 @@
     <string name="s_767">添加参考图</string>
     <string name="v_064">参考图最多 %1$d 张</string>
     <string name="v_065">已选 %1$d / %2$d — 点缩略图可移除</string>
+    <string name="s_768">Tokenizer JSON</string>
+    <string name="s_769">这个槽位要选 tokenizer.json 文件</string>
 </resources>
