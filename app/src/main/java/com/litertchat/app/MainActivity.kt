@@ -738,6 +738,16 @@ class MainActivity : Activity() {
     private lateinit var appBarBack: TextView
 
     /**
+     * 顶栏右上角的 🔍（Ponko-EX 页专用，展开插件列表的搜索框）。
+     *
+     * 它和对话页的 ⚙/＋ **叠在同一个槽**里 —— 那三个按钮在插件页是 INVISIBLE
+     * （占位不可见），所以直接放进来即可，标题不会因为切页而挪位置。
+     *
+     * 只在「Ponko-EX 页 + 正在看卡片列表」时出现：插件自己的界面里没有卡片可搜。
+     */
+    private lateinit var appBarPluginSearch: ImageView
+
+    /**
      * 顶栏标题下面那行「状态点 + 状态文字」。
      *
      * 它显示的是**宿主自己的引擎/模型状态**，所以在 Ponko-EX 页要藏掉 ——
@@ -1233,6 +1243,11 @@ class MainActivity : Activity() {
                     appBarBack.visibility =
                         if (open && currentTab == 3) View.VISIBLE else View.GONE
                 }
+                // 🔍 与 ◀ 互斥：进插件界面（open=true）就没有卡片可搜了
+                if (::appBarPluginSearch.isInitialized) {
+                    val showSearch = !open && currentTab == 3
+                    appBarPluginSearch.visibility = if (showSearch) View.VISIBLE else View.GONE
+                }
             }
         }
         tabPlugin = ppg.build()
@@ -1445,9 +1460,49 @@ class MainActivity : Activity() {
         r1.addView(titleBox, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         // 「⚙」在「＋」左边：＋ 是开新会话，⚙ 是调这一页的设置（系统提示词）
         appBarChatSettings = iconButton("⚙") { openChatSettingsSheet() }
-        r1.addView(appBarChatSettings, wrapWrap().apply { rightMargin = dp(6) })
         appBarPlus = iconButton("＋") { newSession() }
-        r1.addView(appBarPlus, wrapWrap())
+
+        // 对话页的 ⚙＋ 和 Ponko-EX 页的 🔍 **叠在同一个槽**里互相替换。
+        //
+        // 为什么不并排：三个按钮并排会把标题挤窄，「Ponko」/「Ponko-EX」切页时
+        // 还得跟着挪位置 —— 和上面 ☰/◀ 共用槽是同一个理由。
+        //
+        // 两种按钮的宽度不同（⚙ 24 + ＋ 24 + 间距 6 ≠ 🔍 18 + 内边距），
+        // 所以 FrameLayout 里那个 chatActions **保持 INVISIBLE 而不是 GONE**：
+        // INVISIBLE 照样参与测量，槽宽就始终等于 ⚙＋ 的宽度，标题不会动。
+        val chatActions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(appBarChatSettings, wrapWrap().apply { rightMargin = dp(6) })
+            addView(appBarPlus, wrapWrap())
+        }
+        appBarPluginSearch = ImageView(this).apply {
+            setImageDrawable(magnifier(dp(17), Color.WHITE))
+            background = rounded(Color.parseColor("#33FFFFFF"), 12)
+            // 上下不对称是因为背景块要跟 ⚙/＋ 一样高：那两个是 20sp 文字 + 上下 4dp
+            setPadding(dp(11), dp(8), dp(11), dp(8))
+            isClickable = true
+            // 纯图标，屏幕阅读器读不出任何东西
+            contentDescription = getString(R.string.s_481)
+            visibility = View.GONE
+            setOnClickListener {
+                pluginPage?.toggleSearch()
+                syncPluginSearchIcon()
+            }
+        }
+        val actionSlot = FrameLayout(this).apply {
+            addView(chatActions,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT
+                ).apply { gravity = Gravity.END or Gravity.CENTER_VERTICAL })
+            addView(appBarPluginSearch,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT
+                ).apply { gravity = Gravity.END or Gravity.CENTER_VERTICAL })
+        }
+        r1.addView(actionSlot, wrapWrap())
         bar.addView(r1, matchWrap())
         return bar
     }
@@ -2595,6 +2650,14 @@ class MainActivity : Activity() {
         if (::appBarChatSettings.isInitialized) {
             appBarChatSettings.visibility = if (isChat) View.VISIBLE else View.INVISIBLE
         }
+        // 🔍 只在「Ponko-EX 页 + 正在看卡片列表」时出现。
+        // 插件自己的界面里没有卡片可搜，放个搜索按钮只会让人点空。
+        // 和 ◀ 一样要在这里再判一次：切走再切回来时插件界面可能仍开着。
+        if (::appBarPluginSearch.isInitialized) {
+            val showSearch = index == 3 && pluginPage?.isShowingPluginUi() != true
+            appBarPluginSearch.visibility = if (showSearch) View.VISIBLE else View.GONE
+            syncPluginSearchIcon()
+        }
         // 切页时把底部抽屉收掉：它还开着的话遮罩会挡住新页面
         if (sysSheetOpen) closeChatSettingsSheet()
         for (i in navIcons.indices) {
@@ -3678,6 +3741,58 @@ class MainActivity : Activity() {
             isClickable = true
             setOnClickListener { onClick() }
         }
+
+    /**
+     * 白线放大镜，直接画出来。
+     *
+     * 为什么不用 🔍（U+1F50D）：那是彩色 emoji，在这排 ☰ / ＋ / ⚙ 的单色字形里
+     * 会跳出来一块红蓝。而字体里没有单色的放大镜字形可用（⌕ 基本没字体实现），
+     * 所以画一个：一个圆 + 一条斜柄，线宽和字重接近。
+     */
+    private fun magnifier(size: Int, tint: Int): android.graphics.drawable.Drawable =
+        object : android.graphics.drawable.Drawable() {
+            private val stroke = size * 0.11f
+            override fun draw(c: android.graphics.Canvas) {
+                // 参数叫 tint 不叫 color：Paint 自己有 `color` 属性，
+                // 在 apply 块里写 `this.color = color` 会解析成
+                // Paint.color 赋给自己，等于什么都没设。
+                val p = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                    style = android.graphics.Paint.Style.STROKE
+                    strokeWidth = stroke
+                    strokeCap = android.graphics.Paint.Cap.ROUND
+                    color = tint
+                }
+                val r = (size - stroke) / 2f * 0.68f
+                val cx = size / 2f - (size / 2f - r) * 0.22f
+                val cy = size / 2f - (size / 2f - r) * 0.22f
+                c.drawCircle(cx, cy, r, p)
+                // 柄：从左下 45° 往外，长度约圆半径的 0.8
+                val a = (Math.PI / 4).toFloat()
+                val from = cx + r * Math.cos(a.toDouble()).toFloat()
+                val fy = cy + r * Math.sin(a.toDouble()).toFloat()
+                c.drawLine(from, fy, from + r * 0.85f, fy + r * 0.85f, p)
+            }
+            override fun setAlpha(alpha: Int) {}
+            override fun setColorFilter(colorFilter: android.graphics.ColorFilter?) {}
+            @Deprecated("Deprecated in Java")
+            override fun getOpacity(): Int = android.graphics.PixelFormat.TRANSLUCENT
+            override fun getIntrinsicWidth(): Int = size
+            override fun getIntrinsicHeight(): Int = size
+        }
+
+    /**
+     * 让 🔍 的底色反映"搜索已展开"。
+     *
+     * 展开时给一个不透明底，收起时是半透明 —— 否则点了之后除了下面多一行
+     * 输入框，按钮本身毫无反馈，用户不知道自己是"打开了"还是"点了个没用的按钮"。
+     */
+    private fun syncPluginSearchIcon() {
+        if (!::appBarPluginSearch.isInitialized) return
+        val open = pluginPage?.isSearchOpen() == true
+        appBarPluginSearch.background = rounded(
+            Color.parseColor(if (open) "#59FFFFFF" else "#33FFFFFF"), 12
+        )
+    }
 
     // ================= status =================
 
