@@ -16,10 +16,10 @@ android {
         applicationId = "com.litertchat.app"
         minSdk = 28
         targetSdk = 36
-        // versionCode 必须严格大于 2.0.4 的 24，否则装机时会被当成旧版本拒绝覆盖。
-        // 这里紧接 24 取 25，与 beta 线的 26~29 无关 —— 两条线包名不同，版本号不必对齐。
-        versionCode = 25
-        versionName = "2.1.0"
+        // versionCode 必须严格递增：小于等于已装版本会被系统拒绝覆盖。
+        // 2.1.0 = 25，2.1.1 = 26。
+        versionCode = 26
+        versionName = "2.1.1"
         ndk {
             // LiteRT-LM 与 llama.cpp 的 native 都只跑 arm64 真机，去掉 x86_64 可减小 APK
             abiFilters += "arm64-v8a"

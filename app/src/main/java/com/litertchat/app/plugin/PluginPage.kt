@@ -2506,9 +2506,17 @@ class PluginPage(
                 ViewGroup.LayoutParams.WRAP_CONTENT))
         }
 
-        val builder = android.app.AlertDialog.Builder(
-            act, android.R.style.Theme_DeviceDefault_Dialog_Alert
-        )
+        // 主题：**不指定** dialog theme，走 Activity 的主题（AppTheme / AppTheme.Dark）。
+        //
+        // 原来这里写的是 android.R.style.Theme_DeviceDefault_Dialog_Alert，那是个
+        // **系统** dialog 主题 —— 它跟随系统的深色模式，而弹窗里的文字用的是 pal.text，
+        // 跟随的是**用户在 App 内**选的主题。两者不一致就撞出「暗底暗字」。
+        //
+        // 实测场景：系统开深色、App 里选亮色 → 弹窗背景深、pal.text 也是深色，看不见字。
+        // 反过来（系统亮、App 暗）同样成立：亮背景 + 亮文字。
+        //
+        // 用 Builder(act) 之后背景与文字都由同一套主题决定，跟 App 内其它弹窗一致。
+        val builder = android.app.AlertDialog.Builder(act)
             .setTitle(getString(R.string.s_631, item.found.label))
             .setView(scroll)
             .setPositiveButton(getString(R.string.s_581), null)
@@ -2542,9 +2550,9 @@ class PluginPage(
 
             如果扫描不到，检查插件和 Ponko 是不是同一把密钥签的名。
         """.trimIndent()
-        android.app.AlertDialog.Builder(
-            act, android.R.style.Theme_DeviceDefault_Dialog_Alert
-        )
+        // 同上：不指定系统 dialog 主题。这个弹窗的文字来自主题、本来不会「暗底暗字」，
+        // 但 App 选亮色时会弹出一个深色框，跟界面其它部分不搭。
+        android.app.AlertDialog.Builder(act)
             .setTitle(getString(R.string.s_480))
             .setMessage(msg)
             .setPositiveButton(getString(R.string.s_584), null)
