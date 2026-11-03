@@ -898,6 +898,18 @@ class MainActivity : Activity() {
      */
     private fun applyThemeInPlace() {
         pal = PonkoTheme.resolve(this, themeMode)
+        // 必须重新 setTheme：否则 **Activity 主题停在启动时那一次**，
+        // 而 setTheme 只在 onCreate 里调过一次。
+        //
+        // 这一条是「插件关于弹窗深底深字」的根因：
+        //   启动时系统深色 → Activity 主题 = AppTheme_Dark
+        //   在 App 里切成亮色 → pal 变亮（pal.text 变深色），但 Activity 主题仍是深色
+        //   → AlertDialog 的背景取自（陈旧的）深色主题，文字取自（新的）浅色 pal
+        //   → 深底 + 深字，全糊在一起
+        //
+        // 已 inflate 的 View 不会被这行改到（它们的属性早已解析完），
+        // 但**之后**创建的 Dialog 会按新主题解析，这才是要修的部分。
+        setTheme(if (pal.isDark) R.style.AppTheme_Dark else R.style.AppTheme)
         // 记住当前页：buildUi() 末尾会把界面切回来
         chatPrefs().edit().putInt("restoreTab", currentTab).apply()
         buildUi()

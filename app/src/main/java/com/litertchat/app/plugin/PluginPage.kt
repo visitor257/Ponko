@@ -2565,17 +2565,36 @@ class PluginPage(
 
         // 主题：**不指定** dialog theme，走 Activity 的主题（AppTheme / AppTheme.Dark）。
         //
-        // 原来这里写的是 android.R.style.Theme_DeviceDefault_Dialog_Alert，那是个
-        // **系统** dialog 主题 —— 它跟随系统的深色模式，而弹窗里的文字用的是 pal.text，
-        // 跟随的是**用户在 App 内**选的主题。两者不一致就撞出「暗底暗字」。
+        // 但只做到这一步还不够 —— 曾经写过的一版就是这样，仍然深底深字。
+        // 因为 Activity 的主题在「App 内切换深浅色」时是陈旧的：
+        // applyThemeInPlace() 只重建视图，而 setTheme() 只在 onCreate 跑过一次。
+        // 于是背景来自旧主题、文字来自新配色，两边各说各话。
         //
-        // 实测场景：系统开深色、App 里选亮色 → 弹窗背景深、pal.text 也是深色，看不见字。
-        // 反过来（系统亮、App 暗）同样成立：亮背景 + 亮文字。
+        // 所以这里**把背景和文字都从 pal 取**，不再让系统主题参与配色：
+        // 无论主题有没有跟上，弹窗自身始终是「同一个配色的底 + 同一个配色的字」。
+        // 标题也自己画，不用 setTitle()。
         //
-        // 用 Builder(act) 之后背景与文字都由同一套主题决定，跟 App 内其它弹窗一致。
+        // setTitle 的 TextView 由系统主题决定颜色，想改只能 show() 之后
+        // findViewById(android.R.id.title) —— 而那个 id 能否命中取决于
+        // 框架内部实现，命不中就是浅底浅字。既然整个弹窗的配色都要脱离主题，
+        // 标题就没有理由留在主题里。
+        val title = TextView(act).apply {
+            // 必须用 setText()：外层那个 `val text`（插件文档）会遮蔽
+            // TextView 的 `text` 属性，写成 `text = ...` 会去改外层 val，编译直接报错
+            setText(getString(R.string.s_631, item.found.label))
+            textSize = 16f
+            setTextColor(pal.text)
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(0, 0, 0, dp(10))
+        }
+        val content = LinearLayout(act).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(title, matchWrap())
+            addView(scroll, matchWrap())
+        }
+
         val builder = android.app.AlertDialog.Builder(act)
-            .setTitle(getString(R.string.s_631, item.found.label))
-            .setView(scroll)
+            .setView(content)
             .setPositiveButton(getString(R.string.s_581), null)
 
         // 只有真有内容才给「复制」——对着一个"无"提供复制按钮很荒唐
@@ -2593,7 +2612,22 @@ class PluginPage(
                 }
             }
         }
-        builder.show()
+
+        val dlg = builder.create()
+        dlg.show()
+        // 背景 / 按钮统一按 pal 上色（标题和正文在上面已经定好色了）。
+        //
+        // 必须在 show() 之后：按钮是 show 时才建出来的，之前 getButton 返回 null。
+        //
+        // InsetDrawable 是必需的：直接换成纯色矩形会让弹窗贴到屏幕边缘，
+        // 标准对话框的「浮起一块面板」靠的就是背景自带的内缩。
+        dlg.window?.setBackgroundDrawable(
+            android.graphics.drawable.InsetDrawable(rounded(pal.surface, 16), dp(20))
+        )
+        dlg.getButton(android.content.DialogInterface.BUTTON_POSITIVE)
+            ?.setTextColor(pal.primary)
+        dlg.getButton(android.content.DialogInterface.BUTTON_NEUTRAL)
+            ?.setTextColor(pal.primary)
     }
 
     private fun showInstallHelp() {
