@@ -19,7 +19,7 @@ All inference runs on-device: apart from the optional in-app LoRA download, no f
 | Module | In one line |
 |---|---|
 | **Chat** | `.litertlm` / `.gguf` dual backend; image, file and document input; separated reasoning, streaming Markdown |
-| **Drawing** | stable-diffusion.cpp; text-to-image / image-to-image / reference images / LCM-LoRA speed-up; optional TAESD and Vulkan |
+| **Drawing** | stable-diffusion.cpp; text-to-image / image-to-image / reference images / multiple LoRAs with per-file weights; optional TAESD and Vulkan |
 | **Tagging** | Fully offline ONNX (WD14 family); tags can be sent to T2I / I2I |
 | **API server** | Serves loaded models over OpenAI-compatible endpoints; chat 8080 / drawing 8081, fully independent |
 | **Plugins (Ponko-EX)** | Speech synthesis and similar live in separate APKs; the protocol is public, so third-party plugins work and you can write your own |
@@ -92,7 +92,10 @@ The engine is [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.
 - **Generation history**: the Result view keeps the last 30 images of this run - browse, delete one, or clear all. **In-memory only; gone when the app is closed.**
 - **Parameters**: width/height (multiples of 64), steps, CFG, seed, sampler, scheduler - all adjustable and **remembered across restarts** (prompts are not). The sampler list is now aligned 1:1 with sd.cpp (DPM++ 2M SDE / SDE B&T / LMS / Res Multistep, ...).
 - **Dark mode**: a three-position slider (**Light / Follow system / Dark**) in the Settings section of the About page; remembered across restarts and applied in place (no app restart - loaded models and chats are kept). Page background, cards, inputs, buttons, dialogs, the status bar and the navigation bar all follow it.
-- **LoRA**: one-tap in-app download of LCM-LoRA (official HuggingFace / hf-mirror), cutting 20 steps down to 4-8. You can also **import a local LoRA** (a single `.safetensors`), and switch between multiple LoRAs from the list.
+- **LoRA**: one-tap in-app download of LCM-LoRA (official HuggingFace / hf-mirror), cutting 20 steps down to 4-8. You can also **import a local LoRA** (a single `.safetensors`).
+  - **Several at once** (new in 2.1.2): the list on the models page is multi-select - tap to add or remove, and each ticked entry shows its own weight. The txt2img and img2img parameter cards grow **one weight field per selected LoRA**, each independent; both pages edit the same values and re-sync when you switch between them
+  - Caution: weights do not simply add up. Two at 1.0 usually fight each other - muddy detail, styles cancelling - so drop each to 0.5-0.8. Every extra file also costs memory and load time
+  - A weight of 0 means that LoRA is skipped before it reaches the engine, so the file is not loaded at all
 - **Model import**: two ways - **single file** (one `.gguf`: all-in-one builds of SD1.x/2, SDXL, SD3/3.5, Flux, Qwen-Image, ...) and **multi-file** (fill in the slots for a family: SD3/3.5, Flux, Qwen-Image, HiDream, PixArt, MOSS-Image, video models, ...). For multi-file, pick the type (family) and the main model first, then add the companion files one by one under "Model slots"; each model set keeps its files in its own folder and can be selected / long-pressed to delete in the list
   - **PixArt** (new in 2.1.0) is multi-file with three slots: diffusion model + **T5-XXL** + VAE. It uses **no CLIP at all** - `caption_channels` 4096 is T5-XXL's hidden size. The original diffusers export works as-is (`PixArt-alpha/PixArt-Sigma-XL-2-256x256`); no renaming first
   - **MOSS-Image** (new in 2.1.0) is multi-file with four slots: diffusion model + LLM encoder + VAE + **Tokenizer JSON**. That last slot is new in 2.1.0 and only takes a `.json` - MOSS (with Lens and PiD) has no built-in tokenizer fallback and refuses to load without one

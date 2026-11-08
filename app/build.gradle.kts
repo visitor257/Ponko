@@ -18,10 +18,10 @@ android {
         targetSdk = 36
         // versionCode 必须严格递增：小于等于已装版本会被系统拒绝覆盖。
         // 2.1.0 = 25，2.1.1 = 26。
-        // 2.1.1 里攒了两处改动（插件关于弹窗的主题修复 + 顶栏搜索按钮）——
-        // 它还没发布过，不必为每个改动单独升号。
-        versionCode = 26
-        versionName = "2.1.1"
+        // 本版取 28 而不是 27：27 曾被一个未发布的 2.1.2 测试包用过，
+        // 万一装过就会拒装，跳一号最省事。
+        versionCode = 28
+        versionName = "2.1.2"
         ndk {
             // LiteRT-LM 与 llama.cpp 的 native 都只跑 arm64 真机，去掉 x86_64 可减小 APK
             abiFilters += "arm64-v8a"

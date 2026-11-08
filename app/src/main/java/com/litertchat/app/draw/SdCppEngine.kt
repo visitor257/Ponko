@@ -115,8 +115,8 @@ object SdCppEngine {
         handle: Long,
         prompt: String,
         negative: String,
-        loraPath: String?,
-        loraScale: Float,
+        loraPaths: Array<String>?,
+        loraScales: FloatArray?,
         width: Int,
         height: Int,
         steps: Int,
@@ -222,8 +222,7 @@ object SdCppEngine {
         handle: Long,
         prompt: String,
         negative: String = "",
-        loraPath: String? = null,
-        loraScale: Float = 1.0f,
+        loras: List<Lora> = emptyList(),
         width: Int = 512,
         height: Int = 512,
         steps: Int = 20,
@@ -241,8 +240,11 @@ object SdCppEngine {
     ): Bitmap? {
         val effectiveSeed = if (seed < 0) (System.currentTimeMillis() % 1_000_000_000L) else seed
         val useInit = initImage != null && initImage.isNotEmpty() && initWidth > 0 && initHeight > 0
+        // 空列表 → 两个参数都传 null，native 那边就是「不挂 LoRA」
+        val loraPaths = if (loras.isEmpty()) null else loras.map { it.path }.toTypedArray()
+        val loraScales = if (loras.isEmpty()) null else loras.map { it.scale }.toFloatArray()
         val px = nativeGenerate(
-            handle, prompt, negative, loraPath, loraScale,
+            handle, prompt, negative, loraPaths, loraScales,
             width, height, steps, cfg, effectiveSeed,
             sampler.code, scheduler.code, cb, onPreview,
             if (useInit) initImage else null,
@@ -259,6 +261,14 @@ object SdCppEngine {
 
     /** 一张参考图：RGB888 交错字节 + 尺寸 */
     class RefImage(val width: Int, val height: Int, val rgb: ByteArray)
+
+    /**
+     * 一份要挂的 LoRA：文件路径 + 它自己的权重。
+     *
+     * 权重是**每份独立**的，不是全局一个 —— 这是多 LoRA 的意义所在：
+     * 两份都设 1.0 通常是互相打架，而不是叠加。
+     */
+    class Lora(val path: String, val scale: Float)
 
         /** 预览小图（RGB888）→ Bitmap（ARGB_8888）；非法输入返回 null */
     fun rgbToBitmap(width: Int, height: Int, rgb: ByteArray): Bitmap? {

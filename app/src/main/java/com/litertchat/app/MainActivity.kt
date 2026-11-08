@@ -4521,14 +4521,60 @@ class MainActivity : Activity() {
         }
         box.visibility = View.VISIBLE
         box.addView(listHeader(getString(R.string.s_092)))
-        val active = dpg?.currentLoraName()
         for (f in all) {
+            val on = dpg?.isLoraSelected(f.name) == true
             box.addView(
-                selectableChip(f, f.name == active, onLongClick = { confirmDeleteLora(f) }) {
-                    dpg?.selectLora(f); refreshLoraUi()
+                loraChip(f, on, dpg?.loraWeightOf(f.name)) {
+                    dpg?.toggleLora(f)
+                    refreshLoraUi()
                 },
                 matchWrap().apply { topMargin = dp(4) }
             )
+        }
+        // 多选时的提示：只在这一行解释「能选多个」，装一个插件似的人不用看到
+        val picked = all.count { dpg?.isLoraSelected(it.name) == true }
+        if (picked >= 2) {
+            box.addView(hintText(getString(R.string.v_073, (picked))), matchWrap().apply { topMargin = dp(6) })
+        }
+        // 选中集合变了 → 绘图参数卡里那几行权重框要跟着增删
+        dpg?.refreshLoraWeights()
+    }
+
+    /**
+     * LoRA 条目。可多选；选中时把**这一份自己的权重**显示出来。
+     *
+     * 长按只留「删除」：权重现在到绘图参数卡里按份编辑（那里每个 LoRA 一行输入框），
+     * 再在长按菜单里放一个"设置权重"就有两个入口，改完还不一定同步。
+     */
+    private fun loraChip(
+        f: File,
+        selected: Boolean,
+        weight: Float?,
+        onClick: () -> Unit,
+    ) = TextView(this).apply {
+        text = buildString {
+            append(if (selected) "✓ " else "▶ ")
+            append(f.name)
+            if (selected) append("　×" + "%.2f".format(weight ?: 1.0f))
+            append("　" + fmtSize(f.length()))
+        }
+        textSize = 12.5f
+        setTextColor(if (selected) C_PRIMARY else C_TEXT)
+        setPadding(dp(12), dp(8), dp(12), dp(8))
+        background = rounded(if (selected) C_PRIMARY_SOFT else C_CHIP_BG, 10,
+            strokeDp = if (selected) 1 else 0, strokeColor = C_PRIMARY)
+        isClickable = true
+        setOnClickListener { onClick() }
+        isLongClickable = true
+        setOnLongClickListener {
+            AlertDialog.Builder(this@MainActivity)
+                .setTitle(f.name)
+                .setItems(arrayOf(getString(R.string.s_050))) { _, _ ->
+                    confirmDeleteLora(f)
+                }
+                .setNegativeButton(getString(R.string.s_066), null)
+                .show()
+            true
         }
     }
 
@@ -4578,7 +4624,8 @@ class MainActivity : Activity() {
     /** 删除单个 LoRA：target 为空时删当前选中的那个（不再一次清空全部）。 */
     private fun confirmDeleteLora(target: File? = null) {
         val dpg = drawPage ?: return
-        val f = target ?: dpg.activeLora()
+        // 多选之后没有"当前那一份"了，target 为空时退化成"删第一份选中的"
+        val f = target ?: dpg.listLoras().firstOrNull { dpg.isLoraSelected(it.name) }
         if (f == null) {
             toast(getString(R.string.s_135))
             return

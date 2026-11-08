@@ -20,7 +20,6 @@
     <string name="s_021">LoRA 加速</string>
     <string name="s_022">LoRA 加速（LCM-LoRA · 少步出图）</string>
     <string name="s_023">LoRA 已就绪</string>
-    <string name="s_024">LoRA 权重</string>
     <string name="s_025">Ponko · 名字来自日语「ポンコツ」（破铜烂铁）——脑子不中用，但可以随时换成最好的模型。\n模型与推理全部在本机离线运行，对话记录只保存在设备本地。</string>
     <string name="s_026">\n删除后「绘图」页的 LoRA 加速会自动失效。</string>
     <string name="s_028">hf-mirror.com（国内镜像）</string>
@@ -32,7 +31,7 @@
     <string name="s_034">⚙️ 参数</string>
     <string name="s_035">⚠ 上次「加载绘图模型」中途崩溃了（native 层）。已执行阶段：\n</string>
     <string name="s_036">例如：1girl</string>
-    <string name="s_037">一般 1.0；画风太浓可降到 0.6~0.8，加强可到 1.2（0 = 不挂）</string>
+    <string name="s_037">一般 1.0；画风太浓降到 0.6~0.8，加强可到 1.2（0 = 不挂这一份）</string>
     <string name="s_038">上次崩溃日志：\n</string>
     <string name="s_039">下载 LoRA（LCM-LoRA）</string>
     <string name="s_040">中断生成</string>
@@ -745,4 +744,13 @@
     <string name="v_065">已选 %1$d / %2$d — 点缩略图可移除</string>
     <string name="s_768">Tokenizer JSON</string>
     <string name="s_769">这个槽位要选 tokenizer.json 文件</string>
+    <!-- 多 LoRA（2.1.2） -->
+    <string name="v_066">%1$d 份 LoRA</string>
+    <string name="v_067">未选中任何 LoRA</string>
+    <string name="v_068">已选 %1$d 份（共 %2$s MB）</string>
+    <string name="v_069">已选 %1$d 份（共 %2$s MB，未启用）</string>
+    <string name="v_070">已勾选「LoRA 加速」，但一份都没选 —— 到「模型/API」页点一下要用哪份</string>
+    <string name="v_071">生效：%1$s</string>
+    <string name="v_072">已勾选「LoRA 加速」时会生效：%1$s</string>
+    <string name="v_073">同时挂了 %1$d 份 LoRA。两份都设 1.0 通常是互相打架而不是叠加，建议各自降到 0.5~0.8。</string>
 </resources>

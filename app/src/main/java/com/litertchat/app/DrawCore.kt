@@ -34,8 +34,7 @@ object DrawCore {
         val negative: String = "",
         val sampler: SdCppEngine.Sampler = SdCppEngine.Sampler.EULER_A,
         val scheduler: SdCppEngine.Scheduler = SdCppEngine.Scheduler.DISCRETE,
-        val loraPath: String? = null,
-        val loraScale: Float = 1.0f,
+        val loras: List<SdCppEngine.Lora> = emptyList(),
     )
 
     class Result(val bitmap: Bitmap, val seed: Long)
@@ -136,8 +135,7 @@ object DrawCore {
                         handle = h,
                         prompt = prompt,
                         negative = negative ?: p.negative,
-                        loraPath = p.loraPath,
-                        loraScale = p.loraScale,
+                        loras = p.loras,
                         width = w,
                         height = ht,
                         steps = st,
