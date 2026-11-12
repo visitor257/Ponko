@@ -447,6 +447,7 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeGenerate(
         jint sampleMethod, jint scheduler,
         jobject cb, jobject pcb,
         jbyteArray initData, jint initWidth, jint initHeight, jfloat strength,
+        jfloat flowShift,
         jobjectArray refData, jintArray refWidths, jintArray refHeights) {
     SdHandle* h = reinterpret_cast<SdHandle*>(handle);
     if (h == nullptr || h->ctx == nullptr) return nullptr;
@@ -611,6 +612,18 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeGenerate(
     g.sample_params.guidance.txt_cfg = cfg;
     g.sample_params.sample_method = static_cast<enum sample_method_t>(sampleMethod);
     g.sample_params.scheduler     = static_cast<enum scheduler_t>(scheduler);
+    // flow_shift：flow-matching 模型（SD3、Flux、Krea2、MOSS、Fibo、Ideogram 等）的
+    // 时间步偏移。sd.cpp 给每个模型族都配了默认值，传 INFINITY 就跟随那个默认
+    // （sd_img_gen_params_init 里本来就是 INFINITY）。
+    //
+    // 约定：<= 0 或非有限值 → 跟随模型默认。用 0 表示「不指定」而不是让用户填
+    // "inf"，因为界面上那个词没法输入、也不该让用户知道。
+    if (std::isfinite(flowShift) && flowShift > 0.0f) {
+        g.sample_params.flow_shift = flowShift;
+        LOGI("flow_shift: %.3f (user)", flowShift);
+    } else {
+        LOGI("flow_shift: model default");
+    }
 
     char* gdump = sd_img_gen_params_to_str(&g);
     LOGI("generate_image: %s", gdump ? gdump : "(null)");

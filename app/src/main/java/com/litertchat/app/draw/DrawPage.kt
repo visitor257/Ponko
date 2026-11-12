@@ -260,6 +260,8 @@ class DrawPage(
         private const val KEY_LORA_SCALE = "drawLoraScale"
         private const val KEY_SAMPLER = "drawSampler"
         private const val KEY_SCHEDULER = "drawScheduler"
+        private const val KEY_SHIFT = "drawShift"
+        private const val KEY_I2I_SHIFT = "drawI2iShift"
 
         // 图生图参数（与文生图分开存）
         private const val KEY_I2I_W = "i2iW"
@@ -381,6 +383,7 @@ class DrawPage(
                 sampler = pickSampler(loras.isNotEmpty()),
                 scheduler = pickScheduler(loras.isNotEmpty()),
                 loras = loras,
+                flowShift = readShift(shiftEdit),
             )
         )
     }
@@ -410,6 +413,10 @@ class DrawPage(
     // 采样器 / 调度器（第 0 项 = 自动）
     private lateinit var samplerSpinner: android.widget.Spinner
     private lateinit var schedulerSpinner: android.widget.Spinner
+
+    /** flow-matching 模型的时间步偏移；留空/0 = 跟随模型默认 */
+    private lateinit var shiftEdit: EditText
+    private lateinit var i2iShiftEdit: EditText
 
     /** 每份选中 LoRA 各自的权重输入框容器（行数 = 选中份数）；图生图页各一套 */
     private lateinit var loraWeightBox: LinearLayout
@@ -641,6 +648,9 @@ class DrawPage(
         schedulerSpinner.onItemSelectedListener = persistSpinner(KEY_SCHEDULER)
         paramCard.addView(paramRow(c.getString(R.string.s_191), samplerSpinner, c.getString(R.string.s_015)))
         paramCard.addView(paramRow(c.getString(R.string.s_176), schedulerSpinner, c.getString(R.string.s_014)))
+        shiftEdit = smallNumber(loadParam(KEY_SHIFT, defOf("t2i", "shift", "")))
+        bindParam(shiftEdit, KEY_SHIFT)
+        paramCard.addView(paramRow(c.getString(R.string.v_080), shiftEdit, c.getString(R.string.v_081)))
 
         stepsEdit = smallNumber(loadParam(KEY_STEPS, defOf("t2i", "steps", builtinSteps())))
         cfgEdit = smallNumber(loadParam(KEY_CFG, defOf("t2i", "cfg", builtinCfg())))
@@ -1002,6 +1012,9 @@ class DrawPage(
         i2iSchedulerSpinner.onItemSelectedListener = persistSpinner(KEY_I2I_SCHEDULER)
         paramCard.addView(paramRow(c.getString(R.string.s_191), i2iSamplerSpinner, c.getString(R.string.s_015)))
         paramCard.addView(paramRow(c.getString(R.string.s_176), i2iSchedulerSpinner, c.getString(R.string.s_014)))
+        i2iShiftEdit = smallNumber(loadParam(KEY_I2I_SHIFT, defOf("i2i", "shift", "")))
+        bindParam(i2iShiftEdit, KEY_I2I_SHIFT)
+        paramCard.addView(paramRow(c.getString(R.string.v_080), i2iShiftEdit, c.getString(R.string.v_081)))
 
         i2iStepsEdit = smallNumber(loadParam(KEY_I2I_STEPS, defOf("i2i", "steps", builtinSteps())))
         i2iCfgEdit = smallNumber(loadParam(KEY_I2I_CFG, defOf("i2i", "cfg", builtinCfg())))
@@ -1808,6 +1821,23 @@ class DrawPage(
         }
     }
 
+
+    /** 输入框 → flow_shift。留空、非法、<= 0 一律返回 0，表示跟随模型默认。 */
+    private fun readShift(ed: EditText): Float {
+        val v = try { ed.text.toString().trim().toFloatOrNull() } catch (_: Throwable) { null } ?: return 0f
+        return if (v > 0f && v.isFinite()) v else 0f
+    }
+
+    /**
+     * 日志里的 shift 描述。
+     *
+     * 为什么在 Kotlin 侧记而不靠 native 的 LOGI：logcat 与 draw.log 是两条通道，
+     * 诊断报告只收后者。
+     */
+    private fun shiftLog(v: Float): String =
+        if (v > 0f) "  flow_shift=" + "%.3f".format(v) + " (user)"
+        else "  flow_shift=model default"
+
     /** 日志用：把生效的 LoRA 写成 `name×0.80 + name2×0.50`，空列表写 none */
     private fun loraLog(list: List<SdCppEngine.Lora>): String =
         if (list.isEmpty()) "none"
@@ -2029,6 +2059,46 @@ class DrawPage(
     }
 
     fun activeSetId(): String? = activeSet?.id
+
+    /**
+     * 处理「孤儿句柄」—— Activity 被系统重建后留下的 native context。
+     *
+     * 背景：`sdHandle` 是**实例字段**，而 native context 的生命周期跟进程走。
+     * Android 会在换语言、改字体、内存吃紧后恢复等情况下销毁重建 Activity，
+     * 这时 `MainActivity.drawPage` 归 null，新 DrawPage 的 `sdHandle` 是 0，
+     * 但 context 还活着，`DrawCore` 里只剩一个**没人能 free 的引用**。
+     * 用户再点「加载绘图模型」就会建第二份 —— 内存翻倍，而旧的那份永远收不回来。
+     *
+     * 两种情况分开处理：
+     *   · 当前选中的模型集和孤儿是同一个 → 直接接回来，界面显示「已加载」，
+     *     用户不用再等几十秒（重建前后 UI 状态都来自 prefs，本来就一致）
+     *   · 不是同一个 → 释放掉，反正接下来要加载别的
+     *
+     * 判断不出来时（modelName 为空）一律释放：宁可让用户重新加载，
+     * 也不能把一个可能不匹配的句柄当自己的用 —— 那样会在出图时崩。
+     *
+     * **只改字段、不碰 View**：调用点在本页 build() 之前，界面还没建出来。
+     * 状态显示由调用方随后刷新。
+     */
+    fun reclaimOrphanedModel() {
+        if (sdHandle != 0L) return
+        val orphan = DrawCore.currentHandle()
+        if (orphan == 0L) return
+
+        val name = DrawCore.modelName
+        val wanted = setOfNotNull(activeSetOrSelected()?.name, mainModel?.name)
+        if (name != null && name in wanted) {
+            sdHandle = orphan
+            activeBackend = DrawCore.backend ?: "CPU"
+            LogBook.w(c, LogBook.DRAW,
+                "=== reattached orphaned context: $name (activity was recreated) ===")
+        } else {
+            DrawCore.release()
+            runCatching { SdCppEngine.nativeFree(orphan) }
+            LogBook.w(c, LogBook.DRAW,
+                "=== released orphaned context: ${name ?: "?"} != ${wanted.joinToString("/")} ===")
+        }
+    }
 
     fun selectSet(s: ModelSet) {
         activeSet = s
@@ -2377,6 +2447,14 @@ class DrawPage(
         return try {
             if (sdHandle != 0L) runCatching { SdCppEngine.nativeFree(sdHandle) }
             sdHandle = 0L
+            // 最后一道保险：正常路径下 reclaimOrphanedModel() 已经把孤儿处理掉了，
+            // 这里兜住「没走到那条路」的情况 —— 比如以后加了别的入口直接调 loadModel。
+            val orphan = DrawCore.currentHandle()
+            if (orphan != 0L) {
+                stage("4a releasing orphaned context before creating a new one")
+                DrawCore.release()
+                runCatching { SdCppEngine.nativeFree(orphan) }
+            }
             // 后端：选了 GPU 且设备有 Vulkan 就用它，否则 CPU。
             // 显式传后端名会关掉 sd.cpp 的 auto_fit，避免「选 CPU 却悄悄跑 GPU」。
             val gpuDev = if (useGpu) SdCppEngine.vulkanDevice() else null
@@ -2679,6 +2757,9 @@ class DrawPage(
             LogBook.w(c, LogBook.DRAW, s)
         }
         runCatching { stageFile.writeText("") }
+        // shift 先读出来：EditText 只能在主线程读，而且下面记的日志和真正传给
+        // native 的必须是同一个值 —— 否则日志说的和做的不一样。
+        val flowShift = readShift(shiftEdit)
         val t0 = System.currentTimeMillis()
         gstage("=== render start ===")
         // prompt 只留前 80 字：够判断"是不是超长/含特殊字符"，又不把用户写的内容整段抄走
@@ -2687,6 +2768,11 @@ class DrawPage(
         // flashAttn 必须记：它是唯一一个「我们和上游默认值不同」的开关，
         // 排查兼容性问题时第一个要看的就是它开没开。
         gstage("  loras=${loraLog(loras)} backend=$activeBackend flashAttn=$flashAttn")
+        // shift 单独记一行，**在 Kotlin 层记而不是靠 native 的 LOGI**：
+        // native 的 LOGI 只进 logcat，而 draw.log 收的是 sd.cpp 自己的缓冲
+        // （SdCppEngine.takeWarnings），两条通道不互通 —— 之前就因此看不见它。
+        // 0 = 跟随模型默认（native 侧保持 INFINITY 不动）。
+        gstage(shiftLog(flowShift))
         // 参考图只在这里算一次：Bitmap → RGB888 是逐像素循环，算两遍纯属浪费。
         // 而且必须记数量 —— sd.cpp 那边「给了参考图」和「没给」在 INFO 层面只差一行
         // EDIT mode，一旦过滤条件没覆盖到就完全看不出来。这里由 App 自己记，
@@ -2721,6 +2807,7 @@ class DrawPage(
                     prompt = prompt,
                     negative = negative,
                     loras = loras,
+                    flowShift = flowShift,
                     width = w,
                     height = hgt,
                     steps = steps,
@@ -2961,6 +3048,8 @@ class DrawPage(
         val scheduler = pickI2iScheduler(loras.isNotEmpty())
 
 
+        // 同 t2i：EditText 只在主线程读，先取值再进 IO
+        val flowShift = readShift(i2iShiftEdit)
         val bmp = withContext(Dispatchers.IO) {
             val rgb = SdCppEngine.bitmapToRgb888(src)
             val t0 = System.currentTimeMillis()
@@ -2980,6 +3069,7 @@ class DrawPage(
             gstage("  prompt=${LogBook.briefPrompt(prompt)}")
             gstage("  size=${w}x$hgt steps=$steps cfg=$cfg strength=$strength seed=$useSeed")
             gstage("  src=${src.width}x${src.height} loras=${loraLog(loras)}")
+            gstage(shiftLog(flowShift))
             runCatching { gstage("  " + memLine()) }
             try {
                 SdCppEngine.render(
@@ -2987,6 +3077,7 @@ class DrawPage(
                     prompt = prompt,
                     negative = negative,
                     loras = loras,
+                    flowShift = flowShift,
                     width = w,
                     height = hgt,
                     steps = steps,
@@ -3344,6 +3435,7 @@ class DrawPage(
         put(KEY_STEPS, stepsEdit)
         put(KEY_CFG, cfgEdit)
         put(KEY_SEED, seedEdit)
+        put(KEY_SHIFT, shiftEdit)
         e.putInt(KEY_SAMPLER, samplerSpinner.selectedItemPosition)
         e.putInt(KEY_SCHEDULER, schedulerSpinner.selectedItemPosition)
         if (::i2iStepsEdit.isInitialized) {
@@ -3352,6 +3444,7 @@ class DrawPage(
             put(KEY_I2I_STEPS, i2iStepsEdit)
             put(KEY_I2I_CFG, i2iCfgEdit)
             put(KEY_I2I_SEED, i2iSeedEdit)
+            put(KEY_I2I_SHIFT, i2iShiftEdit)
             put(KEY_I2I_STRENGTH, i2iStrengthEdit)
             e.putInt(KEY_I2I_SAMPLER, i2iSamplerSpinner.selectedItemPosition)
             e.putInt(KEY_I2I_SCHEDULER, i2iSchedulerSpinner.selectedItemPosition)

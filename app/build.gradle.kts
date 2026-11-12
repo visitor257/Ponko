@@ -17,11 +17,14 @@ android {
         minSdk = 28
         targetSdk = 36
         // versionCode 必须严格递增：小于等于已装版本会被系统拒绝覆盖。
-        // 2.1.0 = 25，2.1.1 = 26。
-        // 本版取 28 而不是 27：27 曾被一个未发布的 2.1.2 测试包用过，
-        // 万一装过就会拒装，跳一号最省事。
-        versionCode = 28
-        versionName = "2.1.2"
+        // 2.1.0 = 25，2.1.1 = 26，2.1.2 = 28（27 曾被一个未发布的测试包占用，跳号避免拒装）。
+        // 2.1.3 用了 29~32 四个 versionCode：29 是给用户测的第一版，诊断报告有个缺陷
+        // （日志被 LoRA 警告淹没），30 修了它但 shift 那行记在 logcat 而不是 draw.log，
+        // 31 改到 Kotlin 层记，32 修 Activity 重建后的句柄泄漏。都**仍叫 2.1.3** ——
+        // 这一版还没正式发布过，
+        // 不该为一次修复开新版本号（2.1.1 当初攒了两处改动也是同样处理）。
+        versionCode = 32
+        versionName = "2.1.3"
         ndk {
             // LiteRT-LM 与 llama.cpp 的 native 都只跑 arm64 真机，去掉 x86_64 可减小 APK
             abiFilters += "arm64-v8a"

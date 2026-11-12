@@ -35,6 +35,8 @@ object DrawCore {
         val sampler: SdCppEngine.Sampler = SdCppEngine.Sampler.EULER_A,
         val scheduler: SdCppEngine.Scheduler = SdCppEngine.Scheduler.DISCRETE,
         val loras: List<SdCppEngine.Lora> = emptyList(),
+        /** flow-matching 模型的时间步偏移；<= 0 跟随模型默认 */
+        val flowShift: Float = 0f,
     )
 
     class Result(val bitmap: Bitmap, val seed: Long)
@@ -83,6 +85,16 @@ object DrawCore {
     }
 
     fun isReady(): Boolean = handle != 0L
+
+    /**
+     * 当前登记的句柄（0 = 没有）。
+     *
+     * 给「Activity 被系统重建」这个场景用：那时 MainActivity 的 drawPage 字段归 null，
+     * 新建的 DrawPage 手上没有句柄，而 native context 还活着 —— 唯一的线索就在这里。
+     * 见 DrawPage.reclaimOrphanedModel()。
+     */
+    fun currentHandle(): Long = handle
+
 
     fun requestCancel() {
         cancelFlag = true
@@ -136,6 +148,7 @@ object DrawCore {
                         prompt = prompt,
                         negative = negative ?: p.negative,
                         loras = p.loras,
+                        flowShift = p.flowShift,
                         width = w,
                         height = ht,
                         steps = st,

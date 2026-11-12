@@ -753,4 +753,7 @@ Try a different word, or tap Clear above.</string>
     <string name="v_071">Active: %1$s</string>
     <string name="v_072">When LoRA is on: %1$s</string>
     <string name="v_073">%1$d LoRAs are active at once. Two at 1.0 usually fight rather than stack — try 0.5-0.8 each.</string>
+    <!-- flow shift -->
+    <string name="v_080">Shift</string>
+    <string name="v_081">Timestep shift for flow models (SD3 / Flux / Krea2 / MOSS / Fibo / Ideogram). Leave empty to use the model default</string>
 </resources>

@@ -130,6 +130,7 @@ object SdCppEngine {
         initWidth: Int,
         initHeight: Int,
         strength: Float,
+        flowShift: Float,
         refData: Array<ByteArray>?,
         refWidths: IntArray?,
         refHeights: IntArray?,
@@ -236,6 +237,12 @@ object SdCppEngine {
         initWidth: Int = 0,
         initHeight: Int = 0,
         strength: Float = 1.0f,
+        /**
+         * flow-matching 模型的时间步偏移。<= 0 表示跟随该模型族的默认值
+         * （sd.cpp 给每个族都配了，如 Flux.3 Klein 6.93、MOSS 5.0、Krea2 1.15）。
+         * 只对 flow 系模型有意义，其余模型这个值会被忽略。
+         */
+        flowShift: Float = 0f,
         refImages: List<RefImage> = emptyList(),
     ): Bitmap? {
         val effectiveSeed = if (seed < 0) (System.currentTimeMillis() % 1_000_000_000L) else seed
@@ -251,6 +258,7 @@ object SdCppEngine {
             if (useInit) initWidth else 0,
             if (useInit) initHeight else 0,
             if (useInit) strength else 1.0f,
+            flowShift,
             if (refImages.isEmpty()) null else refImages.map { it.rgb }.toTypedArray(),
             if (refImages.isEmpty()) null else refImages.map { it.width }.toIntArray(),
             if (refImages.isEmpty()) null else refImages.map { it.height }.toIntArray(),

@@ -1035,10 +1035,13 @@ class MainActivity : Activity() {
             }
         }
         LogBook.MODULES.forEach { (mod, label) ->
-            val body = LogBook.read(this, mod)
+            // 先折叠成片的重复行再截尾：sd.cpp 的 LoRA 警告几百行、5 毫秒内打完，
+            // 全落在尾部，会把 6000 字符的窗口占满，真正的生成记录被挤出去。
+            // 详见 LogBook.readForReport 的注释。
+            val body = LogBook.readForReport(this, mod)
             sb.append("\n-- ").append(label).append(" (").append(mod).append(".log) --\n")
-            // 每份只留尾部：完整日志可能有几百 KB，粘进 issue 也没人看
-            sb.append(if (body.isBlank()) "(无记录)\n" else body.takeLast(6000))
+            // 完整日志可能有几百 KB，粘进 issue 也没人看，所以只留尾部
+            sb.append(if (body.isBlank()) "(无记录)\n" else body)
         }
         return sb.toString()
     }
@@ -1235,6 +1238,12 @@ class MainActivity : Activity() {
         val dpg = drawPage ?: DrawPage(this, scope, pal)
         dpg.setPalette(pal)
         drawPage = dpg
+        // Activity 被系统重建过的话，native context 会变成没人管的孤儿：
+        // 上一轮的 DrawPage 实例已经回收，新实例手上没有句柄。
+        // 要么接回来（模型集没变），要么释放掉（变了）—— 不能不管，
+        // 否则再点「加载」就是第二份，内存翻倍且旧的收不回来。
+        // 必须放在 buildModelsPage() 之前：「模型」页要读这里的状态。
+        runCatching { dpg.reclaimOrphanedModel() }
         tabModels = buildModelsPage()
         tabSettings = buildSettingsPage()
         // Ponko-EX（插件页）：2.0.0 起是底部菜单第 4 项。

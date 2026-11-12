@@ -753,4 +753,7 @@
     <string name="v_071">生效：%1$s</string>
     <string name="v_072">已勾选「LoRA 加速」时会生效：%1$s</string>
     <string name="v_073">同时挂了 %1$d 份 LoRA。两份都设 1.0 通常是互相打架而不是叠加，建议各自降到 0.5~0.8。</string>
+    <!-- flow shift -->
+    <string name="v_080">Shift</string>
+    <string name="v_081">flow 系模型（SD3 / Flux / Krea2 / MOSS / Fibo / Ideogram）的时间步偏移。留空 = 跟随模型默认</string>
 </resources>
