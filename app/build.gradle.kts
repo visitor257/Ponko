@@ -23,7 +23,9 @@ android {
         targetSdk = 36
         // beta 线自己的 versionCode 台阶，与正式版互不干扰（包名不同，系统不比较）。
         // 正式版 2.1.3 用到 32；beta 从 33 起，避免万一装过同名包时同号被拒。
-        versionCode = 33
+        // 33 = sd.cpp 升级后的第一版；34 = 补上 H3-Image 家族（versionName 仍是 beta.0，
+        // 版本号只给用户看，装过的包要能被覆盖就得靠这个往上走）。
+        versionCode = 34
         versionName = "2.2.0-beta.0"
         ndk {
             // LiteRT-LM 与 llama.cpp 的 native 都只跑 arm64 真机，去掉 x86_64 可减小 APK

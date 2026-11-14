@@ -314,6 +314,10 @@ enum SlotIndex {
     // sd.cpp 在 LLMEmbedder 里对这三个架构直接 throw，必须由这里给文件。
     // 追加在末尾而不是插到 llm 旁边：已有模型集按位置存，插中间会让它们全部错位。
     SLOT_TOKENIZER,
+    // 可选：额外的文本连接器权重 -> embeddings_connectors_path。
+    // 目前只有 H3-Image 系列用得上：Qwen3-VL-4B 编码器必须配 P-H3-Image 的
+    // text connector，Qwen3-VL-32B 则不需要。同样追加在末尾。
+    SLOT_CONNECTOR,
     SLOT_COUNT
 };
 
@@ -322,7 +326,7 @@ enum SlotIndex {
 // backend：ggml 后端/设备名（如 "CPU" / "Vulkan0" / "vulkan"），空串或 null = 交给 sd.cpp 自动挑。
 // 显式传值会关掉 sd.cpp 的 auto_fit，行为更可控（选 CPU 就真是 CPU）。
 //
-// slots：模型槽位路径数组，按 SlotIndex 顺序给槽位文件路径（当前 13 项）；
+// slots：模型槽位路径数组，按 SlotIndex 顺序给槽位文件路径（当前 15 项）；
 // 元素可以为 null / 空串（表示该槽位不填）。传 null = 走旧的两参数路径（单文件 + 可选 VAE）。
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_litertchat_app_draw_SdCppEngine_nativeCreate(
@@ -381,6 +385,8 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeCreate(
     // sd.cpp 的 LLMEmbedder 在 tokenizers.has(MAIN) 为假时直接 throw。
     // 其余架构留空即可，它们会走 src/tokenizers/vocab 里内嵌的词表。
     p.tokenizer             = slotPtr[SLOT_TOKENIZER];
+    // 额外的文本连接器（H3-Image 配 4B 编码器时才需要）。
+    p.embeddings_connectors_path = slotPtr[SLOT_CONNECTOR];
     p.n_threads    = (nThreads > 0) ? nThreads : sd_get_num_physical_cores();
     // wtype < 0 表示「保持模型原样」——此时【不能】覆盖，保留 sd_ctx_params_init 给的
     // SD_TYPE_COUNT。实测把 -1 强转成 sd_type_t 会让 sd.cpp 内部查表越界，native 直接崩溃。

@@ -153,6 +153,29 @@ class DrawPage(
          */
         const val FAM_PIXART = "pixart"
 
+        // ---- 2.2.0 把 sd.cpp 升到 2026-11-13 master 后新增的图像架构 ----
+        //
+        // MiniMax-H3-Image（#2324）与 P-H3-Image（#2272）在 sd.cpp 里是**同一个家族的
+        // 两个 version**（VERSION_MINIMAX_H3_IMAGE / VERSION_P_H3_IMAGE）：
+        //   · 同一套扩散模型结构（video_patch_proj + condition_proj 是识别特征）
+        //   · 同一个 Sol-H3-VAE（ModelVAEKind::MINIMAX_H3）
+        //   · 同一个 LLM 编码器接口（LLMEmbedder，Qwen3-VL 架构）
+        // 区别只在文本编码器那一侧，而且 sd.cpp **自己会判断**，这里不用让用户选：
+        //   · Qwen3-VL-**32B**（hidden 5120、50/64 层）→ 直接可用
+        //   · Qwen3-VL-**4B**（hidden 2560、36 层）→ 必须再给一个 P-H3-Image 的
+        //     text connector（--embeddings-connectors，本 App 里是 connector 槽）。
+        //     缺了它 sd.cpp 会直接抛「requires the P-H3-Image text connector」。
+        // 两种情况都在 LLMEmbedder 构造时检查，缺什么都写在那条错误里。
+        //
+        // 其他要点：
+        //   · tokenizer：H3 不要求外部 tokenizer.json，走内置词表回退（MOSS 才要求）
+        //   · 采样默认：H3_AV_FLOW_PRED，flow_shift **1.0**，Euler + Discrete
+        //   · 参考图：sd.cpp 给的预设是 "qwen"（多图作为独立 token），所以参考图卡片会出现
+        //   · 视频能力只属于 VERSION_MINIMAX_H3，这两个版本 supports_video_generation=false，
+        //     出的是单张图 —— 走本页这套图像流程即可
+        /** MiniMax-H3-Image / P-H3-Image：扩散模型 + Qwen3-VL 编码器 + Sol-H3-VAE */
+        const val FAM_H3_IMAGE = "h3image"
+
         /** 家族显示名 */
         fun familyLabelRes(family: String): Int = when (family) {
             FAM_SD15 -> R.string.s_337
@@ -169,6 +192,7 @@ class DrawPage(
             FAM_MOSS -> R.string.s_762
             FAM_FIBO2 -> R.string.s_763
             FAM_PIXART -> R.string.s_764
+            FAM_H3_IMAGE -> R.string.s_777
             else -> R.string.s_344
         }
 
@@ -187,6 +211,7 @@ class DrawPage(
             "vae" -> R.string.s_357
             "taesd" -> R.string.s_442
             "tokenizer" -> R.string.s_768
+            "connector" -> R.string.s_778
             else -> R.string.s_358
         }
 
@@ -228,6 +253,15 @@ class DrawPage(
                 // PixArt 只要扩散模型 + T5-XXL + VAE，没有 CLIP
                 family == FAM_PIXART -> listOf(
                     "diffusion" to true, "t5xxl" to true, "vae" to true)
+                // H3-Image：扩散模型 + LLM 编码器 + Sol-H3-VAE，都不带 CLIP / T5。
+                // llm_vision 只在用参考图时需要（sd.cpp 自己按文件里有没有
+                // text_encoders.llm.visual.* 张量决定开不开视觉塔），所以标可选。
+                // connector 只在用 Qwen3-VL-4B 编码器时必需（P-H3-Image 的文本连接器），
+                // 32B 编码器不需要 —— 两种情况 sd.cpp 都会自己判，这里一律标可选，
+                // 真正的缺失会以一句明确的异常出现在加载日志里。
+                family == FAM_H3_IMAGE -> listOf(
+                    "diffusion" to true, "llm" to true, "llm_vision" to false,
+                    "vae" to true, "connector" to false)
                 else -> listOf(
                     "diffusion" to true, "vae" to false, "clip_l" to false, "clip_g" to false,
                     "clip_vision" to false, "t5xxl" to false, "llm" to false, "llm_vision" to false,
@@ -239,9 +273,10 @@ class DrawPage(
             // TAESD 那套编解码器对它们不成立，所以这里一并排除。
             // PixArt 也排除：它的 VAE 缩放因子由 configure_pixart_vae 按架构定（Σ 用 SDXL VAE
             // 的 0.13025、α 用 0.18215），换成 TAESD 会绕过那段判断，颜色对不上。
+            // H3-Image 同理：Sol-H3-VAE 是独立实现，TAESD 不成立。
             val noTaesd = family == FAM_VIDEO || family == FAM_QWEN || family == FAM_HIDREAM ||
                 family == FAM_IDEOGRAM || family == FAM_KREA2 || family == FAM_KLEIN ||
-                family == FAM_PIXART
+                family == FAM_PIXART || family == FAM_H3_IMAGE
             return if (noTaesd) base else base + ("taesd" to false)
         }
 

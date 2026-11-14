@@ -1089,7 +1089,7 @@ static std::string convert_diffusers_dit_to_original_pixart(std::string name) {
     if (starts_with(name, wrapper)) {
         name = name.substr(wrapper.size());
     }
-    return convert_diffusers_dit_to_original_pixart_bare(std::move(name));
+    return convert_diffusers_dit_to_original_pixart_bare(name);
 }
 
 static std::string convert_moss_image_dit_name_bare(std::string name) {
@@ -1112,7 +1112,7 @@ static std::string convert_moss_image_dit_name(std::string name) {
     if (starts_with(name, wrapper)) {
         name = name.substr(wrapper.size());
     }
-    return convert_moss_image_dit_name_bare(std::move(name));
+    return convert_moss_image_dit_name_bare(name);
 }
 
 static std::string convert_ming_image_dit_name(std::string name) {

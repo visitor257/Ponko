@@ -198,6 +198,10 @@ object SdCppEngine {
         // 外部 tokenizer.json。顺序必须与 native 的 SlotIndex 末尾一致 ——
         // 追加在最后而不是插进 llm 旁边，否则已有模型集会整体错位。
         "tokenizer",
+        // 额外的「文本连接器」权重（sd.cpp 的 embeddings_connectors_path）。
+        // 目前只有 MiniMax-H3-Image / P-H3-Image 用得上：配 Qwen3-VL-4B 编码器时
+        // 必须给 P-H3-Image 的 text connector，配 32B 编码器则留空。
+        "connector",
     )
 
     /** 把槽位表（key -> 文件绝对路径）转成 JNI 要的定长数组 */

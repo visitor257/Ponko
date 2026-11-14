@@ -756,4 +756,7 @@ Try a different word, or tap Clear above.</string>
     <!-- flow shift -->
     <string name="v_080">Shift</string>
     <string name="v_081">Timestep shift for flow models (SD3 / Flux / Krea2 / MOSS / Fibo / Ideogram). Leave empty to use the model default</string>
+    <!-- MiniMax-H3-Image (2.2.0) -->
+    <string name="s_777">MiniMax-H3-Image / P-H3-Image (needs Qwen3-VL + Sol-H3 VAE)</string>
+    <string name="s_778">Text connector (only for the Qwen3-VL-4B encoder)</string>
 </resources>
