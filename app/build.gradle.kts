@@ -10,21 +10,21 @@ android {
     ndkVersion = "27.3.13750724"
 
     defaultConfig {
-        // beta 线用独立包名，这样它可以和正式版**同时装在一个手机上**。
-        // namespace 保持 com.litertchat.app 不变：那只是 R 类和源码的包名，
+        // **beta 线专有**：独立包名，可和正式版同时装在一台手机上。
+        // namespace 保持 com.litertchat.app 不变 —— 那只是 R 类与源码的包名，
         // 和"装成哪个应用"无关，改了要动所有 Kotlin 文件的 package 声明。
         //
-        // 代价（已写进 Release 说明，用户明确要求接受）：
-        //   · 模型要重新导入 —— 模型存在 filesDir 下，而 filesDir 按 applicationId 隔离，
-        //     两个包名的私有目录互不可见
-        //   · 插件是隐式 Action（com.litertchat.ponko.PLUGIN）发现宿主的，两个宿主都装了
-        //     就会都去 bind 同一个 Service
+        // 代价（正式版没有）：
+        //   · 模型要重新导入：filesDir 按 applicationId 隔离，两个包的私有目录互不可见
+        //   · 插件按隐式 Action 发现宿主，两个宿主都装会都去 bind 同一个 Service
         //   · 磁盘上占两份模型
         applicationId = "com.litertchat.app.beta"
         minSdk = 28
         targetSdk = 36
-        versionCode = 29
-        versionName = "2.1.0-beta.5"
+        // beta 线自己的 versionCode 台阶，与正式版互不干扰（包名不同，系统不比较）。
+        // 正式版 2.1.3 用到 32；beta 从 33 起，避免万一装过同名包时同号被拒。
+        versionCode = 33
+        versionName = "2.2.0-beta.0"
         ndk {
             // LiteRT-LM 与 llama.cpp 的 native 都只跑 arm64 真机，去掉 x86_64 可减小 APK
             abiFilters += "arm64-v8a"

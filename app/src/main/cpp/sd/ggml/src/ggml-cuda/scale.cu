@@ -3,6 +3,7 @@
 
 #define MAX_GRIDDIM_X 0x7FFFFFFF
 
+
 template <typename T>
 static __global__ void scale_f32(const T * x, T * dst, const float scale, const float bias, const int64_t nelements) {
     ggml_cuda_pdl_lc();

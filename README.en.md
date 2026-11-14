@@ -19,7 +19,7 @@ All inference runs on-device: apart from the optional in-app LoRA download, no f
 | Module | In one line |
 |---|---|
 | **Chat** | `.litertlm` / `.gguf` dual backend; image, file and document input; separated reasoning, streaming Markdown |
-| **Drawing** | stable-diffusion.cpp; text-to-image / image-to-image / LCM-LoRA speed-up; optional TAESD and Vulkan |
+| **Drawing** | stable-diffusion.cpp; text-to-image / image-to-image / reference images / multiple LoRAs with per-file weights; optional TAESD and Vulkan |
 | **Tagging** | Fully offline ONNX (WD14 family); tags can be sent to T2I / I2I |
 | **API server** | Serves loaded models over OpenAI-compatible endpoints; chat 8080 / drawing 8081, fully independent |
 | **Plugins (Ponko-EX)** | Speech synthesis and similar live in separate APKs; the protocol is public, so third-party plugins work and you can write your own |
@@ -55,6 +55,7 @@ Two model formats are supported:
 - **Model management**: pick a model file from local storage; it is copied into the app's private directory and can be reused anytime. The Models/API page has a run-mode selector (CPU / GPU) on top and three sub-pages below (**Chat model / Draw model / Tagger**, swipe to switch); both the **Chat model** and **Draw model** pages split into **Model / API** sub-tabs, where each kind of model can be viewed, selected or deleted.
   - What the run mode covers: **only three paths carry GPU code** - **drawing** (Vulkan), **tagging** (NNAPI) and **`.litertlm` chat** (LiteRT-LM GPU, i.e. OpenCL / Vulkan underneath); **GGUF chat always runs on CPU** (the binding has no GPU backend). All three GPU paths have **only been verified at build time and never on a real device** - they are expected to work in theory, but whether they do depends on the phone's drivers and VRAM; if the device does not support it or init fails, the app falls back to CPU automatically and the drawing status line shows the backend actually in use
 - **Multiple conversations**: create / switch / delete chats. History is persisted on-device (`sessions.json`).
+- **System prompt** (since 2.0.x): edit it from the gear button on the chat page, in a bottom sheet. It is **saved per conversation**, not globally. Saving applies it to the ongoing conversation **immediately** and keeps the history, so you do not have to start a new chat; to clear it, save an empty field.
 - **Separate thinking**: reasoning and answer are shown apart and collapsible; the thinking toggle works for both formats.
 - **Markdown rendering**: headings, bold/italic, strikethrough, ordered/unordered lists, inline code and code blocks, quotes, dividers, tables, tappable links.
 - **Streaming UX**: token-by-token output; auto-follow scrolling that pauses the moment you scroll up, with a floating "back to bottom" button; interrupt anytime, and keep typing while generating.
@@ -83,14 +84,24 @@ The engine is [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.
   - **Text to image**: enter a prompt and generate
   - **Image to image**: pick a reference photo from your gallery as the base, then use the prompt and the "denoise strength" (0.05-0.99) to restyle / change background / refine; the output size auto-aligns to the reference (multiple of 64)
   - **Tagger**: reverse an image into Danbooru-style tags (see below)
+- **Reference images** (new in 2.1.0): up to two, and the model reads them alongside the prompt rather than only the prompt. **This is not the same thing as image-to-image.** An I2I starting image *becomes* the canvas - encoded, noised to the denoise strength, denoised from there - so the composition is fixed. Reference images are separate tokens appended after the canvas and held at timestep 0, clean throughout, while the canvas starts from noise: **composition stays free, and the model learns style**.
+  - The card only appears when the loaded model accepts reference images. That is **asked of the engine**, not guessed from the family name - FLUX only takes them in its Kontext variants, and handing reference latents to a model that does not expect them changes the graph it was built around. Switching to a model without support clears your picks
+  - Works with Krea2's `krea2_turbo_style_reference` LoRA, FLUX Kontext, Qwen-Image-Edit, Fibo 2, Longcat and MageFlow
+  - ⚠ **Reference images are not resized**: whatever dimensions you give them is what they cost. A 1024×1024 reference beside a 256×256 canvas is sixteen times the canvas. Crop the reference close to your canvas size
 - **Parameter defaults**: every parameter page has "Set as default" / "Restore defaults" (each asks for confirmation); Text-to-Image and Image-to-Image keep **separate default sets for LoRA on/off**, and toggling the LoRA switch applies the matching set
 - **Generation history**: the Result view keeps the last 30 images of this run - browse, delete one, or clear all. **In-memory only; gone when the app is closed.**
 - **Parameters**: width/height (multiples of 64), steps, CFG, seed, sampler, scheduler - all adjustable and **remembered across restarts** (prompts are not). The sampler list is now aligned 1:1 with sd.cpp (DPM++ 2M SDE / SDE B&T / LMS / Res Multistep, ...).
+  - **Shift** (new in 2.1.3): timestep shift for flow-matching models. Empty means use the model's own default (Ideogram 4 / FLUX.2 Klein 1.0, Krea 2 1.15, Fibo 2.0 3.0, MOSS-Image 5.0, FLUX.3 Image Klein 6.93); filling it overrides. Only meaningful for flow models - SD1.5 / SDXL / PixArt and other epsilon-prediction ones ignore it.
 - **Dark mode**: a three-position slider (**Light / Follow system / Dark**) in the Settings section of the About page; remembered across restarts and applied in place (no app restart - loaded models and chats are kept). Page background, cards, inputs, buttons, dialogs, the status bar and the navigation bar all follow it.
-- **LoRA**: one-tap in-app download of LCM-LoRA (official HuggingFace / hf-mirror), cutting 20 steps down to 4-8. You can also **import a local LoRA** (a single `.safetensors`), and switch between multiple LoRAs from the list.
-- **Model import**: two ways - **single file** (one `.gguf`: all-in-one builds of SD1.x/2, SDXL, SD3/3.5, Flux, Qwen-Image, ...) and **multi-file** (fill in the slots for a family: SD3/3.5, Flux, Qwen-Image, HiDream, video models, ...). For multi-file, pick the type (family) and the main model first, then add the companion files one by one under "Model slots"; each model set keeps its files in its own folder and can be selected / long-pressed to delete in the list
+- **LoRA**: one-tap in-app download of LCM-LoRA (official HuggingFace / hf-mirror), cutting 20 steps down to 4-8. You can also **import a local LoRA** (a single `.safetensors`).
+  - **Several at once** (new in 2.1.2): the list on the models page is multi-select - tap to add or remove, and each ticked entry shows its own weight. The txt2img and img2img parameter cards grow **one weight field per selected LoRA**, each independent; both pages edit the same values and re-sync when you switch between them
+  - Caution: weights do not simply add up. Two at 1.0 usually fight each other - muddy detail, styles cancelling - so drop each to 0.5-0.8. Every extra file also costs memory and load time
+  - A weight of 0 means that LoRA is skipped before it reaches the engine, so the file is not loaded at all
+- **Model import**: two ways - **single file** (one `.gguf`: all-in-one builds of SD1.x/2, SDXL, SD3/3.5, Flux, Qwen-Image, ...) and **multi-file** (fill in the slots for a family: SD3/3.5, Flux, Qwen-Image, HiDream, PixArt, MOSS-Image, video models, ...). For multi-file, pick the type (family) and the main model first, then add the companion files one by one under "Model slots"; each model set keeps its files in its own folder and can be selected / long-pressed to delete in the list
+  - **PixArt** (new in 2.1.0) is multi-file with three slots: diffusion model + **T5-XXL** + VAE. It uses **no CLIP at all** - `caption_channels` 4096 is T5-XXL's hidden size. The original diffusers export works as-is (`PixArt-alpha/PixArt-Sigma-XL-2-256x256`); no renaming first
+  - **MOSS-Image** (new in 2.1.0) is multi-file with four slots: diffusion model + LLM encoder + VAE + **Tokenizer JSON**. That last slot is new in 2.1.0 and only takes a `.json` - MOSS (with Lens and PiD) has no built-in tokenizer fallback and refuses to load without one
   - **SDXL is single-file only**: upstream sd.cpp only recognizes SDXL when the second text encoder sits in the same file as the main model, so a split unet + CLIP-L/CLIP-G SDXL fails to load - use a single-file SDXL (quantized single files around 2.5 GB exist)
-  - Multi-file is really meant for families that upstream ships split apart: Flux, SD3.5, Qwen-Image and friends; the smallest set for those is 8 GB+, which a phone can hardly run (the mechanism is there for big-memory devices / desktop use).
+  - Multi-file is really meant for families that upstream ships split apart: Flux, SD3.5, Qwen-Image, MOSS-Image and friends; the smallest set for those is 8 GB+. **8 GB does not mean it will not run** - whether it runs depends on your device (see [Known limitations](#known-limitations)).
 - **GPU acceleration (optional; build-time-verified only, not tested on a real device)**: switch the run mode to **GPU** on the Models/API page and drawing uses the device's Vulkan backend (both text-to-image and image-to-image); if the device has no Vulkan or init fails it **falls back to CPU automatically**, and the backend actually in use is shown in the drawing status line
 - **TAESD speed-up (optional)**: attach TAESD weights to it under **"Model slots"** on the drawing-model page (fill it in to enable, clear it to disable). It swaps VAE encoding/decoding for a tiny autoencoder, making the final step of CPU generation much faster at the cost of slightly different detail
 - **Inference thread count (global)**: the About page -> "Settings" has a **CPU thread count** field (shown as "input / max"; **the max is the device's real available core count**; **values above it are clamped down and 0 becomes 1**) that governs **all CPU inference** - drawing (stable-diffusion.cpp), chat GGUF (llama.cpp) and tagging (ONNX Runtime) share the same value; it applies the **next time a model is loaded**. (Chat `.litertlm` runs on Google LiteRT-LM, which exposes no thread-count parameter and is therefore not affected.)
@@ -246,8 +257,8 @@ them:
   whether a model fits**
 
 "But my phone has 16GB" usually compares total device RAM against the weight sizes.
-The system itself takes 4–6GB, and Flux alone is 10GB of weights. The report puts all
-three figures side by side so the gap is visible.
+The system itself takes a substantial share of that, and large models run to GB-scale weights.
+The report puts all three figures side by side so the gap is visible.
 
 ### Logs are not translated
 
@@ -308,7 +319,7 @@ powershell -File tools/build-release.ps1
 ```
 
 - `minSdk 28` / `targetSdk 36`, **arm64-v8a only** (native library constraint; a real device is required, emulators won't run it)
-- The first full compile of sd.cpp + ggml takes about 8-9 minutes; with C++ unchanged, incremental builds take ~10 seconds
+- The first full compile of sd.cpp + ggml is the slow one (it scales with core count); with C++ unchanged, incremental builds are quick
 - Main dependencies: `com.google.ai.edge.litertlm:litertlm-android:0.17.0`, `net.ladenthin:llama-android:5.1.0`, `com.microsoft.onnxruntime:onnxruntime-android:1.22.0`, `com.tom-roush:pdfbox-android:2.0.27.0`, `io.noties.markwon:*:4.6.2`
 - Built by CMake: `libstable-diffusion.so` (sd.cpp itself), `libponko_sd.so` (JNI bridge)
 - The Vulkan backend (optional GPU drawing) needs **no Vulkan SDK**: `glslc` and the SPIRV headers come from the NDK, plus a **host compiler** to build the shader generator (MSVC on Windows - `tools/build-release.ps1` loads the `vcvars64` environment for you)
@@ -319,6 +330,8 @@ powershell -File tools/build-release.ps1
 - `.gguf` (chat): any GGUF quantized model on HuggingFace; on a phone CPU, **1B-3B at Q4** is recommended
 - `.gguf` (drawing): SD1.5-family models in stable-diffusion.cpp format (e.g. Anything V5)
 - **TAESD** (optional): `diffusion_pytorch_model.safetensors` from `madebyollin/taesd` (~10 MB). The file **must contain both the encoder and the decoder** - decoder-only files (e.g. ComfyUI's taesd_decoder.pth) are rejected outright, because img2img needs the encoder
+- **PixArt** (Sigma / Alpha, multi-file): the `transformer/` from `PixArt-alpha/PixArt-Sigma-XL-2-256x256` as the diffusion model, `t5-v1_1-xxl-encoder-Q3_K_S.gguf` as the text encoder, plus a VAE. **Sigma takes the SDXL VAE** (scale 0.13025); Alpha-512 takes the SD1.5 one (0.18215). ⚠ Those two VAE files are 319.1 MB and 319.2 MB, so size will not tell you which you have, and the wrong one gives wrong colours
+- **MOSS-Image** (multi-file): `diffusion_models/moss_image_sft_int8_convrot.safetensors`, `vae/flux2-vae_small.safetensors` and `text_encoders/qwen3.5_9b_*` from `Comfy-Org/MOSS-Image`, plus **Qwen3.5's `tokenizer.json`** (not the Qwen3-VL one). A 2-bit GGUF encoder works and is far kinder to memory than the 7 GB w4a8: `UD-IQ2_XXS` from `unsloth/Qwen3.5-9B-GGUF`, about 3 GB. Smallest complete set is around **12 GB**
 - **LoRA**: `lcm-lora-sdv1-5.safetensors` (~130 MB), downloadable in-app; a local `.safetensors` can also be imported directly
 - **Tagger**: the `.onnx` of a Danbooru-style tagger plus its matching tag-list CSV (the two must go together; e.g. WD14's `wd-v1-4-swinv2-tagger-v2` and `selected_tags.csv`)
 
@@ -327,10 +340,14 @@ powershell -File tools/build-release.ps1
 - Chat context defaults to 4096 tokens (adjustable on the Models/API page; on the LiteRT-LM side it cannot exceed the limit built into the model); beyond that it relies on llama.cpp's context-shift sliding window
 - The GGUF chat path currently uses CPU only (the binding used does not include GPU backends)
 - "Disable thinking" depends on the model's own chat template; some models may still emit reasoning
-- Drawing is CPU-only by default: 256×256 with LCM-LoRA at 6 steps takes about a minute; 512×512 is noticeably slower. Switch the run mode to GPU to try Vulkan acceleration; devices without it fall back to CPU (the backend in use is shown in the drawing status line)
+- Drawing is CPU-only by default, and 512×512 is noticeably slower than 256×256. Switch the run mode to GPU to try Vulkan acceleration; devices without it fall back to CPU (the backend in use is shown in the drawing status line). **Per-step cost varies a lot by architecture** - parameter count, whether it predicts flow, and the size of the text encoder all matter, so do not extrapolate one model's speed to another
 - **GPU support is "theoretical" for now and NOT verified on a real device**: only drawing (Vulkan), tagging (NNAPI) and `.litertlm` chat carry GPU code, and all three have only been verified at build time - none of them has been tested on an actual phone. When the driver is unstable or the VRAM is too small the app falls back to CPU automatically (the drawing status line shows the backend in use); GGUF chat has no GPU backend at all and is CPU-only
 - The quantization level is baked into the model file; the app only reads and displays it, never converts
-- **Large models (Flux / SD3.5-Large / Qwen-Image) are not really runnable on a phone**: the architecture and the loading mechanism both support them, but the weight total (8GB and up) plus inference activations exceed what Android will give a single app. The usual symptom is **a crash while rendering** — loading succeeds, because mmap is lazy. Those crashes land in the [diagnostics log](#diagnostics), where the model sizes sit next to `availMem` and the shortfall is visible at a glance. To actually run one, use a smaller quantization, lower the resolution, or wait for a desktop build
+- **Whether a large model runs depends on your device, not on the model's size.** Weights exceeding available memory does not predict a crash: mmap is lazy and segmented compute is on, so the peak sits far below the weight total. **The only reliable test is to run it on your own machine** - do not draw conclusions from measurements taken on someone else's phone
+- **⚠ How long a render takes depends on your device; do not copy numbers from elsewhere.** The same model can differ several-fold in per-step cost across SoC, memory bandwidth, thermals and thread count. If it is too slow, lower the resolution or the step count, or use a smaller quantization
+- **What does crash is "weights plus activations genuinely do not fit"**: the usual symptom is **loading succeeds, then it dies while rendering** (loading succeeds because mmap is lazy, so the weights are not resident yet). Those crashes land in the [diagnostics log](#diagnostics), where model sizes sit next to `availMem` and the shortfall is visible at a glance
+- **Not yet verified**: PixArt **Alpha** (the 512 variant) has never been tested, only Sigma; MOSS has never been run at its recommended CFG either, and negative prompts have not been exercised at all
+- **Not yet verified**: PixArt **Alpha** (the 512 variant) has never been tested, only Sigma; MOSS has never been run at its recommended CFG - the 42 minutes above is 256×256 at CFG 1.0, and negative prompts have not been exercised at all
 - The drawing native library is built with `-march=armv8.2-a+dotprod+fp16`, requiring a 64-bit ARM device from 2019 or later
 - Tagging supports Danbooru-style ONNX taggers (WD14 and its derivatives; the tag list must be in `tag_id,name,category,count` format); the `.onnx` and the tag-list CSV must be imported as a matching pair
 - If tagging looks wrong (e.g. wrong colours or hair colour), try switching the **channel order** (BGR / RGB): BGR is the official WD-family preprocessing, but a few re-exported models already baked BGR into their weights and need RGB; threshold and tag count also change the output a lot

@@ -88,6 +88,14 @@ class PluginPage(
     private var searchInputRef: EditText? = null
 
     /**
+     * 搜索行（输入框 + 清空按钮）的容器。
+     *
+     * 顶栏那个 🔍 按钮要控制它的显隐，所以必须留住引用 ——
+     * 原来这行是常驻的，local val 就够；改成按钮开关之后得要个字段。
+     */
+    private var searchRowRef: LinearLayout? = null
+
+    /**
      * 最近一次扫描到的完整插件列表（**未过滤**）。
      *
      * 输入时不必重新扫描磁盘，直接从这份里筛 —— 扫描要走 PackageManager、
@@ -288,18 +296,22 @@ class PluginPage(
         toolbar.addView(btnHelp, wrapWrap().apply { leftMargin = dp(8) })
         root.addView(toolbar, matchWrap().apply { topMargin = dp(12) })
 
-        // ---- 搜索框 ----
+        // ---- 搜索框（默认收起，由顶栏 🔍 打开）----
         //
-        // 单独一行，不和上面两个按钮挤在一起：插件多了之后
-        // 「重新扫描 / 怎么装插件 / 搜索框」三个抢一行，搜索框会窄到只能
-        // 显示两三个字，hint 都看不全。
+        // 这一行不常驻：只装了一两个插件的人，一整条搜索框是他永远不会用的东西，
+        // 白占一行高度、还把列表往下推。顶栏 🔍 点一下才展开，见 [toggleSearch]。
         //
-        // 空查询时列表原样显示（不做任何过滤），所以没装几个插件的人
-        // 不会因为多了一个框而多看见任何东西。
+        // 仍然单独占一行、不和「重新扫描 / 怎么装插件」挤：
+        // 三个抢一行时搜索框会窄到只能显示两三个字，hint 都看不全。
+        //
+        // 收起时查询会被清掉（见 toggleSearch），所以不会出现
+        //「框看不见、列表却被过滤着」的状态。
         val searchRow = LinearLayout(act).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            visibility = View.GONE
         }
+        searchRowRef = searchRow
         val searchInput = EditText(act).apply {
             hint = getString(R.string.s_481)
             // Kotlin 里要用 setSingleLine()，`singleLine` 那个是 XML 属性
@@ -610,6 +622,47 @@ class PluginPage(
 
     /** 返回列表。给 MainActivity 的返回键用 */
     fun backToList() = closePluginUi()
+
+    /** 搜索框当前是否展开（顶栏 🔍 按钮据此决定图标状态） */
+    fun isSearchOpen(): Boolean = searchRowRef?.visibility == View.VISIBLE
+
+    /**
+     * 展开 / 收起搜索框。顶栏 🔍 按钮调用。
+     *
+     * 收起时**顺手把查询清掉**：输入框已经看不见了，列表却还被过滤着，
+     * 那是纯粹的困惑来源（"插件怎么少了两个"）。清空之后列表恢复全部。
+     */
+    fun toggleSearch() {
+        val row = searchRowRef ?: return
+        if (row.visibility == View.VISIBLE) {
+            searchQuery = ""
+            searchInputRef?.setText("")
+            applyFilter()
+            searchInputRef?.let { hideIme(it) }
+            row.visibility = View.GONE
+        } else {
+            // 搜索只对**卡片列表**有意义；插件自己的界面里点不到这个按钮，
+            // 但状态错位时仍要先回列表，否则搜了也看不见结果
+            if (currentUiPage != null) backToList()
+            row.visibility = View.VISIBLE
+            searchInputRef?.let {
+                it.requestFocus()
+                showIme(it)
+            }
+        }
+    }
+
+    private fun showIme(v: View) {
+        val imm = act.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
+                as? android.view.inputmethod.InputMethodManager
+        imm?.showSoftInput(v, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+    }
+
+    private fun hideIme(v: View) {
+        val imm = act.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
+                as? android.view.inputmethod.InputMethodManager
+        imm?.hideSoftInputFromWindow(v.windowToken, 0)
+    }
 
     /**
      * 插件界面打开/关闭时通知外面。
@@ -941,8 +994,12 @@ class PluginPage(
 
     /** 一个插件是否命中查询串。三者任一包含即算命中 */
     private fun matches(item: PluginSession.Item, q: String): Boolean {
-        val needle = q.lowercase()
-        fun hit(s: String?) = s != null && s.lowercase().contains(needle)
+        // Locale.ROOT 而不是默认 locale：土耳其语环境下 "I".lowercase() 会变成 "ı"，
+        // 于是搜 "Setting" 匹配不到 "SETTING"，看着像"搜索坏了"。
+        // 这是语言无关的标识符比较，就该用 ROOT。
+        val needle = q.lowercase(java.util.Locale.ROOT)
+        fun hit(s: String?) =
+            s != null && s.lowercase(java.util.Locale.ROOT).contains(needle)
         return hit(item.found.label) ||
             hit(item.found.packageName) ||
             hit(item.manifest?.displayName)
@@ -2506,11 +2563,38 @@ class PluginPage(
                 ViewGroup.LayoutParams.WRAP_CONTENT))
         }
 
-        val builder = android.app.AlertDialog.Builder(
-            act, android.R.style.Theme_DeviceDefault_Dialog_Alert
-        )
-            .setTitle(getString(R.string.s_631, item.found.label))
-            .setView(scroll)
+        // 主题：**不指定** dialog theme，走 Activity 的主题（AppTheme / AppTheme.Dark）。
+        //
+        // 但只做到这一步还不够 —— 曾经写过的一版就是这样，仍然深底深字。
+        // 因为 Activity 的主题在「App 内切换深浅色」时是陈旧的：
+        // applyThemeInPlace() 只重建视图，而 setTheme() 只在 onCreate 跑过一次。
+        // 于是背景来自旧主题、文字来自新配色，两边各说各话。
+        //
+        // 所以这里**把背景和文字都从 pal 取**，不再让系统主题参与配色：
+        // 无论主题有没有跟上，弹窗自身始终是「同一个配色的底 + 同一个配色的字」。
+        // 标题也自己画，不用 setTitle()。
+        //
+        // setTitle 的 TextView 由系统主题决定颜色，想改只能 show() 之后
+        // findViewById(android.R.id.title) —— 而那个 id 能否命中取决于
+        // 框架内部实现，命不中就是浅底浅字。既然整个弹窗的配色都要脱离主题，
+        // 标题就没有理由留在主题里。
+        val title = TextView(act).apply {
+            // 必须用 setText()：外层那个 `val text`（插件文档）会遮蔽
+            // TextView 的 `text` 属性，写成 `text = ...` 会去改外层 val，编译直接报错
+            setText(getString(R.string.s_631, item.found.label))
+            textSize = 16f
+            setTextColor(pal.text)
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(0, 0, 0, dp(10))
+        }
+        val content = LinearLayout(act).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(title, matchWrap())
+            addView(scroll, matchWrap())
+        }
+
+        val builder = android.app.AlertDialog.Builder(act)
+            .setView(content)
             .setPositiveButton(getString(R.string.s_581), null)
 
         // 只有真有内容才给「复制」——对着一个"无"提供复制按钮很荒唐
@@ -2528,7 +2612,22 @@ class PluginPage(
                 }
             }
         }
-        builder.show()
+
+        val dlg = builder.create()
+        dlg.show()
+        // 背景 / 按钮统一按 pal 上色（标题和正文在上面已经定好色了）。
+        //
+        // 必须在 show() 之后：按钮是 show 时才建出来的，之前 getButton 返回 null。
+        //
+        // InsetDrawable 是必需的：直接换成纯色矩形会让弹窗贴到屏幕边缘，
+        // 标准对话框的「浮起一块面板」靠的就是背景自带的内缩。
+        dlg.window?.setBackgroundDrawable(
+            android.graphics.drawable.InsetDrawable(rounded(pal.surface, 16), dp(20))
+        )
+        dlg.getButton(android.content.DialogInterface.BUTTON_POSITIVE)
+            ?.setTextColor(pal.primary)
+        dlg.getButton(android.content.DialogInterface.BUTTON_NEUTRAL)
+            ?.setTextColor(pal.primary)
     }
 
     private fun showInstallHelp() {
@@ -2542,9 +2641,9 @@ class PluginPage(
 
             如果扫描不到，检查插件和 Ponko 是不是同一把密钥签的名。
         """.trimIndent()
-        android.app.AlertDialog.Builder(
-            act, android.R.style.Theme_DeviceDefault_Dialog_Alert
-        )
+        // 同上：不指定系统 dialog 主题。这个弹窗的文字来自主题、本来不会「暗底暗字」，
+        // 但 App 选亮色时会弹出一个深色框，跟界面其它部分不搭。
+        android.app.AlertDialog.Builder(act)
             .setTitle(getString(R.string.s_480))
             .setMessage(msg)
             .setPositiveButton(getString(R.string.s_584), null)

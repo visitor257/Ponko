@@ -260,6 +260,8 @@ class DrawPage(
         private const val KEY_LORA_SCALE = "drawLoraScale"
         private const val KEY_SAMPLER = "drawSampler"
         private const val KEY_SCHEDULER = "drawScheduler"
+        private const val KEY_SHIFT = "drawShift"
+        private const val KEY_I2I_SHIFT = "drawI2iShift"
 
         // 图生图参数（与文生图分开存）
         private const val KEY_I2I_W = "i2iW"
@@ -343,8 +345,16 @@ class DrawPage(
                 .edit().putBoolean(KEY_USE_LORA, value).apply()
         }
 
-    /** 当前选中的 LoRA（null = 自动取目录里第一个） */
-    private var loraFile: File? = null
+    /**
+     * 当前选中的 LoRA（文件名 → 该份自己的权重；null = 用全局默认强度）。
+     *
+     * 为什么按**文件名**存而不是路径：LoRA 目录只在一处，路径前缀会随安装位置变，
+     * 换设备/重装后按路径比对就全失效了。
+     *
+     * 为什么权重可以是 null：老版本只有一个全局强度框，升级上来的用户不该被强行
+     * 改掉习惯 —— null 表示"跟着那个框走"。一旦在列表里单独调过，就存成固定值。
+     */
+    private val selectedLoras = LinkedHashMap<String, Float?>()
 
     /** SD 管线就绪时回调（MainActivity 借此切到绘图模式） */
     var onPipelineReady: (() -> Unit)? = null
@@ -360,7 +370,7 @@ class DrawPage(
      */
     fun syncDrawCore() {
         if (!::stepsEdit.isInitialized || sdHandle == 0L) return
-        val lora = if (useLora) activeLora() else null
+        val loras = activeLoras()
         DrawCore.updateParams(
             DrawCore.Params(
                 steps = stepsEdit.text.toString().toIntOrNull()?.coerceIn(1, 150) ?: 20,
@@ -370,10 +380,10 @@ class DrawPage(
                 height = (heightEdit.text.toString().toIntOrNull() ?: 512)
                     .let { (it / 64) * 64 }.coerceIn(64, 2048),
                 negative = negEdit.text.toString(),
-                sampler = pickSampler(lora != null),
-                scheduler = pickScheduler(lora != null),
-                loraPath = lora?.absolutePath,
-                loraScale = loraScaleEdit.text.toString().toFloatOrNull()?.coerceIn(0f, 2f) ?: 1.0f,
+                sampler = pickSampler(loras.isNotEmpty()),
+                scheduler = pickScheduler(loras.isNotEmpty()),
+                loras = loras,
+                flowShift = readShift(shiftEdit),
             )
         )
     }
@@ -404,8 +414,13 @@ class DrawPage(
     private lateinit var samplerSpinner: android.widget.Spinner
     private lateinit var schedulerSpinner: android.widget.Spinner
 
-    /** LoRA 权重 */
-    private lateinit var loraScaleEdit: EditText
+    /** flow-matching 模型的时间步偏移；留空/0 = 跟随模型默认 */
+    private lateinit var shiftEdit: EditText
+    private lateinit var i2iShiftEdit: EditText
+
+    /** 每份选中 LoRA 各自的权重输入框容器（行数 = 选中份数）；图生图页各一套 */
+    private lateinit var loraWeightBox: LinearLayout
+    private lateinit var i2iLoraWeightBox: LinearLayout
 
     // 顶部菜单：参数 / 结果
     private lateinit var tabParams: TextView
@@ -458,7 +473,6 @@ class DrawPage(
     private lateinit var i2iSamplerSpinner: android.widget.Spinner
     private lateinit var i2iSchedulerSpinner: android.widget.Spinner
     private lateinit var i2iLoraCheck: CheckBox
-    private lateinit var i2iLoraScaleEdit: EditText
     private lateinit var i2iLoraHint: TextView
     private lateinit var i2iGenBtn: Button
     private lateinit var i2iProgressText: TextView
@@ -634,6 +648,9 @@ class DrawPage(
         schedulerSpinner.onItemSelectedListener = persistSpinner(KEY_SCHEDULER)
         paramCard.addView(paramRow(c.getString(R.string.s_191), samplerSpinner, c.getString(R.string.s_015)))
         paramCard.addView(paramRow(c.getString(R.string.s_176), schedulerSpinner, c.getString(R.string.s_014)))
+        shiftEdit = smallNumber(loadParam(KEY_SHIFT, defOf("t2i", "shift", "")))
+        bindParam(shiftEdit, KEY_SHIFT)
+        paramCard.addView(paramRow(c.getString(R.string.v_080), shiftEdit, c.getString(R.string.v_081)))
 
         stepsEdit = smallNumber(loadParam(KEY_STEPS, defOf("t2i", "steps", builtinSteps())))
         cfgEdit = smallNumber(loadParam(KEY_CFG, defOf("t2i", "cfg", builtinCfg())))
@@ -657,7 +674,11 @@ class DrawPage(
             setOnCheckedChangeListener { _, checked ->
                 useLora = checked
                 // 切换 LoRA = 套用该状态的那套默认值（开/关各一套，可用「设为默认值」覆盖）
-                if (checked && activeLora() == null) toast(c.getString(R.string.s_186))
+                // 打开开关时若一份都没选，补一个默认的（见 ensureSomeLoraSelected）
+                if (checked) {
+                    ensureSomeLoraSelected()
+                    if (activeLoras().isEmpty()) toast(c.getString(R.string.s_186))
+                }
                 if (::i2iLoraCheck.isInitialized) i2iLoraCheck.isChecked = checked
                 refreshLoraHint()
                 if (::i2iContent.isInitialized) {
@@ -667,9 +688,14 @@ class DrawPage(
             }
         }
         paramCard.addView(loraCheck)
-        loraScaleEdit = smallNumber(loadParam(KEY_LORA_SCALE, defOf("t2i", "loraScale", "1.0")))
-        bindParam(loraScaleEdit, KEY_LORA_SCALE)
-        paramCard.addView(paramRow(c.getString(R.string.s_024), loraScaleEdit, c.getString(R.string.s_037)))
+        // 权重行**按选中的 LoRA 动态生成**：挂 3 份就有 3 行，各自一个输入框。
+        //
+        // 以前这里是一个全局「LoRA 权重」框。多 LoRA 之后它没法表达"每份不同"，
+        // 而把它当"默认值"又会出现「框里写 1.00、实际跑 0.70」的错位
+        // （权重为 null 的条目实时读那个框，但改框不会刷新显示）。
+        // 现在权重只有一处可改，就是它自己那一行。
+        loraWeightBox = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
+        paramCard.addView(loraWeightBox)
         loraHint = TextView(c).apply {
             textSize = 11f
             setTextColor(subText)
@@ -986,6 +1012,9 @@ class DrawPage(
         i2iSchedulerSpinner.onItemSelectedListener = persistSpinner(KEY_I2I_SCHEDULER)
         paramCard.addView(paramRow(c.getString(R.string.s_191), i2iSamplerSpinner, c.getString(R.string.s_015)))
         paramCard.addView(paramRow(c.getString(R.string.s_176), i2iSchedulerSpinner, c.getString(R.string.s_014)))
+        i2iShiftEdit = smallNumber(loadParam(KEY_I2I_SHIFT, defOf("i2i", "shift", "")))
+        bindParam(i2iShiftEdit, KEY_I2I_SHIFT)
+        paramCard.addView(paramRow(c.getString(R.string.v_080), i2iShiftEdit, c.getString(R.string.v_081)))
 
         i2iStepsEdit = smallNumber(loadParam(KEY_I2I_STEPS, defOf("i2i", "steps", builtinSteps())))
         i2iCfgEdit = smallNumber(loadParam(KEY_I2I_CFG, defOf("i2i", "cfg", builtinCfg())))
@@ -1006,7 +1035,11 @@ class DrawPage(
             setPadding(0, dp(10), 0, 0)
             setOnCheckedChangeListener { _, checked ->
                 useLora = checked
-                if (checked && activeLora() == null) toast(c.getString(R.string.s_186))
+                // 打开开关时若一份都没选，补一个默认的（见 ensureSomeLoraSelected）
+                if (checked) {
+                    ensureSomeLoraSelected()
+                    if (activeLoras().isEmpty()) toast(c.getString(R.string.s_186))
+                }
                 if (::loraCheck.isInitialized) loraCheck.isChecked = checked
                 refreshLoraHint()
                 if (::t2iContent.isInitialized) {
@@ -1016,9 +1049,18 @@ class DrawPage(
             }
         }
         paramCard.addView(i2iLoraCheck)
-        i2iLoraScaleEdit = smallNumber(loadParam(KEY_I2I_LORA_SCALE, defOf("i2i", "loraScale", "1.0")))
-        bindParam(i2iLoraScaleEdit, KEY_I2I_LORA_SCALE)
-        paramCard.addView(paramRow(c.getString(R.string.s_024), i2iLoraScaleEdit, c.getString(R.string.s_037)))
+        // 图生图也用同一套 LoRA 和同一套权重（generateI2i 里就是 activeLoras()），
+        // 所以这里同样给每份一行权重框、编辑的是同一份数据。
+        //
+        // 一开始这里只放了一行「去绘图页改」的提示，理由是「权重是文件的属性，
+        // 不是模式的属性，两处编辑会打架」。前半句对，后半句是想多了：
+        // 文生图 / 图生图 是互斥显示的两个容器，同一时刻只有一个可见、只有一组输入框
+        // 能拿到焦点，不存在同时编辑。真正的代价只有「切页时显示可能过期」，
+        // 在 switchMode 里重建一次就解决了。
+        //
+        // 代价换来的是：在图生图页调参数时不用切回绘图页才能看/改权重。
+        i2iLoraWeightBox = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
+        paramCard.addView(i2iLoraWeightBox)
         i2iLoraHint = TextView(c).apply {
             textSize = 11f
             setTextColor(subText)
@@ -1047,6 +1089,9 @@ class DrawPage(
             tv.typeface = if (sel) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
             tv.setBackgroundColor(if (sel) pal.primarySoft else pal.surface)
         }
+        // 两页各有一套权重框、编辑同一份数据。在另一页改过的值，
+        // 切过来时必须重建才看得到 —— 否则显示的是切走之前那份。
+        if (m == 0 || m == 1) refreshLoraWeights()
         refreshModelCard()
     }
 
@@ -1564,11 +1609,22 @@ class DrawPage(
     private fun refreshI2iLoraHint() {
         if (!::i2iLoraHint.isInitialized) return
         try {
-            val a = activeLora()
+            val list = activeLoras()
             i2iLoraHint.text = when {
-                a == null -> c.getString(R.string.s_118)
-                useLora -> c.getString(R.string.v_028, (a.nameWithoutExtension))
-                else -> c.getString(R.string.v_029, (a.nameWithoutExtension))
+                listLoras().isEmpty() -> c.getString(R.string.s_118)
+                list.isEmpty() -> c.getString(R.string.v_070)
+                list.size == 1 -> {
+                    val n = File(list[0].path).nameWithoutExtension
+                    if (useLora) c.getString(R.string.v_028, (n))
+                    else c.getString(R.string.v_029, (n))
+                }
+                else -> {
+                    val detail = list.joinToString(" + ") {
+                        "${File(it.path).nameWithoutExtension}×${"%.2f".format(it.scale)}"
+                    }
+                    if (useLora) c.getString(R.string.v_071, (detail))
+                    else c.getString(R.string.v_072, (detail))
+                }
             }
         } catch (_: Throwable) {}
     }
@@ -1585,52 +1641,243 @@ class DrawPage(
 
     fun hasLora(): Boolean = listLoras().isNotEmpty()
 
-    /** 当前生效的 LoRA（优先用户选中的，其次上次选中的，最后取第一个） */
-    fun activeLora(): File? {
-        val all = listLoras()
-        if (all.isEmpty()) return null
-        val sel = loraFile
-        if (sel != null && sel.isFile && all.any { it.absolutePath == sel.absolutePath }) return sel
-        val saved = prefs().getString("selLora", null)
-        if (saved != null) all.firstOrNull { it.name == saved }?.let { loraFile = it; return it }
-        return all.first()
+    /**
+     * 把选中列表落到磁盘/预取（文件名 → 权重，空权重写成空串表示"跟全局默认"）。
+     *
+     * 用 `name|weight` 单串拼接而不是 JSON：条目少、格式简单，
+     * 而且 SharedPreferences 存 Set<String> 天然去重。
+     */
+    private fun persistSelectedLoras() {
+        val enc = selectedLoras.entries.map { (n, w) ->
+            if (w == null) "$n|" else "$n|$w"
+        }.toSet()
+        prefs().edit().putStringSet("selLoras", enc).apply()
     }
 
-    /** UI 高亮用：当前生效的 LoRA 名 */
-    fun currentLoraName(): String? = activeLora()?.name
+    /** 从预取恢复选中列表；老版本只有 `selLora`（单个名字），升级时并进来。 */
+    private fun restoreSelectedLoras() {
+        if (selectedLoras.isNotEmpty()) return
+        val saved = prefs().getStringSet("selLoras", null)
+        if (saved != null) {
+            for (s in saved) {
+                val i = s.lastIndexOf('|')
+                if (i <= 0) continue
+                val name = s.substring(0, i)
+                val w = s.substring(i + 1).toFloatOrNull()
+                if (name.isNotEmpty()) selectedLoras[name] = w
+            }
+        } else {
+            // 老版本：一个选中的文件名 + 一个全局强度框。把那个强度落到这一份上，
+            // 升级前后效果才一致 —— 否则用户原来调好的 0.8 会突然变回 1.0。
+            val legacyScale = prefs()
+                .getString(if (useLora) KEY_LORA_SCALE else KEY_I2I_LORA_SCALE, null)
+                ?.toFloatOrNull()?.coerceIn(0f, 2f)
+            prefs().getString("selLora", null)?.let { selectedLoras[it] = legacyScale }
+        }
+    }
 
-    /** 选中某个 LoRA（持久化选择） */
-    fun selectLora(f: File) {
-        loraFile = f
-        prefs().edit().putString("selLora", f.name).apply()
+    /** 当前**实际生效**的 LoRA 列表（已解算权重、已过滤掉不存在的文件） */
+    fun activeLoras(): List<SdCppEngine.Lora> {
+        if (!useLora) return emptyList()
+        restoreSelectedLoras()
+        val all = listLoras()
+        if (all.isEmpty()) return emptyList()
+        val byName = all.associateBy { it.name }
+        val out = ArrayList<SdCppEngine.Lora>()
+        for ((name, w) in selectedLoras) {
+            val f = byName[name] ?: continue          // 文件被删了 → 静默跳过
+            val scale = (w ?: 1.0f).coerceIn(0f, 2f)
+            // 0 权重等于不挂：sd.cpp 会把整个文件加载一遍再乘 0，白费时间和内存
+            if (scale <= 0f) continue
+            out.add(SdCppEngine.Lora(f.absolutePath, scale))
+        }
+        return out
+    }
+
+    /**
+     * 没选过任何一份时，把目录里第一个当作默认选中。
+     *
+     * 老版本的行为是「不选就用第一个」，直接改成"不选就不挂"会让升级上来的人
+     * 突然发现 LoRA 失效了。在**开关打开**且列表为空时补一个即可。
+     */
+    private fun ensureSomeLoraSelected() {
+        restoreSelectedLoras()
+        if (selectedLoras.isNotEmpty()) return
+        listLoras().firstOrNull()?.let {
+            selectedLoras[it.name] = null
+            persistSelectedLoras()
+        }
+    }
+
+    /** 某个 LoRA 是否选中 */
+    fun isLoraSelected(name: String): Boolean {
+        restoreSelectedLoras()
+        return selectedLoras.containsKey(name)
+    }
+
+    /** 某个 LoRA 的显式权重（null = 跟全局默认） */
+    fun loraWeightOf(name: String): Float? {
+        restoreSelectedLoras()
+        return selectedLoras[name]
+    }
+
+    /** 切换某个 LoRA 的选中状态。返回切换后是否选中。 */
+    fun toggleLora(f: File): Boolean {
+        restoreSelectedLoras()
+        val on = if (selectedLoras.containsKey(f.name)) {
+            selectedLoras.remove(f.name); false
+        } else {
+            selectedLoras[f.name] = null; true
+        }
+        persistSelectedLoras()
         refreshLoraHint()
+        return on
+    }
+
+    /** 给某一份 LoRA 单独设权重（null = 回到 1.0） */
+    fun setLoraWeight(f: File, w: Float?) {
+        restoreSelectedLoras()
+        if (!selectedLoras.containsKey(f.name)) return
+        selectedLoras[f.name] = w?.coerceIn(0f, 2f)
+        persistSelectedLoras()
+        // 只更新文字，**不重建权重行** —— 这里是输入框自己的回调，
+        // 重建会把它换掉，正在输入的字符和光标一起丢
+        updateLoraHintText()
+    }
+
+    /** 选中列表的简短描述，给状态行/提示用 */
+    fun currentLoraName(): String? {
+        val list = activeLoras()
+        return when {
+            list.isEmpty() -> null
+            list.size == 1 -> File(list[0].path).name
+            else -> c.getString(R.string.v_066, (list.size))
+        }
     }
 
     /** 供「模型」页展示的 LoRA 状态 */
     fun loraSummary(): String {
-        val a = activeLora() ?: return c.getString(R.string.s_117)
-        val size = "%.1f".format(a.length() / 1048576.0)
-        return if (useLora) c.getString(R.string.v_026, (a.nameWithoutExtension), (size))
-        else c.getString(R.string.v_027, (a.nameWithoutExtension), (size))
+        restoreSelectedLoras()
+        val all = listLoras()
+        if (all.isEmpty()) return c.getString(R.string.s_117)
+        val byName = all.associateBy { it.name }
+        val picked = selectedLoras.keys.filter { byName.containsKey(it) }
+        if (picked.isEmpty()) return c.getString(R.string.v_067)
+        val total = picked.sumOf { byName[it]?.length() ?: 0L }
+        val size = "%.1f".format(total / 1048576.0)
+        return if (useLora) {
+            if (picked.size == 1) c.getString(R.string.v_026, (File(picked[0]).nameWithoutExtension), (size))
+            else c.getString(R.string.v_068, (picked.size), (size))
+        } else {
+            if (picked.size == 1) c.getString(R.string.v_027, (File(picked[0]).nameWithoutExtension), (size))
+            else c.getString(R.string.v_069, (picked.size), (size))
+        }
     }
 
     fun deleteLora(f: File): Boolean = runCatching {
-        if (loraFile?.absolutePath == f.absolutePath) loraFile = null
+        selectedLoras.remove(f.name)
+        persistSelectedLoras()
         val ok = f.delete()
         refreshLoraHint()
         ok
     }.getOrDefault(false)
 
-    private fun refreshLoraHint() {
+    /**
+     * 按选中的 LoRA 重建权重行：每份一行「名字 + 数值框」。
+     *
+     * 在**选中集合变化**时调用（不是每次输入都调）—— 输入时重建会丢光标。
+     * 所以输入框里的 TextWatcher 只写数据，不回头刷界面。
+     *
+     * 文生图 / 图生图 各一套，都要刷：它们编辑同一份数据，只刷一边的话
+     * 切过去看到的就是过期值。
+     */
+    fun refreshLoraWeights() {
+        rebuildWeightBox(if (::loraWeightBox.isInitialized) loraWeightBox else null)
+        rebuildWeightBox(if (::i2iLoraWeightBox.isInitialized) i2iLoraWeightBox else null)
+    }
+
+    private fun rebuildWeightBox(box: LinearLayout?) {
+        if (box == null) return
+        box.removeAllViews()
+        val picked = listLoras().filter { isLoraSelected(it.name) }
+        if (picked.isEmpty()) return
+        for (f in picked) {
+            val cur = loraWeightOf(f.name) ?: 1.0f
+            val edit = smallNumber("%.2f".format(cur))
+            // 防回环：setText 触发 watcher 又写一遍数据，虽然幂等但会打断输入法组词
+            var writing = false
+            edit.addTextChangedListener(object : android.text.TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+                override fun afterTextChanged(s: android.text.Editable?) {
+                    if (writing) return
+                    val v = s?.toString()?.toFloatOrNull() ?: return
+                    writing = true
+                    setLoraWeight(f, v)
+                    writing = false
+                }
+            })
+            box.addView(paramRow(f.nameWithoutExtension, edit, c.getString(R.string.s_037)))
+        }
+    }
+
+
+    /** 输入框 → flow_shift。留空、非法、<= 0 一律返回 0，表示跟随模型默认。 */
+    private fun readShift(ed: EditText): Float {
+        val v = try { ed.text.toString().trim().toFloatOrNull() } catch (_: Throwable) { null } ?: return 0f
+        return if (v > 0f && v.isFinite()) v else 0f
+    }
+
+    /**
+     * 日志里的 shift 描述。
+     *
+     * 为什么在 Kotlin 侧记而不靠 native 的 LOGI：logcat 与 draw.log 是两条通道，
+     * 诊断报告只收后者。
+     */
+    private fun shiftLog(v: Float): String =
+        if (v > 0f) "  flow_shift=" + "%.3f".format(v) + " (user)"
+        else "  flow_shift=model default"
+
+    /** 日志用：把生效的 LoRA 写成 `name×0.80 + name2×0.50`，空列表写 none */
+    private fun loraLog(list: List<SdCppEngine.Lora>): String =
+        if (list.isEmpty()) "none"
+        else list.joinToString(" + ") {
+            "${File(it.path).nameWithoutExtension}×${"%.2f".format(it.scale)}"
+        }
+
+    /** 只更新提示文字（不改动权重行），给输入框回调这种怕重建的场景用 */
+    private fun updateLoraHintText() {
         try {
-            val a = activeLora()
+            val list = activeLoras()
             loraHint.text = when {
-                a == null -> c.getString(R.string.s_118)
-                useLora -> c.getString(R.string.v_028, (a.nameWithoutExtension))
-                else -> c.getString(R.string.v_029, (a.nameWithoutExtension))
+                listLoras().isEmpty() -> c.getString(R.string.s_118)
+                list.isEmpty() -> c.getString(R.string.v_070)
+                list.size == 1 -> {
+                    val n = File(list[0].path).nameWithoutExtension
+                    if (useLora) c.getString(R.string.v_028, (n))
+                    else c.getString(R.string.v_029, (n))
+                }
+                else -> {
+                    val detail = list.joinToString(" + ") {
+                        "${File(it.path).nameWithoutExtension}×${"%.2f".format(it.scale)}"
+                    }
+                    if (useLora) c.getString(R.string.v_071, (detail))
+                    else c.getString(R.string.v_072, (detail))
+                }
             }
         } catch (_: Throwable) {}
         refreshI2iLoraHint()
+    }
+
+    /**
+     * 选中集合变了之后调这个：提示文字 + 权重行一起刷新。
+     *
+     * 与 [updateLoraHintText] 的区别就是**要不要重建权重行** ——
+     * 输入框自己的回调只能调前者，否则正在输入的那行会被替换掉。
+     */
+    private fun refreshLoraHint() {
+        updateLoraHintText()
+        refreshLoraWeights()
     }
 
     /**
@@ -1642,7 +1889,10 @@ class DrawPage(
         val dest = File(loraDir(), "$LORA_NAME.safetensors")
         val err = downloadToFile("$host/$LORA_HF_PATH", dest, 100L * 1024, onProgress)
         if (err == null) {
-            loraFile = dest
+            // 刚下好的这份直接选中：用户点了下载就是要用它，还要再去列表点一次是多余的
+            restoreSelectedLoras()
+            selectedLoras[dest.name] = null
+            persistSelectedLoras()
             refreshLoraHint()
         }
         return err
@@ -1809,6 +2059,46 @@ class DrawPage(
     }
 
     fun activeSetId(): String? = activeSet?.id
+
+    /**
+     * 处理「孤儿句柄」—— Activity 被系统重建后留下的 native context。
+     *
+     * 背景：`sdHandle` 是**实例字段**，而 native context 的生命周期跟进程走。
+     * Android 会在换语言、改字体、内存吃紧后恢复等情况下销毁重建 Activity，
+     * 这时 `MainActivity.drawPage` 归 null，新 DrawPage 的 `sdHandle` 是 0，
+     * 但 context 还活着，`DrawCore` 里只剩一个**没人能 free 的引用**。
+     * 用户再点「加载绘图模型」就会建第二份 —— 内存翻倍，而旧的那份永远收不回来。
+     *
+     * 两种情况分开处理：
+     *   · 当前选中的模型集和孤儿是同一个 → 直接接回来，界面显示「已加载」，
+     *     用户不用再等几十秒（重建前后 UI 状态都来自 prefs，本来就一致）
+     *   · 不是同一个 → 释放掉，反正接下来要加载别的
+     *
+     * 判断不出来时（modelName 为空）一律释放：宁可让用户重新加载，
+     * 也不能把一个可能不匹配的句柄当自己的用 —— 那样会在出图时崩。
+     *
+     * **只改字段、不碰 View**：调用点在本页 build() 之前，界面还没建出来。
+     * 状态显示由调用方随后刷新。
+     */
+    fun reclaimOrphanedModel() {
+        if (sdHandle != 0L) return
+        val orphan = DrawCore.currentHandle()
+        if (orphan == 0L) return
+
+        val name = DrawCore.modelName
+        val wanted = setOfNotNull(activeSetOrSelected()?.name, mainModel?.name)
+        if (name != null && name in wanted) {
+            sdHandle = orphan
+            activeBackend = DrawCore.backend ?: "CPU"
+            LogBook.w(c, LogBook.DRAW,
+                "=== reattached orphaned context: $name (activity was recreated) ===")
+        } else {
+            DrawCore.release()
+            runCatching { SdCppEngine.nativeFree(orphan) }
+            LogBook.w(c, LogBook.DRAW,
+                "=== released orphaned context: ${name ?: "?"} != ${wanted.joinToString("/")} ===")
+        }
+    }
 
     fun selectSet(s: ModelSet) {
         activeSet = s
@@ -2009,7 +2299,9 @@ class DrawPage(
                 }
             } ?: return@withContext c.getString(R.string.s_106)
             withContext(Dispatchers.Main) {
-                loraFile = dest
+                restoreSelectedLoras()
+                selectedLoras[dest.name] = null
+                persistSelectedLoras()
                 refreshLoraHint()
             }
             null
@@ -2131,7 +2423,10 @@ class DrawPage(
             val f = File(v)
             stage("   slot $k = ${f.name} (${LogBook.mb(f.length())})")
         }
-        activeLora()?.let { stage("0 LoRA: ${it.name} (${it.length() / 1048576} MB)") }
+        activeLoras().forEach {
+            stage("0 LoRA: ${File(it.path).name} ×${"%.2f".format(it.scale)} " +
+                "(${File(it.path).length() / 1048576} MB)")
+        }
         stage("1 device: abi=${android.os.Build.SUPPORTED_ABIS.firstOrNull()} sdk=${android.os.Build.VERSION.SDK_INT} vendor=${android.os.Build.MANUFACTURER} model=${android.os.Build.MODEL}")
         stage("1 memory: maxHeap=${Runtime.getRuntime().maxMemory() / 1048576}MB freeDisk=${root.usableSpace / 1048576}MB")
         // 再加一行**系统可用内存**：maxMemory 只是 Java 堆上限，和 native 能否
@@ -2152,6 +2447,14 @@ class DrawPage(
         return try {
             if (sdHandle != 0L) runCatching { SdCppEngine.nativeFree(sdHandle) }
             sdHandle = 0L
+            // 最后一道保险：正常路径下 reclaimOrphanedModel() 已经把孤儿处理掉了，
+            // 这里兜住「没走到那条路」的情况 —— 比如以后加了别的入口直接调 loadModel。
+            val orphan = DrawCore.currentHandle()
+            if (orphan != 0L) {
+                stage("4a releasing orphaned context before creating a new one")
+                DrawCore.release()
+                runCatching { SdCppEngine.nativeFree(orphan) }
+            }
             // 后端：选了 GPU 且设备有 Vulkan 就用它，否则 CPU。
             // 显式传后端名会关掉 sd.cpp 的 auto_fit，避免「选 CPU 却悄悄跑 GPU」。
             val gpuDev = if (useGpu) SdCppEngine.vulkanDevice() else null
@@ -2426,16 +2729,15 @@ class DrawPage(
         if (h == 0L) throw IllegalStateException(c.getString(R.string.s_163))
         if (mainModel == null) throw IllegalStateException(c.getString(R.string.s_121))
 
-        // LoRA：走结构化参数（sd.cpp 原生接口，不再拼 prompt 里的 lora: 语法）
-        val lora = if (useLora) activeLora() else null
+        // LoRA：走结构化参数（sd.cpp 原生接口，不再拼 prompt 里的 lora: 语法）。
+        // 多份时各自带权重，由 activeLoras() 解算好（含全局默认强度的回退）。
+        val loras = activeLoras()
         // EditText 必须在主线程读，先取出来再进 IO
         val negative = negEdit.text.toString()
 
-        // 采样器/调度器：默认「自动」——勾了 LoRA 就走 LCM（否则 LCM-LoRA 效果大打折扣），否则 Euler a + Discrete
-        val sampler = pickSampler(lora != null)
-        val scheduler = pickScheduler(lora != null)
-        // LoRA 权重：0 = 不挂，1.0 是标准
-        val loraScale = loraScaleEdit.text.toString().toFloatOrNull()?.coerceIn(0f, 2f) ?: 1.0f
+        // 采样器/调度器：默认「自动」——挂了 LoRA 就走 LCM（否则 LCM-LoRA 效果大打折扣），否则 Euler a + Discrete
+        val sampler = pickSampler(loras.isNotEmpty())
+        val scheduler = pickScheduler(loras.isNotEmpty())
 
         // 对话页出图不走界面的 setGenerating，这里手动上报一句：
         // 否则 API 侧不知道界面在出图，会插进来抢同一个 native 句柄
@@ -2455,6 +2757,9 @@ class DrawPage(
             LogBook.w(c, LogBook.DRAW, s)
         }
         runCatching { stageFile.writeText("") }
+        // shift 先读出来：EditText 只能在主线程读，而且下面记的日志和真正传给
+        // native 的必须是同一个值 —— 否则日志说的和做的不一样。
+        val flowShift = readShift(shiftEdit)
         val t0 = System.currentTimeMillis()
         gstage("=== render start ===")
         // prompt 只留前 80 字：够判断"是不是超长/含特殊字符"，又不把用户写的内容整段抄走
@@ -2462,7 +2767,12 @@ class DrawPage(
         gstage("  size=${w}x$hgt steps=$steps cfg=$cfg seed=$useSeed sampler=$sampler sched=$scheduler")
         // flashAttn 必须记：它是唯一一个「我们和上游默认值不同」的开关，
         // 排查兼容性问题时第一个要看的就是它开没开。
-        gstage("  lora=${lora?.name ?: "none"} scale=$loraScale backend=$activeBackend flashAttn=$flashAttn")
+        gstage("  loras=${loraLog(loras)} backend=$activeBackend flashAttn=$flashAttn")
+        // shift 单独记一行，**在 Kotlin 层记而不是靠 native 的 LOGI**：
+        // native 的 LOGI 只进 logcat，而 draw.log 收的是 sd.cpp 自己的缓冲
+        // （SdCppEngine.takeWarnings），两条通道不互通 —— 之前就因此看不见它。
+        // 0 = 跟随模型默认（native 侧保持 INFINITY 不动）。
+        gstage(shiftLog(flowShift))
         // 参考图只在这里算一次：Bitmap → RGB888 是逐像素循环，算两遍纯属浪费。
         // 而且必须记数量 —— sd.cpp 那边「给了参考图」和「没给」在 INFO 层面只差一行
         // EDIT mode，一旦过滤条件没覆盖到就完全看不出来。这里由 App 自己记，
@@ -2496,8 +2806,8 @@ class DrawPage(
                     handle = h,
                     prompt = prompt,
                     negative = negative,
-                    loraPath = lora?.absolutePath,
-                    loraScale = loraScale,
+                    loras = loras,
+                    flowShift = flowShift,
                     width = w,
                     height = hgt,
                     steps = steps,
@@ -2562,9 +2872,6 @@ class DrawPage(
             throw e
         } finally {
             DrawCore.uiBusy = false
-            // 兜底：无论成功、取消还是抛异常，都把 sd.cpp 期间的 WARN/ERROR 落进日志。
-            // 这是定位「LoRA 挂了却不生效」「某个张量被跳过」的唯一入口 ——
-            // 那些消息 sd.cpp 只通过回调发出，App 不注册回调就会整条丢掉。
             // 兜底：无论成功、取消还是抛异常，都把 sd.cpp 期间的 WARN/ERROR 落进日志。
             // 这是定位「LoRA 挂了却不生效」「某个张量被跳过」的唯一入口 ——
             // 那些消息 sd.cpp 只通过回调发出，App 不注册回调就会整条丢掉。
@@ -2735,12 +3042,14 @@ class DrawPage(
         if (mainModel == null) throw IllegalStateException(c.getString(R.string.s_121))
         val src = i2iBitmap ?: throw IllegalStateException(c.getString(R.string.s_214))
 
-        val lora = if (useLora) activeLora() else null
+        val loras = activeLoras()
         val negative = i2iNegEdit.text.toString()
-        val sampler = pickI2iSampler(lora != null)
-        val scheduler = pickI2iScheduler(lora != null)
-        val loraScale = i2iLoraScaleEdit.text.toString().toFloatOrNull()?.coerceIn(0f, 2f) ?: 1.0f
+        val sampler = pickI2iSampler(loras.isNotEmpty())
+        val scheduler = pickI2iScheduler(loras.isNotEmpty())
 
+
+        // 同 t2i：EditText 只在主线程读，先取值再进 IO
+        val flowShift = readShift(i2iShiftEdit)
         val bmp = withContext(Dispatchers.IO) {
             val rgb = SdCppEngine.bitmapToRgb888(src)
             val t0 = System.currentTimeMillis()
@@ -2759,15 +3068,16 @@ class DrawPage(
             gstage("=== img2img render start ===")
             gstage("  prompt=${LogBook.briefPrompt(prompt)}")
             gstage("  size=${w}x$hgt steps=$steps cfg=$cfg strength=$strength seed=$useSeed")
-            gstage("  src=${src.width}x${src.height} lora=${lora?.name ?: "none"} scale=$loraScale")
+            gstage("  src=${src.width}x${src.height} loras=${loraLog(loras)}")
+            gstage(shiftLog(flowShift))
             runCatching { gstage("  " + memLine()) }
             try {
                 SdCppEngine.render(
                     handle = h,
                     prompt = prompt,
                     negative = negative,
-                    loraPath = lora?.absolutePath,
-                    loraScale = loraScale,
+                    loras = loras,
+                    flowShift = flowShift,
                     width = w,
                     height = hgt,
                     steps = steps,
@@ -3125,7 +3435,7 @@ class DrawPage(
         put(KEY_STEPS, stepsEdit)
         put(KEY_CFG, cfgEdit)
         put(KEY_SEED, seedEdit)
-        put(KEY_LORA_SCALE, loraScaleEdit)
+        put(KEY_SHIFT, shiftEdit)
         e.putInt(KEY_SAMPLER, samplerSpinner.selectedItemPosition)
         e.putInt(KEY_SCHEDULER, schedulerSpinner.selectedItemPosition)
         if (::i2iStepsEdit.isInitialized) {
@@ -3134,8 +3444,8 @@ class DrawPage(
             put(KEY_I2I_STEPS, i2iStepsEdit)
             put(KEY_I2I_CFG, i2iCfgEdit)
             put(KEY_I2I_SEED, i2iSeedEdit)
+            put(KEY_I2I_SHIFT, i2iShiftEdit)
             put(KEY_I2I_STRENGTH, i2iStrengthEdit)
-            put(KEY_I2I_LORA_SCALE, i2iLoraScaleEdit)
             e.putInt(KEY_I2I_SAMPLER, i2iSamplerSpinner.selectedItemPosition)
             e.putInt(KEY_I2I_SCHEDULER, i2iSchedulerSpinner.selectedItemPosition)
         }
@@ -3177,14 +3487,14 @@ class DrawPage(
         when (page) {
             "t2i" -> {
                 put("w", widthEdit); put("h", heightEdit); put("steps", stepsEdit)
-                put("cfg", cfgEdit); put("seed", seedEdit); put("loraScale", loraScaleEdit)
+                put("cfg", cfgEdit); put("seed", seedEdit)
                 e.putInt("def_t2i_sampler_$lg", samplerSpinner.selectedItemPosition)
                 e.putInt("def_t2i_scheduler_$lg", schedulerSpinner.selectedItemPosition)
             }
             "i2i" -> {
                 put("strength", i2iStrengthEdit)
                 put("w", i2iWidthEdit); put("h", i2iHeightEdit); put("steps", i2iStepsEdit)
-                put("cfg", i2iCfgEdit); put("seed", i2iSeedEdit); put("loraScale", i2iLoraScaleEdit)
+                put("cfg", i2iCfgEdit); put("seed", i2iSeedEdit)
                 e.putInt("def_i2i_sampler_$lg", i2iSamplerSpinner.selectedItemPosition)
                 e.putInt("def_i2i_scheduler_$lg", i2iSchedulerSpinner.selectedItemPosition)
             }
@@ -3207,7 +3517,6 @@ class DrawPage(
                 stepsEdit.setText(defOf("t2i", "steps", builtinSteps()))
                 cfgEdit.setText(defOf("t2i", "cfg", builtinCfg()))
                 seedEdit.setText(defOf("t2i", "seed", "-1"))
-                loraScaleEdit.setText(defOf("t2i", "loraScale", "1.0"))
                 samplerSpinner.setSelection(defOfInt("t2i", "sampler", 0), false)
                 schedulerSpinner.setSelection(defOfInt("t2i", "scheduler", 0), false)
             }
@@ -3218,7 +3527,6 @@ class DrawPage(
                 i2iStepsEdit.setText(defOf("i2i", "steps", builtinSteps()))
                 i2iCfgEdit.setText(defOf("i2i", "cfg", builtinCfg()))
                 i2iSeedEdit.setText(defOf("i2i", "seed", "-1"))
-                i2iLoraScaleEdit.setText(defOf("i2i", "loraScale", "1.0"))
                 i2iSamplerSpinner.setSelection(defOfInt("i2i", "sampler", 0), false)
                 i2iSchedulerSpinner.setSelection(defOfInt("i2i", "scheduler", 0), false)
             }

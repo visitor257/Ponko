@@ -132,6 +132,10 @@ void convert_tensor(void* src,
     } else if (dst_type == GGML_TYPE_F32) {
         if (src_type == GGML_TYPE_F16) {
             ggml_fp16_to_fp32_row((ggml_fp16_t*)src, (float*)dst, n);
+        } else if (src_type == GGML_TYPE_I32) {
+            for (int i = 0; i < n; i++) {
+                ((float*)dst)[i] = static_cast<float>(((int32_t*)src)[i]);
+            }
         } else {
             auto qtype = ggml_get_type_traits(src_type);
             if (qtype->to_float == nullptr) {
@@ -448,18 +452,19 @@ SDVersion ModelLoader::get_sd_version() const {
         return VERSION_FLUX3;
     }
 
-    // ---- Ponko 补丁：Comfy-Org 的 diffusion_models 也是**裸名**，同样补一条 ----
+    // ---- Ponko patch: Comfy-Org's diffusion_models export uses *bare* names too ----
     //
-    // Comfy-Org/MOSS-Image 的 diffusion_models/moss_image_sft_bf16.safetensors 实测 379 个
-    // 张量，前缀统计 model.diffusion_model.=0、model.=0、transformer.=0，键长这样：
+    // Comfy-Org/MOSS-Image ships diffusion_models/moss_image_sft_bf16.safetensors with 379
+    // tensors and zero prefix hits (model.diffusion_model.=0, model.=0, transformer.=0).
+    // Keys look like:
     //     video_embedder.weight
     //     shared_block_modulation.weight
     //     layers.0.proj.ffn_down.weight
     //     final_linear_video.weight
     //
-    // 这些和 MossImageModel 内部名逐字一致（blocks["video_embedder"]、blocks["layers.N"]、
-    // blocks["final_linear_video"]），**只差 model.diffusion_model. 前缀**。
-    // 所以这里放宽成「带前缀或不带前缀都认」，两种分发方式都能命中。
+    // Those match MossImageModel's internal names verbatim (blocks["video_embedder"],
+    // blocks["layers.N"], blocks["final_linear_video"]); only the model.diffusion_model.
+    // prefix is missing. Accept both shapes so either distribution loads.
     if ((tensor_storage_map.count("model.diffusion_model.video_embedder.weight") ||
          tensor_storage_map.count("video_embedder.weight")) &&
         (tensor_storage_map.count("model.diffusion_model.shared_block_modulation.weight") ||
@@ -482,6 +487,8 @@ SDVersion ModelLoader::get_sd_version() const {
     bool has_output_block_311        = false;
     bool has_output_block_71         = false;
     bool has_attn_1024               = false;
+    bool has_distilled_guidance      = false;
+    bool has_sdxl_add_embedding      = false;
 
     for (auto& [name, tensor_storage] : tensor_storage_map) {
         if (tensor_storage.name.find("model.diffusion_model.double_blocks.") != std::string::npos ||
@@ -500,6 +507,9 @@ SDVersion ModelLoader::get_sd_version() const {
         }
         if (tensor_storage.name.find("model.diffusion_model.nerf_final_layer_conv.") != std::string::npos) {
             return VERSION_CHROMA_RADIANCE;
+        }
+        if (tensor_storage.name.find("distilled_guidance_layer.in_proj.weight") != std::string::npos) {
+            has_distilled_guidance = true;
         }
         if (tensor_storage.name.find("model.diffusion_model.joint_blocks.") != std::string::npos) {
             return VERSION_SD3;
@@ -523,7 +533,7 @@ SDVersion ModelLoader::get_sd_version() const {
         }
         if (tensor_storage.name.find("model.diffusion_model.transformer_blocks.0.img_mod.1.weight") != std::string::npos) {
             auto img_in = tensor_storage_map.find("model.diffusion_model.img_in.weight");
-            if (img_in != tensor_storage_map.end() && img_in->second.ne[0] == 128) {
+            if (img_in != tensor_storage_map.end() && img_in->second.logical_ne0() == 128) {
                 return VERSION_MAGE_FLOW;
             }
             if (tensor_storage_map.find("model.diffusion_model.time_text_embed.addition_t_embedding.weight") != tensor_storage_map.end()) {
@@ -572,27 +582,30 @@ SDVersion ModelLoader::get_sd_version() const {
             tensor_storage_map.find("model.diffusion_model.audio_patchify_proj.weight") == tensor_storage_map.end()) {
             return VERSION_PIXART;
         }
-        // ---- Ponko 补丁：diffusers 直接导出的 PixArt（Σ / α）是**裸名**，没有任何前缀 ----
+        // ---- Ponko patch: diffusers-exported PixArt (Sigma / Alpha) uses *bare* names ----
         //
-        // PixArt-alpha/PixArt-Sigma-XL-2-256x256 的 transformer/diffusion_pytorch_model.safetensors
-        // 里键长这样（实测 603 个张量，前缀计数 transformer.=0、model.diffusion_model.=0）：
+        // PixArt-alpha/PixArt-Sigma-XL-2-256x256 ship transformer/diffusion_pytorch_model
+        // .safetensors with keys like these (603 tensors measured, zero prefix hits for
+        // transformer.= and model.diffusion_model.=):
         //     adaln_single.emb.timestep_embedder.linear_1.bias
         //     adaln_single.linear.weight
         //     pos_embed.proj.weight
         //     transformer_blocks.0.attn1.to_q.weight
         //     caption_projection.linear_1.weight
         //
-        // 下面那两条现有探测都要求 "model.diffusion_model." 前缀，所以裸名文件探测不出来 ——
-        // 会一路落空、被当成 SD1/SDXL 之类的 UNet，加载时报张量缺失。
-        // 这就是「PixArt 放进去 never generated anything or fails to loads」的根本原因。
+        // Both probes above require the "model.diffusion_model." prefix, so a bare-name file
+        // is not detected at all: it falls through and gets loaded as an SD1/SDXL-style UNet,
+        // then fails on missing tensors. That is the real reason "PixArt never generated
+        // anything or fails to load".
         //
-        // 裸名 + 只有 PixArt 才有的组合来确认：pos_embed.proj（会转成 x_embedder.proj）
-        // 加 adaln_single.linear（会转成 t_block.1）。audio_patchify_proj 的排除条件
-        // 沿用上面那条——LTX-AV 也带 adaln_single，但它走带前缀的名字，这里再确认一次防止误判。
+        // Confirm with a combination only PixArt has: pos_embed.proj (becomes
+        // x_embedder.proj) plus adaln_single.linear (becomes t_block.1). The
+        // audio_patchify_proj exclusion is carried over because LTX-AV also has
+        // adaln_single; check both spellings so a prefixed LTX-AV cannot slip through.
         //
-        // 判断方式用「含该子串、且不含 model.diffusion_model. 前缀」，这样两种导出都能覆盖：
-        // 纯裸名（adaln_single...）和带一层 transformer. 包装（transformer.adaln_single...）。
-        // 带 model.diffusion_model. 的 ComfyUI 原生格式已经在上面两条里处理过了，这里排除掉。
+        // Match on "contains the substring, without the model.diffusion_model. prefix" so
+        // both the fully bare shape and one wrapped in "transformer." are covered. The
+        // prefixed ComfyUI-native shape is already handled by the two probes above.
         if (tensor_storage.name.find("adaln_single.emb.timestep_embedder.linear_1.bias") != std::string::npos &&
             tensor_storage.name.find("model.diffusion_model.") == std::string::npos &&
             (tensor_storage_map.count("pos_embed.proj.weight") || tensor_storage_map.count("transformer.pos_embed.proj.weight")) &&
@@ -611,7 +624,18 @@ SDVersion ModelLoader::get_sd_version() const {
             return VERSION_LTXAV;
         }
         if (tensor_storage.name.find("model.diffusion_model.video_patch_proj.weight") != std::string::npos &&
-            tensor_storage_map.find("model.diffusion_model.audio_patch_proj.weight") != tensor_storage_map.end()) {
+            tensor_storage_map.find("model.diffusion_model.condition_proj.weight") != tensor_storage_map.end()) {
+            if (tensor_storage_map.count("model.diffusion_model.audio_patch_proj.weight") == 0) {
+                return VERSION_MINIMAX_H3_IMAGE;
+            }
+            // The connector is shared with H3 video; the single-frame VAE identifies P-H3.
+            auto decoder = tensor_storage_map.find("first_stage_model.decoder.proj_out.weight");
+            if (decoder == tensor_storage_map.end()) {
+                decoder = tensor_storage_map.find("vae.decoder.proj_out.weight");
+            }
+            if (decoder != tensor_storage_map.end() && decoder->second.ne[1] == 768) {
+                return VERSION_P_H3_IMAGE;
+            }
             return VERSION_MINIMAX_H3;
         }
         if (name == "model.diffusion_model.y_embedder.layer_pool.weight" &&
@@ -636,6 +660,7 @@ SDVersion ModelLoader::get_sd_version() const {
             has_img_emb = true;
         }
         if (tensor_storage.name.find("model.diffusion_model.input_blocks.") != std::string::npos ||
+            tensor_storage.name.find("model.diffusion_model.down_blocks.") != std::string::npos ||
             tensor_storage.name.find("unet.down_blocks.") != std::string::npos) {
             is_unet = true;
             if (has_multiple_encoders) {
@@ -650,22 +675,31 @@ SDVersion ModelLoader::get_sd_version() const {
                 is_xl = true;
             }
         }
+        // A standalone SDXL UNet (--diffusion-model) identifies the family by its added
+        // text/time embedding; its clip_g never carries a checkpoint prefix.
+        if (tensor_storage.name.find("model.diffusion_model.add_embedding.") != std::string::npos ||
+            tensor_storage.name.find("model.diffusion_model.label_emb.0.0.") != std::string::npos) {
+            has_sdxl_add_embedding = true;
+        }
         if (tensor_storage.name.find("model.diffusion_model.input_blocks.8.0.time_mixer.mix_factor") != std::string::npos) {
             return VERSION_SVD;
         }
         if (tensor_storage.name.find("model.diffusion_model.middle_block.1.") != std::string::npos ||
+            tensor_storage.name.find("model.diffusion_model.mid_block.resnets.1.") != std::string::npos ||
             tensor_storage.name.find("unet.mid_block.resnets.1.") != std::string::npos) {
             has_middle_block_1 = true;
         }
         if (tensor_storage.name.find("model.diffusion_model.output_blocks.3.1.transformer_blocks.1") != std::string::npos ||
+            tensor_storage.name.find("model.diffusion_model.up_blocks.1.attentions.0.transformer_blocks.1") != std::string::npos ||
             tensor_storage.name.find("unet.up_blocks.1.attentions.0.transformer_blocks.1") != std::string::npos) {
             has_output_block_311 = true;
         }
         if (tensor_storage.name.find("model.diffusion_model.output_blocks.7.1") != std::string::npos ||
+            tensor_storage.name.find("model.diffusion_model.up_blocks.2.attentions.1") != std::string::npos ||
             tensor_storage.name.find("unet.up_blocks.2.attentions.1") != std::string::npos) {
             has_output_block_71 = true;
             if (tensor_storage.name.find("model.diffusion_model.output_blocks.7.1.transformer_blocks.0.attn1.to_k.weight") != std::string::npos) {
-                if (tensor_storage.ne[0] == 1024)
+                if (tensor_storage.logical_ne0() == 1024)
                     has_attn_1024 = true;
             }
         }
@@ -679,6 +713,7 @@ SDVersion ModelLoader::get_sd_version() const {
             // break;
         }
         if (tensor_storage.name == "model.diffusion_model.input_blocks.0.0.weight" ||
+            tensor_storage.name == "model.diffusion_model.conv_in.weight" ||
             tensor_storage.name == "model.diffusion_model.img_in.weight" ||
             tensor_storage.name == "unet.conv_in.weight") {
             input_block_weight = tensor_storage;
@@ -702,6 +737,9 @@ SDVersion ModelLoader::get_sd_version() const {
     }
     bool is_inpaint = input_block_weight.ne[2] == 9;
     bool is_ip2p    = input_block_weight.ne[2] == 8;
+    if (is_unet && has_sdxl_add_embedding) {
+        is_xl = true;
+    }
     if (is_xl) {
         if (is_inpaint) {
             return VERSION_SDXL_INPAINT;
@@ -719,16 +757,19 @@ SDVersion ModelLoader::get_sd_version() const {
     }
 
     if (is_flux && !is_flux2) {
-        if (context_ebedding_weight.ne[0] == 3584) {
+        if (has_distilled_guidance) {
+            return VERSION_CHROMA;
+        }
+        if (context_ebedding_weight.logical_ne0() == 3584) {
             return VERSION_LONGCAT;
         } else {
-            if (input_block_weight.ne[0] == 384) {
+            if (input_block_weight.logical_ne0() == 384) {
                 return VERSION_FLUX_FILL;
             }
-            if (input_block_weight.ne[0] == 128) {
+            if (input_block_weight.logical_ne0() == 128) {
                 return VERSION_FLUX_CONTROLS;
             }
-            if (input_block_weight.ne[0] == 196) {
+            if (input_block_weight.logical_ne0() == 196) {
                 return VERSION_FLEX_2;
             }
             return VERSION_FLUX;
@@ -1649,7 +1690,8 @@ bool ModelLoader::load_tensors(std::map<std::string, ggml_tensor*>& tensors,
 
 bool ModelLoader::tensor_should_be_converted(const TensorStorage& tensor_storage, ggml_type type) const {
     const std::string& name = tensor_storage.name;
-    if (tensor_storage.is_int8_tensorwise) {
+    if (tensor_storage.is_int8_tensorwise || tensor_storage.w4_convrot_kind != 0 ||
+        ends_with(name, ".weight_codebook") || ends_with(name, ".weight_s_channel") || ends_with(name, ".weight_s_rel")) {
         return false;
     }
     if (type != GGML_TYPE_COUNT) {

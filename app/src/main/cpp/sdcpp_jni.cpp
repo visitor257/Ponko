@@ -420,10 +420,13 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeCreate(
     return reinterpret_cast<jlong>(h);
 }
 
-// nativeGenerate(handle, prompt, negative, loraPath, loraScale,
+// nativeGenerate(handle, prompt, negative, loraPaths[], loraScales[],
 //                width, height, steps, cfg, seed, sampleMethod, scheduler,
 //                cb, pcb, initData, initWidth, initHeight, strength,
 //                refData, refWidths, refHeights) -> IntArray(ARGB)
+//
+// loraPaths / loraScales 等长，每个元素是一个 LoRA 及其权重；传 null 即不挂 LoRA。
+// 空路径的元素会被跳过（权重跟着一起跳过，不会错位到别的条目上）。
 //
 // initData 非空 → 图生图（img2img）：RGB888 交错字节（每像素 3 字节，行优先，左上原点），
 // sd.cpp 会把它按 request 尺寸缩放后编码进 latent，并按 strength(<1) 决定起始噪声步数。
@@ -439,19 +442,63 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeGenerate(
         JNIEnv* env, jobject /*thiz*/,
         jlong handle,
         jstring prompt, jstring negative,
-        jstring loraPath, jfloat loraScale,
+        jobjectArray loraPaths, jfloatArray loraScales,
         jint width, jint height, jint steps, jfloat cfg, jlong seed,
         jint sampleMethod, jint scheduler,
         jobject cb, jobject pcb,
         jbyteArray initData, jint initWidth, jint initHeight, jfloat strength,
+        jfloat flowShift,
         jobjectArray refData, jintArray refWidths, jintArray refHeights) {
     SdHandle* h = reinterpret_cast<SdHandle*>(handle);
     if (h == nullptr || h->ctx == nullptr) return nullptr;
 
-    std::string sPrompt, sNeg, sLora;
+    std::string sPrompt, sNeg;
     jstr(env, prompt, sPrompt);
     jstr(env, negative, sNeg);
-    jstr(env, loraPath, sLora);
+
+    // ---- LoRA：数组而非单个 ----
+    //
+    // sd.cpp 的接口本来就是数组（sd_lora_t* + lora_count，每项带自己的 multiplier），
+    // 之前这里写死成「一个 path + 一个 scale + lora_count = 1」。多 LoRA 只是把
+    // JNI 这层放开，底层不需要改。
+    //
+    // ⚠ paths 与 scales 必须等长；长度对不上就一个都不用 —— 宁可不出效果，
+    //   也不要拿错位的权重去调模型。
+    //
+    // 分两步是必须的：sd_lora_t.path 是 const char*，指向 loraPathStore 里的字符串。
+    // 先把这个 vector 完整建好（它会重新分配，指针会失效），再取 c_str() 建 loraSpec。
+    std::vector<std::string> loraPathStore;
+    std::vector<sd_lora_t>   loraSpec;
+    if (loraPaths != nullptr) {
+        const jsize n = env->GetArrayLength(loraPaths);
+        if (loraScales == nullptr || env->GetArrayLength(loraScales) != n) {
+            LOGE("lora arrays mismatch: %d paths", static_cast<int>(n));
+        } else {
+            std::vector<jfloat> sc(static_cast<size_t>(n));
+            env->GetFloatArrayRegion(loraScales, 0, n, sc.data());
+            // 路径与权重**成对**收集：跳过空路径时 sc 的下标不会跟着走，
+            // 分开收集会让权重错位到别的 LoRA 上
+            std::vector<float> weights;
+            loraPathStore.reserve(static_cast<size_t>(n));
+            weights.reserve(static_cast<size_t>(n));
+            for (jsize i = 0; i < n; ++i) {
+                jstring js = static_cast<jstring>(env->GetObjectArrayElement(loraPaths, i));
+                std::string p;
+                jstr(env, js, p);
+                env->DeleteLocalRef(js);
+                if (p.empty()) continue;
+                loraPathStore.push_back(std::move(p));
+                weights.push_back(sc[static_cast<size_t>(i)]);
+            }
+            loraSpec.resize(loraPathStore.size());
+            for (size_t i = 0; i < loraPathStore.size(); ++i) {
+                loraSpec[i].is_high_noise = false;
+                loraSpec[i].multiplier    = weights[i];
+                loraSpec[i].path          = loraPathStore[i].c_str();
+            }
+            LOGI("loras: %d", static_cast<int>(loraSpec.size()));
+        }
+    }
 
     // 进度回调（全局注册，data 指向本 handle）
     if (cb != nullptr) {
@@ -487,9 +534,6 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeGenerate(
     h->sampling_started = false;
     g_active = h;
     sd_set_progress_callback(progressTrampoline, h);
-
-    sd_lora_t lora{};
-    bool useLora = !sLora.empty();
 
     sd_img_gen_params_t g;
     sd_img_gen_params_init(&g);
@@ -560,17 +604,26 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeGenerate(
             LOGI("ref images: %d", static_cast<int>(refImages.size()));
         }
     }
-    if (useLora) {
-        lora.is_high_noise = false;
-        lora.multiplier    = loraScale;
-        lora.path          = sLora.c_str();
-        g.loras            = &lora;
-        g.lora_count       = 1;
+    if (!loraSpec.empty()) {
+        g.loras      = loraSpec.data();
+        g.lora_count = static_cast<uint32_t>(loraSpec.size());
     }
     g.sample_params.sample_steps  = steps;
     g.sample_params.guidance.txt_cfg = cfg;
     g.sample_params.sample_method = static_cast<enum sample_method_t>(sampleMethod);
     g.sample_params.scheduler     = static_cast<enum scheduler_t>(scheduler);
+    // flow_shift：flow-matching 模型（SD3、Flux、Krea2、MOSS、Fibo、Ideogram 等）的
+    // 时间步偏移。sd.cpp 给每个模型族都配了默认值，传 INFINITY 就跟随那个默认
+    // （sd_img_gen_params_init 里本来就是 INFINITY）。
+    //
+    // 约定：<= 0 或非有限值 → 跟随模型默认。用 0 表示「不指定」而不是让用户填
+    // "inf"，因为界面上那个词没法输入、也不该让用户知道。
+    if (std::isfinite(flowShift) && flowShift > 0.0f) {
+        g.sample_params.flow_shift = flowShift;
+        LOGI("flow_shift: %.3f (user)", flowShift);
+    } else {
+        LOGI("flow_shift: model default");
+    }
 
     char* gdump = sd_img_gen_params_to_str(&g);
     LOGI("generate_image: %s", gdump ? gdump : "(null)");

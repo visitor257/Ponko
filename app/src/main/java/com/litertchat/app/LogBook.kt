@@ -115,6 +115,58 @@ object LogBook {
             ""
         }
 
+    /**
+     * 读给**诊断报告**用的版本：先折叠成片的重复行，再取尾部 [max] 字符。
+     *
+     * 为什么必须折叠：[read] 是整份文件，而报告只留尾部（见 buildDiagnosticReport）。
+     * sd.cpp 在 LoRA 加载/应用时会把每个对不上的张量各打一行 `unused lora tensor` ——
+     * 几百行、5 毫秒内打完、每行上百字符。这些行**全在尾部**，于是 6000 字符的窗口
+     * 被它们占满，真正的 `render start` / 参数 / 步进 / 结果全被挤出去。
+     *
+     * 症状极具误导性：用户明明出图了，报告里却只有 LoRA 警告 —— 看着像"根本没生成"。
+     * 我自己就这样误判过一次。
+     *
+     * 折叠按**连续相同签名**判断，不是按关键字：签名由行内容去掉时间戳、
+     * `|...|` 里的张量名、`--- file:line` 尾巴得到。所以
+     *   `unused lora tensor |lora.x| --- lora.hpp:1030`
+     *   `unused lora tensor |lora.y| --- lora.hpp:1030`
+     * 是同一个签名，折叠；而 `step 3/20` 和 `step 4/20` 不是，保留。
+     * 这样不用维护一张噪音关键字表，也不怕 sd.cpp 换个说法。
+     */
+    fun readForReport(c: Context, module: String, max: Int = 6000): String {
+        val raw = read(c, module)
+        if (raw.isBlank()) return ""
+        val lines = raw.trimEnd('\n').split('\n')
+        val out = ArrayList<String>(lines.size)
+        var i = 0
+        while (i < lines.size) {
+            val sig = signature(lines[i])
+            var j = i + 1
+            while (j < lines.size && signature(lines[j]) == sig) j++
+            val n = j - i
+            if (n >= 3) {
+                out.add(lines[i])
+                out.add("  … 同类 $n 条，另 ${n - 1} 条已折叠 …")
+            } else {
+                for (k in i until j) out.add(lines[k])
+            }
+            i = j
+        }
+        val joined = out.joinToString("\n")
+        return if (joined.length <= max) joined else joined.takeLast(max)
+    }
+
+    private val TS_PREFIX = Regex("^\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3}\\s+")
+    private val PIPE_BODY = Regex("\\|[^|]*\\|")
+    private val SRC_TAIL = Regex("\\s*---\\s*\\S+:\\d+\\s*$")
+
+    /** 行的"身份"：去掉时间戳、变化的数据、源码位置，只留稳定的骨架 */
+    private fun signature(line: String): String =
+        line.replace(TS_PREFIX, "")
+            .replace(PIPE_BODY, "|…|")
+            .replace(SRC_TAIL, "")
+            .trim()
+
     fun clear(c: Context, module: String) {
         try { file(c, module).delete() } catch (_: Throwable) {}
     }

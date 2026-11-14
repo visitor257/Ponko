@@ -1,4 +1,5 @@
 @echo off
+rem Ponko (c) 2026 visitor257 - MIT License - github.com/visitor257/Ponko
 REM Ponko web icon stamper - MUST stay pure ASCII.
 REM
 REM Why no Chinese in this file: cmd.exe parses .bat with the OEM codepage (GBK),

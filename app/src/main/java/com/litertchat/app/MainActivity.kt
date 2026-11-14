@@ -738,6 +738,16 @@ class MainActivity : Activity() {
     private lateinit var appBarBack: TextView
 
     /**
+     * 顶栏右上角的 🔍（Ponko-EX 页专用，展开插件列表的搜索框）。
+     *
+     * 它和对话页的 ⚙/＋ **叠在同一个槽**里 —— 那三个按钮在插件页是 INVISIBLE
+     * （占位不可见），所以直接放进来即可，标题不会因为切页而挪位置。
+     *
+     * 只在「Ponko-EX 页 + 正在看卡片列表」时出现：插件自己的界面里没有卡片可搜。
+     */
+    private lateinit var appBarPluginSearch: ImageView
+
+    /**
      * 顶栏标题下面那行「状态点 + 状态文字」。
      *
      * 它显示的是**宿主自己的引擎/模型状态**，所以在 Ponko-EX 页要藏掉 ——
@@ -888,6 +898,18 @@ class MainActivity : Activity() {
      */
     private fun applyThemeInPlace() {
         pal = PonkoTheme.resolve(this, themeMode)
+        // 必须重新 setTheme：否则 **Activity 主题停在启动时那一次**，
+        // 而 setTheme 只在 onCreate 里调过一次。
+        //
+        // 这一条是「插件关于弹窗深底深字」的根因：
+        //   启动时系统深色 → Activity 主题 = AppTheme_Dark
+        //   在 App 里切成亮色 → pal 变亮（pal.text 变深色），但 Activity 主题仍是深色
+        //   → AlertDialog 的背景取自（陈旧的）深色主题，文字取自（新的）浅色 pal
+        //   → 深底 + 深字，全糊在一起
+        //
+        // 已 inflate 的 View 不会被这行改到（它们的属性早已解析完），
+        // 但**之后**创建的 Dialog 会按新主题解析，这才是要修的部分。
+        setTheme(if (pal.isDark) R.style.AppTheme_Dark else R.style.AppTheme)
         // 记住当前页：buildUi() 末尾会把界面切回来
         chatPrefs().edit().putInt("restoreTab", currentTab).apply()
         buildUi()
@@ -1013,10 +1035,13 @@ class MainActivity : Activity() {
             }
         }
         LogBook.MODULES.forEach { (mod, label) ->
-            val body = LogBook.read(this, mod)
+            // 先折叠成片的重复行再截尾：sd.cpp 的 LoRA 警告几百行、5 毫秒内打完，
+            // 全落在尾部，会把 6000 字符的窗口占满，真正的生成记录被挤出去。
+            // 详见 LogBook.readForReport 的注释。
+            val body = LogBook.readForReport(this, mod)
             sb.append("\n-- ").append(label).append(" (").append(mod).append(".log) --\n")
-            // 每份只留尾部：完整日志可能有几百 KB，粘进 issue 也没人看
-            sb.append(if (body.isBlank()) "(无记录)\n" else body.takeLast(6000))
+            // 完整日志可能有几百 KB，粘进 issue 也没人看，所以只留尾部
+            sb.append(if (body.isBlank()) "(无记录)\n" else body)
         }
         return sb.toString()
     }
@@ -1213,6 +1238,12 @@ class MainActivity : Activity() {
         val dpg = drawPage ?: DrawPage(this, scope, pal)
         dpg.setPalette(pal)
         drawPage = dpg
+        // Activity 被系统重建过的话，native context 会变成没人管的孤儿：
+        // 上一轮的 DrawPage 实例已经回收，新实例手上没有句柄。
+        // 要么接回来（模型集没变），要么释放掉（变了）—— 不能不管，
+        // 否则再点「加载」就是第二份，内存翻倍且旧的收不回来。
+        // 必须放在 buildModelsPage() 之前：「模型」页要读这里的状态。
+        runCatching { dpg.reclaimOrphanedModel() }
         tabModels = buildModelsPage()
         tabSettings = buildSettingsPage()
         // Ponko-EX（插件页）：2.0.0 起是底部菜单第 4 项。
@@ -1232,6 +1263,11 @@ class MainActivity : Activity() {
                 if (::appBarBack.isInitialized) {
                     appBarBack.visibility =
                         if (open && currentTab == 3) View.VISIBLE else View.GONE
+                }
+                // 🔍 与 ◀ 互斥：进插件界面（open=true）就没有卡片可搜了
+                if (::appBarPluginSearch.isInitialized) {
+                    val showSearch = !open && currentTab == 3
+                    appBarPluginSearch.visibility = if (showSearch) View.VISIBLE else View.GONE
                 }
             }
         }
@@ -1445,9 +1481,49 @@ class MainActivity : Activity() {
         r1.addView(titleBox, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         // 「⚙」在「＋」左边：＋ 是开新会话，⚙ 是调这一页的设置（系统提示词）
         appBarChatSettings = iconButton("⚙") { openChatSettingsSheet() }
-        r1.addView(appBarChatSettings, wrapWrap().apply { rightMargin = dp(6) })
         appBarPlus = iconButton("＋") { newSession() }
-        r1.addView(appBarPlus, wrapWrap())
+
+        // 对话页的 ⚙＋ 和 Ponko-EX 页的 🔍 **叠在同一个槽**里互相替换。
+        //
+        // 为什么不并排：三个按钮并排会把标题挤窄，「Ponko」/「Ponko-EX」切页时
+        // 还得跟着挪位置 —— 和上面 ☰/◀ 共用槽是同一个理由。
+        //
+        // 两种按钮的宽度不同（⚙ 24 + ＋ 24 + 间距 6 ≠ 🔍 18 + 内边距），
+        // 所以 FrameLayout 里那个 chatActions **保持 INVISIBLE 而不是 GONE**：
+        // INVISIBLE 照样参与测量，槽宽就始终等于 ⚙＋ 的宽度，标题不会动。
+        val chatActions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(appBarChatSettings, wrapWrap().apply { rightMargin = dp(6) })
+            addView(appBarPlus, wrapWrap())
+        }
+        appBarPluginSearch = ImageView(this).apply {
+            setImageDrawable(magnifier(dp(17), Color.WHITE))
+            background = rounded(Color.parseColor("#33FFFFFF"), 12)
+            // 上下不对称是因为背景块要跟 ⚙/＋ 一样高：那两个是 20sp 文字 + 上下 4dp
+            setPadding(dp(11), dp(8), dp(11), dp(8))
+            isClickable = true
+            // 纯图标，屏幕阅读器读不出任何东西
+            contentDescription = getString(R.string.s_481)
+            visibility = View.GONE
+            setOnClickListener {
+                pluginPage?.toggleSearch()
+                syncPluginSearchIcon()
+            }
+        }
+        val actionSlot = FrameLayout(this).apply {
+            addView(chatActions,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT
+                ).apply { gravity = Gravity.END or Gravity.CENTER_VERTICAL })
+            addView(appBarPluginSearch,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT
+                ).apply { gravity = Gravity.END or Gravity.CENTER_VERTICAL })
+        }
+        r1.addView(actionSlot, wrapWrap())
         bar.addView(r1, matchWrap())
         return bar
     }
@@ -2595,6 +2671,14 @@ class MainActivity : Activity() {
         if (::appBarChatSettings.isInitialized) {
             appBarChatSettings.visibility = if (isChat) View.VISIBLE else View.INVISIBLE
         }
+        // 🔍 只在「Ponko-EX 页 + 正在看卡片列表」时出现。
+        // 插件自己的界面里没有卡片可搜，放个搜索按钮只会让人点空。
+        // 和 ◀ 一样要在这里再判一次：切走再切回来时插件界面可能仍开着。
+        if (::appBarPluginSearch.isInitialized) {
+            val showSearch = index == 3 && pluginPage?.isShowingPluginUi() != true
+            appBarPluginSearch.visibility = if (showSearch) View.VISIBLE else View.GONE
+            syncPluginSearchIcon()
+        }
         // 切页时把底部抽屉收掉：它还开着的话遮罩会挡住新页面
         if (sysSheetOpen) closeChatSettingsSheet()
         for (i in navIcons.indices) {
@@ -3679,6 +3763,58 @@ class MainActivity : Activity() {
             setOnClickListener { onClick() }
         }
 
+    /**
+     * 白线放大镜，直接画出来。
+     *
+     * 为什么不用 🔍（U+1F50D）：那是彩色 emoji，在这排 ☰ / ＋ / ⚙ 的单色字形里
+     * 会跳出来一块红蓝。而字体里没有单色的放大镜字形可用（⌕ 基本没字体实现），
+     * 所以画一个：一个圆 + 一条斜柄，线宽和字重接近。
+     */
+    private fun magnifier(size: Int, tint: Int): android.graphics.drawable.Drawable =
+        object : android.graphics.drawable.Drawable() {
+            private val stroke = size * 0.11f
+            override fun draw(c: android.graphics.Canvas) {
+                // 参数叫 tint 不叫 color：Paint 自己有 `color` 属性，
+                // 在 apply 块里写 `this.color = color` 会解析成
+                // Paint.color 赋给自己，等于什么都没设。
+                val p = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                    style = android.graphics.Paint.Style.STROKE
+                    strokeWidth = stroke
+                    strokeCap = android.graphics.Paint.Cap.ROUND
+                    color = tint
+                }
+                val r = (size - stroke) / 2f * 0.68f
+                val cx = size / 2f - (size / 2f - r) * 0.22f
+                val cy = size / 2f - (size / 2f - r) * 0.22f
+                c.drawCircle(cx, cy, r, p)
+                // 柄：从左下 45° 往外，长度约圆半径的 0.8
+                val a = (Math.PI / 4).toFloat()
+                val from = cx + r * Math.cos(a.toDouble()).toFloat()
+                val fy = cy + r * Math.sin(a.toDouble()).toFloat()
+                c.drawLine(from, fy, from + r * 0.85f, fy + r * 0.85f, p)
+            }
+            override fun setAlpha(alpha: Int) {}
+            override fun setColorFilter(colorFilter: android.graphics.ColorFilter?) {}
+            @Deprecated("Deprecated in Java")
+            override fun getOpacity(): Int = android.graphics.PixelFormat.TRANSLUCENT
+            override fun getIntrinsicWidth(): Int = size
+            override fun getIntrinsicHeight(): Int = size
+        }
+
+    /**
+     * 让 🔍 的底色反映"搜索已展开"。
+     *
+     * 展开时给一个不透明底，收起时是半透明 —— 否则点了之后除了下面多一行
+     * 输入框，按钮本身毫无反馈，用户不知道自己是"打开了"还是"点了个没用的按钮"。
+     */
+    private fun syncPluginSearchIcon() {
+        if (!::appBarPluginSearch.isInitialized) return
+        val open = pluginPage?.isSearchOpen() == true
+        appBarPluginSearch.background = rounded(
+            Color.parseColor(if (open) "#59FFFFFF" else "#33FFFFFF"), 12
+        )
+    }
+
     // ================= status =================
 
     private fun setStatus(text: String, color: Int) {
@@ -4394,14 +4530,60 @@ class MainActivity : Activity() {
         }
         box.visibility = View.VISIBLE
         box.addView(listHeader(getString(R.string.s_092)))
-        val active = dpg?.currentLoraName()
         for (f in all) {
+            val on = dpg?.isLoraSelected(f.name) == true
             box.addView(
-                selectableChip(f, f.name == active, onLongClick = { confirmDeleteLora(f) }) {
-                    dpg?.selectLora(f); refreshLoraUi()
+                loraChip(f, on, dpg?.loraWeightOf(f.name)) {
+                    dpg?.toggleLora(f)
+                    refreshLoraUi()
                 },
                 matchWrap().apply { topMargin = dp(4) }
             )
+        }
+        // 多选时的提示：只在这一行解释「能选多个」，装一个插件似的人不用看到
+        val picked = all.count { dpg?.isLoraSelected(it.name) == true }
+        if (picked >= 2) {
+            box.addView(hintText(getString(R.string.v_073, (picked))), matchWrap().apply { topMargin = dp(6) })
+        }
+        // 选中集合变了 → 绘图参数卡里那几行权重框要跟着增删
+        dpg?.refreshLoraWeights()
+    }
+
+    /**
+     * LoRA 条目。可多选；选中时把**这一份自己的权重**显示出来。
+     *
+     * 长按只留「删除」：权重现在到绘图参数卡里按份编辑（那里每个 LoRA 一行输入框），
+     * 再在长按菜单里放一个"设置权重"就有两个入口，改完还不一定同步。
+     */
+    private fun loraChip(
+        f: File,
+        selected: Boolean,
+        weight: Float?,
+        onClick: () -> Unit,
+    ) = TextView(this).apply {
+        text = buildString {
+            append(if (selected) "✓ " else "▶ ")
+            append(f.name)
+            if (selected) append("　×" + "%.2f".format(weight ?: 1.0f))
+            append("　" + fmtSize(f.length()))
+        }
+        textSize = 12.5f
+        setTextColor(if (selected) C_PRIMARY else C_TEXT)
+        setPadding(dp(12), dp(8), dp(12), dp(8))
+        background = rounded(if (selected) C_PRIMARY_SOFT else C_CHIP_BG, 10,
+            strokeDp = if (selected) 1 else 0, strokeColor = C_PRIMARY)
+        isClickable = true
+        setOnClickListener { onClick() }
+        isLongClickable = true
+        setOnLongClickListener {
+            AlertDialog.Builder(this@MainActivity)
+                .setTitle(f.name)
+                .setItems(arrayOf(getString(R.string.s_050))) { _, _ ->
+                    confirmDeleteLora(f)
+                }
+                .setNegativeButton(getString(R.string.s_066), null)
+                .show()
+            true
         }
     }
 
@@ -4451,7 +4633,8 @@ class MainActivity : Activity() {
     /** 删除单个 LoRA：target 为空时删当前选中的那个（不再一次清空全部）。 */
     private fun confirmDeleteLora(target: File? = null) {
         val dpg = drawPage ?: return
-        val f = target ?: dpg.activeLora()
+        // 多选之后没有"当前那一份"了，target 为空时退化成"删第一份选中的"
+        val f = target ?: dpg.listLoras().firstOrNull { dpg.isLoraSelected(it.name) }
         if (f == null) {
             toast(getString(R.string.s_135))
             return
