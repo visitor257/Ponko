@@ -2379,6 +2379,24 @@ class MainActivity : Activity() {
         // 不受这项控制。不写清的话，用户会以为是 bug（这条 2026-10-13 由用户要求加回）。
         settingsBody.addView(hintText(getString(R.string.s_446)), matchWrap().apply { topMargin = dp(4) })
 
+        // ---- 剩余时间单位（绘图进度行尾部「剩余约 …」）----
+        // 放在设置页而不是绘图页：它是一条纯显示偏好，不属于单张图的参数，
+        // 也和图形无关 —— 改它不该像主题那样重建视图、更不该打断出图。
+        // 默认秒：短任务（几百步以内的快模型）秒更精确；长任务用户自己切分钟。
+        settingsBody.addView(subTitle(getString(R.string.s_634)), matchWrap().apply { topMargin = dp(14) })
+        val etaUnitNow = chatPrefs().getInt(DrawPage.KEY_ETA_UNIT, DrawPage.ETA_UNIT_SECONDS)
+        val etaSwitch = SegmentedSwitch(
+            this,
+            arrayOf(getString(R.string.s_635), getString(R.string.s_636)),
+            pal,
+            if (etaUnitNow == DrawPage.ETA_UNIT_MINUTES) 1 else 0,
+        )
+        etaSwitch.onChanged = { i ->
+            val unit = if (i == 1) DrawPage.ETA_UNIT_MINUTES else DrawPage.ETA_UNIT_SECONDS
+            chatPrefs().edit().putInt(DrawPage.KEY_ETA_UNIT, unit).apply()
+        }
+        settingsBody.addView(etaSwitch, matchWrap().apply { topMargin = dp(12) })
+
         // ---- 关于（可折叠，默认展开；展开状态同样记在偏好里）----
         val aboutBody = collapsibleSection(
             card, getString(R.string.s_048), expanded = true, prefKey = KEY_UI_ABOUT_OPEN)

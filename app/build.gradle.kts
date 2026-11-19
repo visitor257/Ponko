@@ -25,8 +25,12 @@ android {
         // 正式版 2.1.3 用到 32；beta 从 33 起，避免万一装过同名包时同号被拒。
         // 33 = sd.cpp 升级后的第一版；34 = 补上 H3-Image 家族（versionName 仍是 beta.0，
         // 版本号只给用户看，装过的包要能被覆盖就得靠这个往上走）。
-        versionCode = 34
-        versionName = "2.2.0-beta.0"
+        // 35 = 采样缓存（EasyCache / UCache）、CLIP skip —— 只出过内部测试包，**没有对外发布**
+        // 36 = 进度行剩余时间（含单位设置）、加载失败带上 sd.cpp 原因、
+        //      修掉「加载进度被当成采样步」和「预览帧擦掉耗时/ETA」
+        //      → 这一版才是**对外发布的 beta.1**：35 既然没发出去，就不占用 beta.2 这个号
+        versionCode = 36
+        versionName = "2.2.0-beta.1"
         ndk {
             // LiteRT-LM 与 llama.cpp 的 native 都只跑 arm64 真机，去掉 x86_64 可减小 APK
             abiFilters += "arm64-v8a"

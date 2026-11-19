@@ -297,6 +297,18 @@ class DrawPage(
         private const val KEY_SCHEDULER = "drawScheduler"
         private const val KEY_SHIFT = "drawShift"
         private const val KEY_I2I_SHIFT = "drawI2iShift"
+        private const val KEY_CACHE = "drawCache"
+
+        /** 进度行「剩余」那段用秒还是分钟（设置页可改，默认秒）。
+         *  纯显示偏好，不影响估算 —— 两种单位算的是同一个数。 */
+        const val KEY_ETA_UNIT = "etaUnit"
+        const val ETA_UNIT_SECONDS = 0
+        const val ETA_UNIT_MINUTES = 1
+        private const val KEY_CACHE_TH = "drawCacheTh"
+        private const val KEY_CLIP_SKIP = "drawClipSkip"
+        private const val KEY_I2I_CACHE = "i2iCache"
+        private const val KEY_I2I_CACHE_TH = "i2iCacheTh"
+        private const val KEY_I2I_CLIP_SKIP = "i2iClipSkip"
 
         // 图生图参数（与文生图分开存）
         private const val KEY_I2I_W = "i2iW"
@@ -419,6 +431,10 @@ class DrawPage(
                 scheduler = pickScheduler(loras.isNotEmpty()),
                 loras = loras,
                 flowShift = readShift(shiftEdit),
+                // 走到这里 stepsEdit 已初始化，而它在本卡片里排在这三个控件之后创建
+                cacheMode = cacheOf(cacheSpinner),
+                cacheThreshold = readCacheThreshold(cacheThEdit),
+                clipSkip = readClipSkip(clipSkipEdit),
             )
         )
     }
@@ -452,6 +468,14 @@ class DrawPage(
     /** flow-matching 模型的时间步偏移；留空/0 = 跟随模型默认 */
     private lateinit var shiftEdit: EditText
     private lateinit var i2iShiftEdit: EditText
+
+    // 采样缓存（第 0 项 = 关闭）/ 阈值 / CLIP skip；图生图页各一套
+    private lateinit var cacheSpinner: android.widget.Spinner
+    private lateinit var cacheThEdit: EditText
+    private lateinit var clipSkipEdit: EditText
+    private lateinit var i2iCacheSpinner: android.widget.Spinner
+    private lateinit var i2iCacheThEdit: EditText
+    private lateinit var i2iClipSkipEdit: EditText
 
     /** 每份选中 LoRA 各自的权重输入框容器（行数 = 选中份数）；图生图页各一套 */
     private lateinit var loraWeightBox: LinearLayout
@@ -686,6 +710,25 @@ class DrawPage(
         shiftEdit = smallNumber(loadParam(KEY_SHIFT, defOf("t2i", "shift", "")))
         bindParam(shiftEdit, KEY_SHIFT)
         paramCard.addView(paramRow(c.getString(R.string.v_080), shiftEdit, c.getString(R.string.v_081)))
+
+        // 采样缓存 / 阈值 / CLIP skip
+        //
+        // 这三项放在 shift 后面：都属「引擎高级参数」，平时不动，出问题或想提速时才看。
+        // 缓存的下拉第 0 项是「关闭」而不是「自动」—— 它跟 sampler/scheduler 不同，
+        // 没有「按 LoRA 状态猜」的合理默认值，猜错了等于白开。
+        cacheSpinner = choiceSpinner(
+            listOf(c.getString(R.string.s_779)) + SdCppEngine.CacheMode.entries.map { it.label }
+        )
+        cacheSpinner.setSelection(
+            loadInt(KEY_CACHE, 0).coerceIn(0, cacheSpinner.adapter.count - 1), false)
+        cacheSpinner.onItemSelectedListener = persistSpinner(KEY_CACHE)
+        paramCard.addView(paramRow(c.getString(R.string.v_082), cacheSpinner, c.getString(R.string.v_083)))
+        cacheThEdit = smallNumber(loadParam(KEY_CACHE_TH, ""))
+        bindParam(cacheThEdit, KEY_CACHE_TH)
+        paramCard.addView(paramRow(c.getString(R.string.v_084), cacheThEdit, c.getString(R.string.v_085)))
+        clipSkipEdit = smallNumber(loadParam(KEY_CLIP_SKIP, ""))
+        bindParam(clipSkipEdit, KEY_CLIP_SKIP)
+        paramCard.addView(paramRow(c.getString(R.string.v_086), clipSkipEdit, c.getString(R.string.v_087)))
 
         stepsEdit = smallNumber(loadParam(KEY_STEPS, defOf("t2i", "steps", builtinSteps())))
         cfgEdit = smallNumber(loadParam(KEY_CFG, defOf("t2i", "cfg", builtinCfg())))
@@ -1050,6 +1093,21 @@ class DrawPage(
         i2iShiftEdit = smallNumber(loadParam(KEY_I2I_SHIFT, defOf("i2i", "shift", "")))
         bindParam(i2iShiftEdit, KEY_I2I_SHIFT)
         paramCard.addView(paramRow(c.getString(R.string.v_080), i2iShiftEdit, c.getString(R.string.v_081)))
+
+        // 采样缓存 / 阈值 / CLIP skip（与文生图分开存，理由同其他图生图参数）
+        i2iCacheSpinner = choiceSpinner(
+            listOf(c.getString(R.string.s_779)) + SdCppEngine.CacheMode.entries.map { it.label }
+        )
+        i2iCacheSpinner.setSelection(
+            loadInt(KEY_I2I_CACHE, 0).coerceIn(0, i2iCacheSpinner.adapter.count - 1), false)
+        i2iCacheSpinner.onItemSelectedListener = persistSpinner(KEY_I2I_CACHE)
+        paramCard.addView(paramRow(c.getString(R.string.v_082), i2iCacheSpinner, c.getString(R.string.v_083)))
+        i2iCacheThEdit = smallNumber(loadParam(KEY_I2I_CACHE_TH, ""))
+        bindParam(i2iCacheThEdit, KEY_I2I_CACHE_TH)
+        paramCard.addView(paramRow(c.getString(R.string.v_084), i2iCacheThEdit, c.getString(R.string.v_085)))
+        i2iClipSkipEdit = smallNumber(loadParam(KEY_I2I_CLIP_SKIP, ""))
+        bindParam(i2iClipSkipEdit, KEY_I2I_CLIP_SKIP)
+        paramCard.addView(paramRow(c.getString(R.string.v_086), i2iClipSkipEdit, c.getString(R.string.v_087)))
 
         i2iStepsEdit = smallNumber(loadParam(KEY_I2I_STEPS, defOf("i2i", "steps", builtinSteps())))
         i2iCfgEdit = smallNumber(loadParam(KEY_I2I_CFG, defOf("i2i", "cfg", builtinCfg())))
@@ -1873,6 +1931,39 @@ class DrawPage(
         if (v > 0f) "  flow_shift=" + "%.3f".format(v) + " (user)"
         else "  flow_shift=model default"
 
+    /** 下拉框 → 采样缓存模式。第 0 项是「关闭」。 */
+    private fun cacheOf(spinner: android.widget.Spinner): SdCppEngine.CacheMode? {
+        val idx = spinner.selectedItemPosition
+        if (idx <= 0) return null
+        return SdCppEngine.CacheMode.entries.getOrNull(idx - 1)
+    }
+
+    /** 输入框 → 缓存阈值；留空/非法/<= 0 返回 0，表示让 sd.cpp 按模式补默认值 */
+    private fun readCacheThreshold(ed: EditText): Float {
+        val v = try { ed.text.toString().trim().toFloatOrNull() } catch (_: Throwable) { null } ?: return 0f
+        return if (v > 0f && v.isFinite()) v else 0f
+    }
+
+    /**
+     * 输入框 → CLIP skip。0 = 模型默认。
+     *
+     * 上限夹到 12：sd.cpp 是按 `n_layer - N` 定位停止层的，N 超过层数会让它退回到
+     * 「一层都不跑」，那种情况下出的图毫无意义，不如在这里就挡住。
+     */
+    private fun readClipSkip(ed: EditText): Int {
+        val v = try { ed.text.toString().trim().toIntOrNull() } catch (_: Throwable) { null } ?: return 0
+        if (v <= 0) return 0
+        return v.coerceAtMost(12)
+    }
+
+    /** 日志里的缓存/CLIP skip 描述（同 shift：native 的 LOGI 进不了 draw.log） */
+    private fun cacheLog(mode: SdCppEngine.CacheMode?, th: Float, clipSkip: Int): String {
+        val m = if (mode == null) "off" else "${mode.label}(th=" +
+            (if (th > 0f) "%.3f".format(th) else "default") + ")"
+        val cs = if (clipSkip > 0) clipSkip.toString() else "default"
+        return "  cache=$m clip_skip=$cs"
+    }
+
     /** 日志用：把生效的 LoRA 写成 `name×0.80 + name2×0.50`，空列表写 none */
     private fun loraLog(list: List<SdCppEngine.Lora>): String =
         if (list.isEmpty()) "none"
@@ -2525,10 +2616,20 @@ class DrawPage(
                 // sd.cpp 拒绝加载时**已经打过具体原因**（缺张量/形状不符/后端失败），
                 // 但那些行只在 g_warn_lines 里躺着，不在这里取一次就永远看不到。
                 // 以前加载失败只剩一句"返回 null"，等于没有信息 —— PixArt 那次就是这样。
-                flushSdWarnings(::stage)
+                //
+                // 现在**同时**写日志和拼进给用户看的那句话：只写日志的话，
+                // issue 里只会得到「app says they are not supported」这种没法复现的报告
+                // （2026-11-17 issue #5 就是这句），真正的原因躺在 draw.log 里没人看。
+                val why = runCatching { SdCppEngine.takeWarnings() }.getOrDefault("")
+                if (why.isNotBlank()) {
+                    stage("  -- sd.cpp warnings --")
+                    why.lineSequence().filter { it.isNotBlank() }.forEach { stage("  $it") }
+                }
                 LogBook.w(c, LogBook.DRAW, "=== load failed: sd.cpp returned null (process alive) ===")
                 runCatching { stageFile.delete() }
-                return c.getString(R.string.s_059)
+                val reason = sdFailureReason(why)
+                return if (reason == null) c.getString(R.string.s_059)
+                else c.getString(R.string.v_090, c.getString(R.string.s_059), reason)
             }
             sdHandle = h
             mainModel = set.mainFile()
@@ -2662,11 +2763,12 @@ class DrawPage(
         progressText.text = c.getString(R.string.s_126)
         curStep = 0
         totalStep = 0
+        stepStartAt = 0L
         progressBar.progress = 0
         progressBar.visibility = View.VISIBLE
         startPreview()
         onStatus?.invoke(c.getString(R.string.s_165), false)
-        val startedAt = System.currentTimeMillis()
+        val startedAt = System.currentTimeMillis().also { runStartedAt = it }
         scope.launch {
             // 逐秒报“已耗时”，否则底层不报中间进度，看着像卡死
             val ticker = launch {
@@ -2675,10 +2777,9 @@ class DrawPage(
                     val sec = (System.currentTimeMillis() - startedAt) / 1000
                     progressText.post {
                         val phase = if (sec < 8) c.getString(R.string.s_127) else c.getString(R.string.s_129)
-                        val stepInfo = if (totalStep > 0) c.getString(R.string.v_049, (curStep), (totalStep)) else ""
-                        progressText.text = c.getString(R.string.v_050, (phase), (stepInfo), (sec))
+                        progressText.text = progressLine(phase)
                         if (::procStepText.isInitialized) {
-                            procStepText.text = c.getString(R.string.v_050, (phase), (stepInfo), (sec))
+                            procStepText.text = progressLine(phase)
                         }
                         if (totalStep > 0) {
                             progressBar.progress = (curStep * 100 / totalStep).coerceIn(0, 100)
@@ -2693,6 +2794,8 @@ class DrawPage(
                 val img = generateImage(
                     prompt,
                     onProgress = { cur, total ->
+                        // 第一次拿到 >0 的步号就是采样起点
+                        if (cur > 0 && stepStartAt == 0L) stepStartAt = System.currentTimeMillis()
                         curStep = cur
                         totalStep = total
                     },
@@ -2735,8 +2838,54 @@ class DrawPage(
         }
     }
 
+    /** 剩余时间估算：只统计采样段。
+     *
+     *  拿「首步到现在」的平均每步耗时外推剩余步数。一分钟以上按分钟报 ——
+     *  手机上出图动辄几十分钟，逐秒跳的数字反而看不出还要等多久。
+     *  拿不到步数（还在加载 / 文本编码）时返回空串，界面上不显示这一段。 */
+    /** 进度行的唯一生成点。
+     *
+     *  ticker（每秒）和预览帧回调（每步）都会改同一行文字，两边必须拼出完全一致的
+     *  内容 —— 谁写得简陋，谁就把对方的内容抹掉。之前预览帧那条只拼到「第 X/Y 步」，
+     *  于是 H3 这种每步都出预览的模型，秒数和剩余时间会被一遍遍擦掉，看着像时有时无。
+     *
+     *  @param phase 阶段文案（s_127 加载 / s_129 去噪）
+     *  @param stepOverride 预览帧自带的步号（比 curStep 新一帧）；-1 表示用 curStep
+     */
+    private fun progressLine(phase: String, stepOverride: Int = -1): String {
+        val sec = if (runStartedAt > 0L) (System.currentTimeMillis() - runStartedAt) / 1000 else 0L
+        val cur = if (stepOverride >= 0) stepOverride else curStep
+        val total = totalStep
+        val stepInfo = if (total > 0) c.getString(R.string.v_049, cur, total) else ""
+        return c.getString(R.string.v_050, phase, stepInfo, sec) + etaLeftText(cur)
+    }
+
+    private fun etaLeftText(stepOverride: Int = -1): String {
+        val cur = if (stepOverride >= 0) stepOverride else curStep
+        val total = totalStep
+        if (cur <= 0 || total <= cur || stepStartAt <= 0L) return ""
+        val perStepMs = (System.currentTimeMillis() - stepStartAt).toDouble() / cur
+        val leftSec = (perStepMs * (total - cur) / 1000.0).toLong().coerceAtLeast(1L)
+        // 单位取自「设置 → 剩余时间」：秒 / 分钟，默认秒。
+        // 以前是「不足一分钟报秒、超过报分钟」自动切，用户 2026-11-19 要求改成手动定档：
+        // 每步耗时本来就有抖动，剩余量在 60 秒附近来回穿越时，那一行会在
+        // 「1 分钟」和「58 秒」之间反复跳 —— 读的人分不清该按哪个单位理解。
+        // 定档之后只会是同一个单位，数字单向减小。
+        val asMinutes = prefs().getInt(KEY_ETA_UNIT, ETA_UNIT_SECONDS) == ETA_UNIT_MINUTES
+        if (!asMinutes) return c.getString(R.string.v_089, leftSec.toInt())
+        // 分钟档四舍五入，但至少 1 —— 剩 20 秒时显示「剩余约 0 分钟」等于没说
+        return c.getString(R.string.v_088, ((leftSec + 30) / 60).toInt().coerceAtLeast(1))
+    }
+
     private var curStep = 0
     private var totalStep = 0
+    /** 采样真正开始的时刻（毫秒）。ETA 只对采样段计时 ——
+     *  首步之前的文本编码 / 权重换入和步数无关，算进去会把剩余时间抬高一截。 */
+    private var stepStartAt = 0L
+    /** 整轮生成的开始时刻（毫秒）。ticker 和预览帧回调都要用它算「已 N 秒」——
+     *  以前这个时刻是 generateImage 里的局部变量，预览帧那条路径拿不到，
+     *  于是它只能写一句不含耗时的文本，把 ticker 刚写好的整行覆盖掉。 */
+    private var runStartedAt = 0L
 
     /** 用户是否已请求中断当前生成（用于把“取消”与“真失败”区分开）。 */
     @Volatile private var cancelRequested = false
@@ -2795,6 +2944,10 @@ class DrawPage(
         // shift 先读出来：EditText 只能在主线程读，而且下面记的日志和真正传给
         // native 的必须是同一个值 —— 否则日志说的和做的不一样。
         val flowShift = readShift(shiftEdit)
+        // 缓存/CLIP skip 同理：EditText 和 Spinner 只能在主线程读，而且记的必须就是传下去的那个值
+        val cacheMode = cacheOf(cacheSpinner)
+        val cacheTh = readCacheThreshold(cacheThEdit)
+        val clipSkip = readClipSkip(clipSkipEdit)
         val t0 = System.currentTimeMillis()
         gstage("=== render start ===")
         // prompt 只留前 80 字：够判断"是不是超长/含特殊字符"，又不把用户写的内容整段抄走
@@ -2808,6 +2961,7 @@ class DrawPage(
         // （SdCppEngine.takeWarnings），两条通道不互通 —— 之前就因此看不见它。
         // 0 = 跟随模型默认（native 侧保持 INFINITY 不动）。
         gstage(shiftLog(flowShift))
+        gstage(cacheLog(cacheMode, cacheTh, clipSkip))
         // 参考图只在这里算一次：Bitmap → RGB888 是逐像素循环，算两遍纯属浪费。
         // 而且必须记数量 —— sd.cpp 那边「给了参考图」和「没给」在 INFO 层面只差一行
         // EDIT mode，一旦过滤条件没覆盖到就完全看不出来。这里由 App 自己记，
@@ -2843,6 +2997,9 @@ class DrawPage(
                     negative = negative,
                     loras = loras,
                     flowShift = flowShift,
+                    cacheMode = cacheMode,
+                    cacheThreshold = cacheTh,
+                    clipSkip = clipSkip,
                     width = w,
                     height = hgt,
                     steps = steps,
@@ -2855,7 +3012,13 @@ class DrawPage(
                         //   · sampling=false 是权重加载（sd.cpp 报的是张量计数），
                         //     **不能**拿去驱动进度条 —— 否则进度条会在 178/178 → 18/18 之间乱跳
                         //   · sampling=true 才是真正的采样步
-                        if (sampling) {
+                        // native 的 sampling 标志不可靠：它靠「报告的 steps == 请求步数」
+                        // 锁存，而模型加载时某个小组件可能恰好报出同样的张量数
+                        // （H3-Image 的编码器里就有一个报了 6）。一旦误锁存，后面几百个
+                        // 张量的加载全被当成采样步 —— 界面停在「第 528/528 步」满格不动，
+                        // ETA 也因为 total == cur 永远出不来。
+                        // 总步数对不上用户设的步数，就一定不是采样。
+                        if (sampling && total == steps) {
                             if (!sawSampling) {
                                 sawSampling = true
                                 runCatching { gstage("  weights materialized, sampling begins") }
@@ -2927,6 +3090,21 @@ class DrawPage(
         w.lineSequence().filter { it.isNotBlank() }.forEach { sink("  $it") }
     }
 
+    /** 从 sd.cpp 的一堆日志里挑一句最能说明问题的话。
+     *
+     *  优先挑含 error / failed / not found / missing / unsupported 的那行 ——
+     *  加载失败时最有用的是「哪个张量没找到、哪个文件形状不对」，而不是最后的收尾行。
+     *  一条都挑不出来就退回最后一行（总比不给强），日志为空则返回 null。 */
+    private fun sdFailureReason(warn: String): String? {
+        val lines = warn.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
+        if (lines.isEmpty()) return null
+        return lines.lastOrNull {
+            it.contains("error", true) || it.contains("failed", true) ||
+                it.contains("not found", true) || it.contains("missing", true) ||
+                it.contains("unsupported", true)
+        } ?: lines.last()
+    }
+
     /** 采样器选择：索引 0 = 自动；其余按 SdCppEngine.Sampler 顺序 */
     private fun pickSampler(hasLora: Boolean): SdCppEngine.Sampler {
         val idx = samplerSpinner.selectedItemPosition
@@ -2984,11 +3162,12 @@ class DrawPage(
         i2iProgressText.text = c.getString(R.string.s_126)
         curStep = 0
         totalStep = 0
+        stepStartAt = 0L
         i2iProgressBar.progress = 0
         i2iProgressBar.visibility = View.VISIBLE
         startPreview()
         onStatus?.invoke(c.getString(R.string.s_165), false)
-        val startedAt = System.currentTimeMillis()
+        val startedAt = System.currentTimeMillis().also { runStartedAt = it }
         scope.launch {
             val ticker = launch {
                 while (true) {
@@ -2996,10 +3175,9 @@ class DrawPage(
                     val sec = (System.currentTimeMillis() - startedAt) / 1000
                     i2iProgressText.post {
                         val phase = if (sec < 8) c.getString(R.string.s_127) else c.getString(R.string.s_129)
-                        val stepInfo = if (totalStep > 0) c.getString(R.string.v_049, (curStep), (totalStep)) else ""
-                        i2iProgressText.text = c.getString(R.string.v_050, (phase), (stepInfo), (sec))
+                        i2iProgressText.text = progressLine(phase)
                         if (::procStepText.isInitialized) {
-                            procStepText.text = c.getString(R.string.v_050, (phase), (stepInfo), (sec))
+                            procStepText.text = progressLine(phase)
                         }
                         if (totalStep > 0) {
                             i2iProgressBar.progress = (curStep * 100 / totalStep).coerceIn(0, 100)
@@ -3014,6 +3192,8 @@ class DrawPage(
                 val img = generateImageI2i(
                     prompt,
                     onProgress = { cur, total ->
+                        // 第一次拿到 >0 的步号就是采样起点
+                        if (cur > 0 && stepStartAt == 0L) stepStartAt = System.currentTimeMillis()
                         curStep = cur
                         totalStep = total
                     },
@@ -3085,6 +3265,9 @@ class DrawPage(
 
         // 同 t2i：EditText 只在主线程读，先取值再进 IO
         val flowShift = readShift(i2iShiftEdit)
+        val i2iCacheMode = cacheOf(i2iCacheSpinner)
+        val i2iCacheTh = readCacheThreshold(i2iCacheThEdit)
+        val i2iClipSkip = readClipSkip(i2iClipSkipEdit)
         val bmp = withContext(Dispatchers.IO) {
             val rgb = SdCppEngine.bitmapToRgb888(src)
             val t0 = System.currentTimeMillis()
@@ -3105,6 +3288,7 @@ class DrawPage(
             gstage("  size=${w}x$hgt steps=$steps cfg=$cfg strength=$strength seed=$useSeed")
             gstage("  src=${src.width}x${src.height} loras=${loraLog(loras)}")
             gstage(shiftLog(flowShift))
+            gstage(cacheLog(i2iCacheMode, i2iCacheTh, i2iClipSkip))
             runCatching { gstage("  " + memLine()) }
             try {
                 SdCppEngine.render(
@@ -3113,6 +3297,9 @@ class DrawPage(
                     negative = negative,
                     loras = loras,
                     flowShift = flowShift,
+                    cacheMode = i2iCacheMode,
+                    cacheThreshold = i2iCacheTh,
+                    clipSkip = i2iClipSkip,
                     width = w,
                     height = hgt,
                     steps = steps,
@@ -3122,7 +3309,13 @@ class DrawPage(
                     scheduler = scheduler,
                     cb = { cur, total, sampling ->
                         // 同文生图：权重加载进度不能拿来驱动进度条 / 不能标成采样步
-                        if (sampling) {
+                        // native 的 sampling 标志不可靠：它靠「报告的 steps == 请求步数」
+                        // 锁存，而模型加载时某个小组件可能恰好报出同样的张量数
+                        // （H3-Image 的编码器里就有一个报了 6）。一旦误锁存，后面几百个
+                        // 张量的加载全被当成采样步 —— 界面停在「第 528/528 步」满格不动，
+                        // ETA 也因为 total == cur 永远出不来。
+                        // 总步数对不上用户设的步数，就一定不是采样。
+                        if (sampling && total == steps) {
                             if (!sawSampling) {
                                 sawSampling = true
                                 runCatching { gstage("  weights materialized, sampling begins") }
@@ -3370,7 +3563,7 @@ class DrawPage(
             val total = totalStep
             if (total > 0) {
                 procProgressBar.progress = (step * 100 / total).coerceIn(0, 100)
-                procStepText.text = c.getString(R.string.s_129) + c.getString(R.string.v_049, (step), (total))
+                procStepText.text = progressLine(c.getString(R.string.s_129), step)
             }
             previewBusy = false
         }
@@ -3471,8 +3664,11 @@ class DrawPage(
         put(KEY_CFG, cfgEdit)
         put(KEY_SEED, seedEdit)
         put(KEY_SHIFT, shiftEdit)
+        put(KEY_CACHE_TH, cacheThEdit)
+        put(KEY_CLIP_SKIP, clipSkipEdit)
         e.putInt(KEY_SAMPLER, samplerSpinner.selectedItemPosition)
         e.putInt(KEY_SCHEDULER, schedulerSpinner.selectedItemPosition)
+        e.putInt(KEY_CACHE, cacheSpinner.selectedItemPosition)
         if (::i2iStepsEdit.isInitialized) {
             put(KEY_I2I_W, i2iWidthEdit)
             put(KEY_I2I_H, i2iHeightEdit)
@@ -3480,9 +3676,12 @@ class DrawPage(
             put(KEY_I2I_CFG, i2iCfgEdit)
             put(KEY_I2I_SEED, i2iSeedEdit)
             put(KEY_I2I_SHIFT, i2iShiftEdit)
+            put(KEY_I2I_CACHE_TH, i2iCacheThEdit)
+            put(KEY_I2I_CLIP_SKIP, i2iClipSkipEdit)
             put(KEY_I2I_STRENGTH, i2iStrengthEdit)
             e.putInt(KEY_I2I_SAMPLER, i2iSamplerSpinner.selectedItemPosition)
             e.putInt(KEY_I2I_SCHEDULER, i2iSchedulerSpinner.selectedItemPosition)
+            e.putInt(KEY_I2I_CACHE, i2iCacheSpinner.selectedItemPosition)
         }
         if (::taggerChanSpinner.isInitialized) {
             e.putInt(KEY_TAG_CHAN, taggerChanSpinner.selectedItemPosition)

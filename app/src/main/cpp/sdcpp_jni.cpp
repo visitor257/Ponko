@@ -134,6 +134,11 @@ void sd_log_trampoline(enum sd_log_level_t level, const char* text, void* /*data
             "preset",
             "reference image",
             "edit mode",
+            // 采样缓存的三行结论（"EasyCache skipped 7/20 steps" /
+            // "completed without skipping steps" / "requested but not supported
+            // for this model type"）是**唯一**能判断缓存到底有没有生效的证据：
+            // 光看耗时猜不准，warmup 8 步 + 6 步采样时它本来就不跳。
+            "cache",
         };
         for (const char* needle : kKeepSubstrings) {
             if (lower.find(needle) != std::string::npos) {
@@ -429,7 +434,8 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeCreate(
 // nativeGenerate(handle, prompt, negative, loraPaths[], loraScales[],
 //                width, height, steps, cfg, seed, sampleMethod, scheduler,
 //                cb, pcb, initData, initWidth, initHeight, strength,
-//                refData, refWidths, refHeights) -> IntArray(ARGB)
+//                refData, refWidths, refHeights,
+//                cacheMode, cacheThreshold, clipSkip) -> IntArray(ARGB)
 //
 // loraPaths / loraScales 等长，每个元素是一个 LoRA 及其权重；传 null 即不挂 LoRA。
 // 空路径的元素会被跳过（权重跟着一起跳过，不会错位到别的条目上）。
@@ -443,6 +449,11 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeCreate(
 //   ref_images 是「作为独立 token 交给 DiT」，可以多张，强度由模型自带的
 //   ref_image_preset 决定（Krea2 → krea2_ostris_edit，即 timestep 0 的 style reference）。
 // 两者可以同时给，但正常情况下只需其一。
+//
+// cacheMode / cacheThreshold（采样缓存，见 sd_cache_mode_t）：mode 0 = 关闭，
+//   1 = EasyCache（DiT），2 = UCache（UNet）。threshold <= 0 或非有限 → 交给 sd.cpp
+//   按模式补默认值（EasyCache 0.2 / UCache 1.0），不是「关掉缓存」。
+// clipSkip（CLIP 层截断）：<= 0 → -1 模型默认。只对 SD1.5 / SD2 / SDXL 生效。
 extern "C" JNIEXPORT jintArray JNICALL
 Java_com_litertchat_app_draw_SdCppEngine_nativeGenerate(
         JNIEnv* env, jobject /*thiz*/,
@@ -454,7 +465,8 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeGenerate(
         jobject cb, jobject pcb,
         jbyteArray initData, jint initWidth, jint initHeight, jfloat strength,
         jfloat flowShift,
-        jobjectArray refData, jintArray refWidths, jintArray refHeights) {
+        jobjectArray refData, jintArray refWidths, jintArray refHeights,
+        jint cacheMode, jfloat cacheThreshold, jint clipSkip) {
     SdHandle* h = reinterpret_cast<SdHandle*>(handle);
     if (h == nullptr || h->ctx == nullptr) return nullptr;
 
@@ -550,7 +562,11 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeGenerate(
     g.seed            = seed;
     g.batch_count     = 1;
     g.strength        = 1.0f;
-    g.clip_skip       = -1;
+    // CLIP skip：value=N 表示文本编码器只走到第 n_layer-N 层就停（对齐 A1111 的
+    // "CLIP skip N"：1 = 最后一层，2 = 倒数第二层）。**只对 CLIP-only 编码器有意义**
+    // —— T5 / LLM 编码器的 resolve_clip_skip() 一律返回 0，传了也没有消费者。
+    // <= 0 保持 -1 = 模型默认（SD1 取 1，SD2/SDXL 取 2）。
+    g.clip_skip       = (clipSkip > 0) ? clipSkip : -1;
 
     // 图生图：拿到 RGB888 原始字节，指针在 generate_image 期间必须保持有效。
     // 生成结束（含失败）后统一在下方 ReleaseByteArrayElements 释放。
@@ -629,6 +645,26 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeGenerate(
         LOGI("flow_shift: %.3f (user)", flowShift);
     } else {
         LOGI("flow_shift: model default");
+    }
+
+    // ---- 采样缓存（EasyCache / UCache）----
+    //
+    // 这两者在 sd.cpp 里是**互斥的两套实现**，按模型结构分工，选错了只会退化成不缓存：
+    //   EasyCache 要求 sd_version_is_dit()（SD3 / Flux / Qwen / Krea2 / MOSS / H3 …）
+    //   UCache    要求 sd_version_is_unet()（SD1.5 / SD2 / SDXL）
+    // 引擎自己会 LOG_WARN 一句再忽略，所以这里不按架构预判，照传。
+    //
+    // 阈值：sd_cache_params_init 给的是 INFINITY，看着像「永不复用」，但 sd.cpp 在
+    // get_cache_reuse_threshold() 里会把 INFINITY 按模式补成 0.2 / 1.0 —— 所以
+    // 「只开模式、不给阈值」本身就是可用的默认档，不必强填。
+    if (cacheMode > 0) {
+        g.cache.mode = static_cast<enum sd_cache_mode_t>(cacheMode);
+        if (std::isfinite(cacheThreshold) && cacheThreshold > 0.0f) {
+            g.cache.reuse_threshold = cacheThreshold;
+        }
+        LOGI("cache: mode=%d threshold=%.3f", cacheMode, g.cache.reuse_threshold);
+    } else {
+        LOGI("cache: disabled");
     }
 
     char* gdump = sd_img_gen_params_to_str(&g);
