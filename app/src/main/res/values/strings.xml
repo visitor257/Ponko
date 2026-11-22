@@ -756,4 +756,21 @@ Try a different word, or tap Clear above.</string>
     <!-- flow shift -->
     <string name="v_080">Shift</string>
     <string name="v_081">Timestep shift for flow models (SD3 / Flux / Krea2 / MOSS / Fibo / Ideogram). Leave empty to use the model default</string>
+    <!-- MiniMax-H3-Image (2.2.0) -->
+    <string name="s_777">MiniMax-H3-Image / P-H3-Image (needs Qwen3-VL + Sol-H3 VAE)</string>
+    <string name="s_778">Text connector (only for the Qwen3-VL-4B encoder)</string>
+    <!-- sampling cache / clip skip (2.2.0) -->
+    <string name="s_779">Off</string>
+    <string name="v_082">Cache</string>
+    <string name="v_083">Reuses whole steps instead of computing them. EasyCache is for DiT models (SD3 / Flux / Qwen / Krea2 / MOSS / H3), UCache is for SD1.5 / SD2 / SDXL — the wrong one is ignored with a log warning rather than crashing</string>
+    <string name="v_084">Cache threshold</string>
+    <string name="v_085">Higher = skips more steps = faster but softer. Leave empty for the mode default (EasyCache 0.2 / UCache 1.0)</string>
+    <string name="v_086">CLIP skip</string>
+    <string name="v_087">Only affects SD1.5 / SD2 / SDXL (T5 and LLM encoders have no such concept). 1 = last layer, 2 = the one before. Leave empty for the model default</string>
+    <string name="v_088"> · ~%1$d min left</string>
+    <string name="v_089"> · ~%1$d s left</string>
+    <string name="v_090">%1$s\n\nsd.cpp: %2$s</string>
+    <string name="s_634">Remaining time</string>
+    <string name="s_635">Seconds</string>
+    <string name="s_636">Minutes</string>
 </resources>

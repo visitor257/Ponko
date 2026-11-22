@@ -2379,6 +2379,24 @@ class MainActivity : Activity() {
         // 不受这项控制。不写清的话，用户会以为是 bug（这条 2026-10-13 由用户要求加回）。
         settingsBody.addView(hintText(getString(R.string.s_446)), matchWrap().apply { topMargin = dp(4) })
 
+        // ---- 剩余时间单位（绘图进度行尾部「剩余约 …」）----
+        // 放在设置页而不是绘图页：它是一条纯显示偏好，不属于单张图的参数，
+        // 也和图形无关 —— 改它不该像主题那样重建视图、更不该打断出图。
+        // 默认秒：短任务（几百步以内的快模型）秒更精确；长任务用户自己切分钟。
+        settingsBody.addView(subTitle(getString(R.string.s_634)), matchWrap().apply { topMargin = dp(14) })
+        val etaUnitNow = chatPrefs().getInt(DrawPage.KEY_ETA_UNIT, DrawPage.ETA_UNIT_SECONDS)
+        val etaSwitch = SegmentedSwitch(
+            this,
+            arrayOf(getString(R.string.s_635), getString(R.string.s_636)),
+            pal,
+            if (etaUnitNow == DrawPage.ETA_UNIT_MINUTES) 1 else 0,
+        )
+        etaSwitch.onChanged = { i ->
+            val unit = if (i == 1) DrawPage.ETA_UNIT_MINUTES else DrawPage.ETA_UNIT_SECONDS
+            chatPrefs().edit().putInt(DrawPage.KEY_ETA_UNIT, unit).apply()
+        }
+        settingsBody.addView(etaSwitch, matchWrap().apply { topMargin = dp(12) })
+
         // ---- 关于（可折叠，默认展开；展开状态同样记在偏好里）----
         val aboutBody = collapsibleSection(
             card, getString(R.string.s_048), expanded = true, prefKey = KEY_UI_ABOUT_OPEN)
@@ -3845,13 +3863,20 @@ class MainActivity : Activity() {
     /** 「选择绘图模型文件」→ 先挑类型（单文件 / 多文件 × 家族），再选文件。
      *  单文件 = 一个 all-in-one .gguf；多文件 = 主模型 + 若干配套文件（按家族给槽位模板）。 */
     private fun showDrawTypeMenu() {
-        val single = listOf("sd15", "sdxl", "sd3", "flux", "qwen", "video", "other")
+        // 「视频（Wan / LTX-V 等）」原本在这两个列表里 —— 1.6.0 做多文件槽位时顺手加的，
+        // 只为让视频模型的分件能按正确槽位归位。但 App 从来没接 generate_video()：选中之后
+        // 点生成，sd.cpp 会在 pipeline/image.cpp 里以 !supports_image_generation 为由直接
+        // 返回 false，用户只能看到一句「生成失败」。留着等于用一个看着能用的入口，骗人先下
+        // 一份 10~20 GB 的模型。所以从 2.2.0 起摘掉。
+        // FAM_VIDEO 常量、槽位模板、s_343 文案都保留：已经建过的视频模型集还要能正常显示，
+        // 将来真做完视频管道，把这两处的 "video" 加回来即可。
+        val single = listOf("sd15", "sdxl", "sd3", "flux", "qwen", "other")
         // 三个 LLM 编码器架构只在「多文件」里出现 —— 它们的扩散模型和文本编码器
         // 几乎总是分开分发；塞进单文件模式会给人「一个文件就够」的错误暗示。
         val multi = listOf("sd3", "flux", "qwen", "hidream",
             DrawPage.FAM_IDEOGRAM, DrawPage.FAM_KREA2, DrawPage.FAM_KLEIN,
             DrawPage.FAM_FLUX3, DrawPage.FAM_MOSS, DrawPage.FAM_FIBO2,
-            DrawPage.FAM_PIXART, "video", "other")
+            DrawPage.FAM_PIXART, DrawPage.FAM_H3_IMAGE, "other")
         val labels = ArrayList<String>()
         val picks = ArrayList<kotlin.Pair<String, String>>()
         for (kind in listOf("single", "multi")) {

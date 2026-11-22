@@ -37,6 +37,12 @@ object DrawCore {
         val loras: List<SdCppEngine.Lora> = emptyList(),
         /** flow-matching 模型的时间步偏移；<= 0 跟随模型默认 */
         val flowShift: Float = 0f,
+        /** 采样缓存；null = 关闭 */
+        val cacheMode: SdCppEngine.CacheMode? = null,
+        /** 缓存阈值；<= 0 跟随该模式的默认值 */
+        val cacheThreshold: Float = 0f,
+        /** CLIP 层截断；<= 0 跟随模型默认 */
+        val clipSkip: Int = 0,
     )
 
     class Result(val bitmap: Bitmap, val seed: Long)
@@ -156,6 +162,9 @@ object DrawCore {
                         seed = useSeed,
                         sampler = sampler ?: p.sampler,
                         scheduler = scheduler ?: p.scheduler,
+                        cacheMode = p.cacheMode,
+                        cacheThreshold = p.cacheThreshold,
+                        clipSkip = p.clipSkip,
                         // 只在 sampling=true 时上报：false 是权重加载（张量数），
                         // 拿去当进度会让进度条在 178/178 → 18/18 之间乱跳。
                         cb = { cur, total, sampling ->

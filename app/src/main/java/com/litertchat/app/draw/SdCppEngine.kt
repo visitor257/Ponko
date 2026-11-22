@@ -59,6 +59,20 @@ object SdCppEngine {
         BETA(15, "Beta"),
     }
 
+    /**
+     * 采样缓存（对应 sd.cpp 的 sd_cache_mode_t）。命中时整步跳过 UNet/DiT 计算，
+     * 是这张卡上唯一真能省时间的开关 —— 代价是画面细节可能糊一点。
+     *
+     * **两者按模型结构分工，互斥**（sd.cpp 里就是两套独立实现）：
+     *   EasyCache —— DiT（SD3 / Flux / Qwen / Krea2 / MOSS / H3 …）
+     *   UCache    —— UNet（SD1.5 / SD2 / SDXL）
+     * 选错了引擎只会告警一句然后当作没开，不会崩。
+     */
+    enum class CacheMode(val code: Int, val label: String) {
+        EASYCACHE(1, "EasyCache"),
+        UCACHE(2, "UCache"),
+    }
+
     /** 权重类型（对应 sd.cpp enum sd_type_t）；KEEP = 保持模型原样 */
     const val WTYPE_KEEP = -1
     const val WTYPE_F32 = 0
@@ -134,6 +148,9 @@ object SdCppEngine {
         refData: Array<ByteArray>?,
         refWidths: IntArray?,
         refHeights: IntArray?,
+        cacheMode: Int,
+        cacheThreshold: Float,
+        clipSkip: Int,
     ): IntArray?
 
     /** 已加载模型自带的参考图预设名；不支持参考图时返回 null（见 nativeRefImagePreset 注释） */
@@ -198,6 +215,10 @@ object SdCppEngine {
         // 外部 tokenizer.json。顺序必须与 native 的 SlotIndex 末尾一致 ——
         // 追加在最后而不是插进 llm 旁边，否则已有模型集会整体错位。
         "tokenizer",
+        // 额外的「文本连接器」权重（sd.cpp 的 embeddings_connectors_path）。
+        // 目前只有 MiniMax-H3-Image / P-H3-Image 用得上：配 Qwen3-VL-4B 编码器时
+        // 必须给 P-H3-Image 的 text connector，配 32B 编码器则留空。
+        "connector",
     )
 
     /** 把槽位表（key -> 文件绝对路径）转成 JNI 要的定长数组 */
@@ -244,6 +265,12 @@ object SdCppEngine {
          */
         flowShift: Float = 0f,
         refImages: List<RefImage> = emptyList(),
+        /** 采样缓存；null = 关闭。见 [CacheMode] 的适用面说明 */
+        cacheMode: CacheMode? = null,
+        /** 缓存阈值；<= 0 表示跟随该模式的默认值（EasyCache 0.2 / UCache 1.0） */
+        cacheThreshold: Float = 0f,
+        /** CLIP 层截断；<= 0 表示模型默认。只对 SD1.5 / SD2 / SDXL 生效 */
+        clipSkip: Int = 0,
     ): Bitmap? {
         val effectiveSeed = if (seed < 0) (System.currentTimeMillis() % 1_000_000_000L) else seed
         val useInit = initImage != null && initImage.isNotEmpty() && initWidth > 0 && initHeight > 0
@@ -262,6 +289,9 @@ object SdCppEngine {
             if (refImages.isEmpty()) null else refImages.map { it.rgb }.toTypedArray(),
             if (refImages.isEmpty()) null else refImages.map { it.width }.toIntArray(),
             if (refImages.isEmpty()) null else refImages.map { it.height }.toIntArray(),
+            cacheMode?.code ?: 0,
+            cacheThreshold,
+            clipSkip,
         ) ?: return null
         if (px.isEmpty()) return null
         return Bitmap.createBitmap(px, width, height, Bitmap.Config.ARGB_8888)

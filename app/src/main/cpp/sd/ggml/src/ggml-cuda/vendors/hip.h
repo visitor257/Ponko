@@ -60,11 +60,13 @@
 #define cudaDeviceSynchronize hipDeviceSynchronize
 #define cudaError_t hipError_t
 #define cudaErrorMemoryAllocation hipErrorOutOfMemory
+#define cudaErrorNotReady hipErrorNotReady
 #define cudaErrorPeerAccessAlreadyEnabled hipErrorPeerAccessAlreadyEnabled
 #define cudaErrorPeerAccessNotEnabled hipErrorPeerAccessNotEnabled
 #define cudaEventCreateWithFlags hipEventCreateWithFlags
 #define cudaEventDisableTiming hipEventDisableTiming
 #define cudaEventRecord hipEventRecord
+#define cudaEventQuery hipEventQuery
 #define cudaEventSynchronize hipEventSynchronize
 #define cudaEvent_t hipEvent_t
 #define cudaEventDestroy hipEventDestroy
@@ -111,6 +113,7 @@
 #define cuMemRelease hipMemRelease
 #define CUmemGenericAllocationHandle hipMemGenericAllocationHandle_t
 #define cuMemCreate hipMemCreate
+#define CUDA_ERROR_OUT_OF_MEMORY hipErrorOutOfMemory
 #define cuMemAddressReserve hipMemAddressReserve
 #define cuMemMap hipMemMap
 #define cuMemSetAccess hipMemSetAccess

@@ -10,21 +10,27 @@ android {
     ndkVersion = "27.3.13750724"
 
     defaultConfig {
-        // namespace 与 applicationId 同为 com.litertchat.app。
-        // beta 线曾在 worktree 里把 applicationId 改成 .beta 以便并存，那条分支不参与
-        // 正式版；正式版必须沿用原包名，否则升级装不上、用户的模型目录也搬不过去。
+        // 正式包名。**main 分支用这个**；beta 分支把这里改成 "com.litertchat.app.beta"
+        // （独立包名，可以和正式版同时装在一台手机上）。
+        //
+        // namespace 保持 com.litertchat.app 不变 —— 那只是 R 类与源码的包名，和"装成哪个
+        // 应用"无关，改了要动所有 Kotlin 文件的 package 声明。两条线的源码是同一份，只靠
+        // 这里和 versionCode 区分。
+        //
+        // beta 包名的代价（正式版没有）：filesDir 按 applicationId 隔离，模型要重新导入；
+        // 插件按隐式 Action 发现宿主，两个宿主都装会去 bind 同一个 Service；磁盘占两份。
         applicationId = "com.litertchat.app"
         minSdk = 28
         targetSdk = 36
-        // versionCode 必须严格递增：小于等于已装版本会被系统拒绝覆盖。
-        // 2.1.0 = 25，2.1.1 = 26，2.1.2 = 28（27 曾被一个未发布的测试包占用，跳号避免拒装）。
-        // 2.1.3 用了 29~32 四个 versionCode：29 是给用户测的第一版，诊断报告有个缺陷
-        // （日志被 LoRA 警告淹没），30 修了它但 shift 那行记在 logcat 而不是 draw.log，
-        // 31 改到 Kotlin 层记，32 修 Activity 重建后的句柄泄漏。都**仍叫 2.1.3** ——
-        // 这一版还没正式发布过，
-        // 不该为一次修复开新版本号（2.1.1 当初攒了两处改动也是同样处理）。
-        versionCode = 32
-        versionName = "2.1.3"
+        // 上一个对外正式版是 2.1.3 / versionCode 32。
+        // 33~36 这几个号被 beta 线用掉了（包名不同，系统不比较，本来互不干扰），
+        // 为免以后翻记录时把两条线的号看混，正式线从这里接着往上走：
+        // 37 = 2.2.0 正式版：= 对外 beta.1 的全部内容
+        //      （采样缓存 EasyCache/UCache、CLIP skip、进度行剩余时间与单位设置、
+        //        加载失败带上 sd.cpp 原因、修掉「加载进度被当成采样步」与「预览帧擦掉耗时/ETA」）
+        //      + 摘掉模型导入菜单里那条跑不了的「视频（Wan / LTX-V 等）」
+        versionCode = 37
+        versionName = "2.2.0"
         ndk {
             // LiteRT-LM 与 llama.cpp 的 native 都只跑 arm64 真机，去掉 x86_64 可减小 APK
             abiFilters += "arm64-v8a"

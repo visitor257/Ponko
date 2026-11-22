@@ -6286,48 +6286,6 @@ void ggml_compute_forward_clamp(
     }
 }
 
-// ggml_compute_forward_rope_apply
-
-void ggml_compute_forward_rope_apply(const ggml_compute_params * params, ggml_tensor * dst) {
-    const ggml_tensor * x  = dst->src[0];
-    const ggml_tensor * pe = dst->src[1];
-    GGML_ASSERT(x->type == GGML_TYPE_F32 && pe->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32);
-    GGML_ASSERT(ggml_is_contiguous(dst));
-
-    const bool interleaved = ggml_get_op_params_i32(dst, 0) != 0;
-    const int64_t half_dim = x->ne[0]/2;
-    const int64_t rows = x->ne[1]*x->ne[2]*x->ne[3];
-    const int64_t rows_per_thread = (rows + params->nth - 1)/params->nth;
-    const int64_t begin = rows_per_thread*params->ith;
-    const int64_t end = std::min(begin + rows_per_thread, rows);
-    for (int64_t row = begin; row < end; ++row) {
-        const int64_t token = row % x->ne[2];
-        const int64_t head  = (row / x->ne[2]) % x->ne[1];
-        const int64_t batch = row / (x->ne[2]*x->ne[1]);
-        const char * x_row = (const char *) x->data + head*x->nb[1] + token*x->nb[2] + batch*x->nb[3];
-        const char * pe_row = (const char *) pe->data + token*pe->nb[3];
-        float * out = (float *) dst->data + row*x->ne[0];
-        for (int64_t j = 0; j < half_dim; ++j) {
-            const int64_t i0 = interleaved ? 2*j : j;
-            const int64_t i1 = interleaved ? 2*j + 1 : j + half_dim;
-            const float a = *(const float *) (x_row + i0*x->nb[0]);
-            const float b = *(const float *) (x_row + i1*x->nb[0]);
-            const char * matrix = pe_row + j*pe->nb[2];
-            const float c = *(const float *) matrix;
-            const float s = *(const float *) (matrix + pe->nb[1]);
-            if (interleaved) {
-                const float neg_s = *(const float *) (matrix + pe->nb[0]);
-                const float c1 = *(const float *) (matrix + pe->nb[0] + pe->nb[1]);
-                out[i0] = a*c + b*neg_s;
-                out[i1] = a*s + b*c1;
-            } else {
-                out[i0] = a*c - b*s;
-                out[i1] = a*s + b*c;
-            }
-        }
-    }
-}
-
 // ggml_compute_forward_rope
 
 static float rope_yarn_ramp(const float low, const float high, const int i0) {
@@ -10625,6 +10583,36 @@ void ggml_compute_forward_unary(
     }
 }
 
+static void ggml_compute_forward_situ(const ggml_compute_params * params, ggml_tensor * dst) {
+    const ggml_tensor * src0 = dst->src[0];
+    const ggml_tensor * src1 = dst->src[1];
+    GGML_ASSERT(src0->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32);
+    GGML_ASSERT(ggml_is_contiguous_1(src0) && ggml_is_contiguous(dst));
+    GGML_ASSERT(src1 == nullptr || (src1->type == GGML_TYPE_F32 && ggml_is_contiguous_1(src1)));
+    const int64_t columns    = dst->ne[0];
+    const int64_t rows       = ggml_nrows(dst);
+    const int64_t per_thread = (rows + params->nth - 1) / params->nth;
+    const int64_t begin      = per_thread * params->ith;
+    const int64_t end        = std::min(begin + per_thread, rows);
+    const bool    swapped    = ggml_get_op_params_i32(dst, 1) != 0;
+    for (int64_t row = begin; row < end; ++row) {
+        const float * gate = reinterpret_cast<const float *>(static_cast<const char *>(src0->data) + row * src0->nb[1]);
+        const float * up   = reinterpret_cast<const float *>(static_cast<const char *>(src1 ? src1->data : src0->data) +
+                                                             row * (src1 ? src1->nb[1] : src0->nb[1]));
+        if (src1 == nullptr) {
+            gate += swapped ? columns : 0;
+            up += swapped ? 0 : columns;
+        }
+        float * output = static_cast<float *>(dst->data) + row * columns;
+        for (int64_t col = 0; col < columns; ++col) {
+            const float g = gate[col];
+            const float a = tanhf(0.25f * g) * 4.0f;
+            const float b = tanhf((1.0f / 25.0f) * up[col]) * 25.0f;
+            output[col]   = (a * (1.0f / (1.0f + expf(-g)))) * b;
+        }
+    }
+}
+
 //ggml_compute_forward_glu
 
 void ggml_compute_forward_glu(
@@ -10661,6 +10649,10 @@ void ggml_compute_forward_glu(
         case GGML_GLU_OP_SWIGLU_CLAMP:
             {
                 ggml_compute_forward_swiglu_clamp(params, dst);
+            } break;
+        case GGML_GLU_OP_SITU:
+            {
+                ggml_compute_forward_situ(params, dst);
             } break;
         default:
             {
@@ -12591,98 +12583,5 @@ void ggml_compute_forward_lightning_indexer(
                 dst_row[ik] = score + GGML_CPU_FP16_TO_FP32(m_row[ik]);
             }
         }
-    }
-}
-
-void ggml_compute_forward_quantize_i8_convrot(const ggml_compute_params * params, ggml_tensor * dst) {
-    const ggml_tensor * src = dst->src[0];
-
-    GGML_ASSERT(src->type == GGML_TYPE_F32);
-    GGML_ASSERT(dst->type == GGML_TYPE_I8);
-    GGML_ASSERT(ggml_is_contiguous(src));
-    GGML_ASSERT(ggml_is_contiguous(dst));
-
-    const int group_size = ggml_get_op_params_i32(dst, 0);
-    const int64_t k      = src->ne[0];
-    const int64_t rows   = ggml_nrows(src);
-    const int64_t rows_padded = GGML_PAD(rows, 4);
-    const int64_t scale_rows  = (rows * (int64_t)sizeof(float) + k - 1) / k;
-    GGML_ASSERT(group_size > 0 && group_size <= 256 && k % group_size == 0);
-    GGML_ASSERT(dst->ne[0] == k && dst->ne[1] == rows_padded + scale_rows);
-
-    const float * src_data = (const float *)src->data;
-    char * dst_data        = (char *)dst->data;
-    float * dst_scales     = (float *)(dst_data + k * rows_padded);
-    const float transform_scale = 1.0f / sqrtf((float)group_size);
-
-    for (int64_t row = params->ith; row < rows; row += params->nth) {
-        const float * src_row = src_data + row * k;
-        int8_t * dst_row      = (int8_t *)(dst_data + row * dst->nb[1]);
-        float amax            = 0.0f;
-        float values[256];
-
-        for (int64_t group = 0; group < k; group += group_size) {
-            for (int i = 0; i < group_size; ++i) {
-                values[i] = src_row[group + i] * transform_scale;
-            }
-            for (int stride = 1; stride < group_size; stride *= 4) {
-                for (int base = 0; base < group_size; base += 4 * stride) {
-                    for (int j = 0; j < stride; ++j) {
-                        const int i0 = base + j;
-                        const int i1 = i0 + stride;
-                        const int i2 = i1 + stride;
-                        const int i3 = i2 + stride;
-                        const float a = values[i0];
-                        const float b = values[i1];
-                        const float c = values[i2];
-                        const float d = values[i3];
-                        values[i0] =  a + b + c - d;
-                        values[i1] =  a + b - c + d;
-                        values[i2] =  a - b + c + d;
-                        values[i3] = -a + b + c + d;
-                    }
-                }
-            }
-            for (int i = 0; i < group_size; ++i) {
-                amax = MAX(amax, fabsf(values[i]));
-            }
-        }
-
-        const float row_scale = amax / 127.0f;
-        const float inv_scale = row_scale == 0.0f ? 0.0f : 1.0f / row_scale;
-        dst_scales[row] = row_scale;
-
-        for (int64_t group = 0; group < k; group += group_size) {
-            for (int i = 0; i < group_size; ++i) {
-                values[i] = src_row[group + i] * transform_scale;
-            }
-            for (int stride = 1; stride < group_size; stride *= 4) {
-                for (int base = 0; base < group_size; base += 4 * stride) {
-                    for (int j = 0; j < stride; ++j) {
-                        const int i0 = base + j;
-                        const int i1 = i0 + stride;
-                        const int i2 = i1 + stride;
-                        const int i3 = i2 + stride;
-                        const float a = values[i0];
-                        const float b = values[i1];
-                        const float c = values[i2];
-                        const float d = values[i3];
-                        values[i0] =  a + b + c - d;
-                        values[i1] =  a + b - c + d;
-                        values[i2] =  a - b + c + d;
-                        values[i3] = -a + b + c + d;
-                    }
-                }
-            }
-            for (int i = 0; i < group_size; ++i) {
-                int value = row_scale == 0.0f ? 0 : (int)lrintf(values[i] * inv_scale);
-                value = MAX(-127, MIN(127, value));
-                dst_row[group + i] = (int8_t)value;
-            }
-        }
-    }
-
-    if (params->ith == 0 && rows_padded > rows) {
-        memset(dst_data + rows * dst->nb[1], 0, (size_t)(rows_padded - rows) * dst->nb[1]);
     }
 }
