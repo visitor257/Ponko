@@ -792,7 +792,9 @@ static void ggml_vk_create_pipeline_func(vk_device& device, vk_pipeline& pipelin
     try {
         pipeline->pipeline = device->device.createComputePipeline(VK_NULL_HANDLE, compute_pipeline_create_info).value;
     } catch (const vk::SystemError& e) {
-        std::cerr << "ggml_vulkan: compute pipeline creation failed for " << pipeline->name << ": " << e.what() << std::endl;
+        // [Ponko 补丁] Android release 包没有 stdio 重定向（log.redirect-stdio 要 root/debuggable），
+        // std::cerr 在 logcat 上看不到。改用 ggml 日志接口，失败时才能知道是哪个 pipeline。
+        GGML_LOG_ERROR("ggml_vulkan: compute pipeline creation failed for %s: %s\n", pipeline->name.c_str(), e.what());
         throw;
     }
 
@@ -4351,17 +4353,19 @@ vk_device ggml_vk_get_device(size_t idx) {
         std::vector<const char *> device_extensions;
         vk::PhysicalDeviceFeatures device_features = device->physical_device.getFeatures();
 
-        VkPhysicalDeviceFeatures2 device_features2;
+        // [Ponko 补丁] 全部值初始化：1.1 驱动不认识 1.2 结构体时会直接跳过，
+        // 未初始化的字段会留下栈垃圾，后续判定全部不可靠。
+        VkPhysicalDeviceFeatures2 device_features2{};
         device_features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
         device_features2.pNext = nullptr;
         device_features2.features = (VkPhysicalDeviceFeatures)device_features;
 
-        VkPhysicalDeviceVulkan11Features vk11_features;
+        VkPhysicalDeviceVulkan11Features vk11_features{};
         vk11_features.pNext = nullptr;
         vk11_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
         device_features2.pNext = &vk11_features;
 
-        VkPhysicalDeviceVulkan12Features vk12_features;
+        VkPhysicalDeviceVulkan12Features vk12_features{};
         vk12_features.pNext = nullptr;
         vk12_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
         vk11_features.pNext = &vk12_features;
@@ -4546,7 +4550,11 @@ vk_device ggml_vk_get_device(size_t idx) {
 
         device->pipeline_executable_properties_support = pipeline_executable_properties_support;
 
-        device->fp16 = device->fp16 && vk12_features.shaderFloat16;
+        // [Ponko 补丁] Vulkan 1.1 设备不认识 VkPhysicalDeviceVulkan12Features（core 1.2 结构），
+        // 驱动会跳过它，字段保持栈上未初始化值（垃圾）。只有 1.2+ 设备才采信这些位，
+        // 1.1 上保持 fp16 由上面的扩展判定决定，否则会读到垃圾值。
+        const bool supports_vk12_features = device->properties.apiVersion >= VK_API_VERSION_1_2;
+        device->fp16 = device->fp16 && (!supports_vk12_features || vk12_features.shaderFloat16);
 
 #if defined(VK_KHR_shader_bfloat16)
         device->bf16 = bfloat16_support && bfloat16_features.shaderBFloat16Type;
@@ -4566,8 +4574,11 @@ vk_device ggml_vk_get_device(size_t idx) {
                             getenv("GGML_VK_DISABLE_MULTI_ADD") == nullptr;
 
         device->shader_int64 = device_features2.features.shaderInt64;
-        device->buffer_device_address = vk12_features.bufferDeviceAddress;
-        device->vulkan_memory_model = vk12_features.vulkanMemoryModel;
+        // [Ponko 补丁] ggml 从未把 VK_KHR_buffer_device_address 加进 device_extensions，
+        // 1.1 设备上拿不到 vkGetBufferDeviceAddressKHR 的函数指针。若这里误判为支持，
+        // ggml_vk_create_buffer 会跳到空指针（实测 Adreno 650 / Vulkan 1.1 SIGSEGV at pc=0）。
+        device->buffer_device_address = supports_vk12_features && vk12_features.bufferDeviceAddress;
+        device->vulkan_memory_model   = supports_vk12_features && vk12_features.vulkanMemoryModel;
 
         if (device->subgroup_size_control) {
             device->subgroup_min_size = subgroup_size_control_props.minSubgroupSize;
@@ -5102,16 +5113,17 @@ static void ggml_vk_print_gpu_info(size_t idx) {
 
     physical_device.getProperties2(&props2);
 
-    VkPhysicalDeviceFeatures2 device_features2;
+    // [Ponko 补丁] 同上：值初始化，避免 1.1 设备上读到未填充的栈垃圾。
+    VkPhysicalDeviceFeatures2 device_features2{};
     device_features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
     device_features2.pNext = nullptr;
 
-    VkPhysicalDeviceVulkan11Features vk11_features;
+    VkPhysicalDeviceVulkan11Features vk11_features{};
     vk11_features.pNext = nullptr;
     vk11_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
     device_features2.pNext = &vk11_features;
 
-    VkPhysicalDeviceVulkan12Features vk12_features;
+    VkPhysicalDeviceVulkan12Features vk12_features{};
     vk12_features.pNext = nullptr;
     vk12_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
     vk11_features.pNext = &vk12_features;

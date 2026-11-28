@@ -348,7 +348,18 @@ compile_count_guard acquire_compile_slot() {
 }
 
 void string_to_spv_func(std::string name, std::string in_path, std::string out_path, std::map<std::string, std::string> defines, bool coopmat, bool dep_file, compile_count_guard slot) {
-    std::string target_env = (name.find("_cm2") != std::string::npos) ? "--target-env=vulkan1.3" : "--target-env=vulkan1.2";
+    // [Ponko 补丁] 普通 shader 改用 vulkan1.1 目标（SPIR-V 1.3）。
+    // Vulkan 1.1 设备（实测 Adreno 650 / 2020 驱动）会拒绝 1.2 目标生成的 SPIR-V 1.5，
+    // 表现为 vkCreateComputePipeline: ErrorUnknown + 驱动日志 "Failed to link shaders."。
+    // SPIR-V 1.3 是 Vulkan 1.1 的子集，对 1.2+ 设备同样有效，不损失功能。
+    // 例外：`_bda` 变体用了 OpSpecConstantOp UConvert，SPIR-V 1.4 之前不允许，仍按 1.2 编译。
+    // 这些变体只在 buffer_device_address 为真的设备上被选中，而 1.1 设备上我们已把它置 false。
+    std::string target_env = "--target-env=vulkan1.1";
+    if (name.find("_cm2") != std::string::npos) {
+        target_env = "--target-env=vulkan1.3";
+    } else if (name.find("_bda") != std::string::npos) {
+        target_env = "--target-env=vulkan1.2";
+    }
 
     #ifdef _WIN32
         std::vector<std::string> cmd = {GLSLC, "-fshader-stage=compute", target_env, "\"" + in_path + "\"", "-o", "\"" + out_path + "\""};

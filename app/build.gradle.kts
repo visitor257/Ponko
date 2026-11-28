@@ -29,8 +29,10 @@ android {
         //      （采样缓存 EasyCache/UCache、CLIP skip、进度行剩余时间与单位设置、
         //        加载失败带上 sd.cpp 原因、修掉「加载进度被当成采样步」与「预览帧擦掉耗时/ETA」）
         //      + 摘掉模型导入菜单里那条跑不了的「视频（Wan / LTX-V 等）」
-        versionCode = 37
-        versionName = "2.2.0"
+        // 38 = 2.2.1：视频生成（generate_video + 帧落盘）、JSON 插件机制（含内置视频页）、
+        //      视频模型导入入口加回来（现在真的有出片管道了）
+        versionCode = 38
+        versionName = "2.2.1"
         ndk {
             // LiteRT-LM 与 llama.cpp 的 native 都只跑 arm64 真机，去掉 x86_64 可减小 APK
             abiFilters += "arm64-v8a"

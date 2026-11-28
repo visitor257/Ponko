@@ -285,6 +285,8 @@ class DrawPage(
         private const val KEY_USE_LORA = "useLora"
         /** FlashAttention 开关（默认 true，但可关掉以排除兼容性问题） */
         private const val KEY_FLASH_ATTN = "flashAttn"
+        /** 预测类型覆盖（加载期参数）：-1 = Auto，其余对应 sd.cpp 的 prediction_t 数值 */
+        private const val KEY_PREDICTION = "drawPrediction"
 
         // 绘图参数持久化（提示词按用户要求不保存，每次重来）
         private const val KEY_W = "drawW"
@@ -366,6 +368,26 @@ class DrawPage(
             field = value
             c.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .edit().putBoolean(KEY_FLASH_ATTN, value).apply()
+        }
+
+    /**
+     * 预测类型覆盖（prediction）。**加载期**参数，和 [flashAttn] 同类。
+     *
+     * -1 = Auto：不传，让 sd.cpp 用 PREDICTION_COUNT 走自己的判定；
+     * 其余值直接用 sd.cpp 的 `enum prediction_t`（0 = eps，1 = v，2 = EDM v）。
+     *
+     * 为什么需要这一项：cosXL / SD2-v 这类模型的判定只看 GGUF 里有没有
+     * `edm_vpred.sigma_max` 张量（sd.cpp `model/integrations/sd.cpp`）。转换时那个张量
+     * 一丢，就会被当成 eps 跑 —— 不会崩、也不报错，只是**图糊成一片**。
+     * issue #3 里 "edm sampler for cosxl" 要的其实就是它：EDM 不是采样器，
+     * 是预测参数化，和采样器正交。
+     */
+    var prediction: Int = c.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .getInt(KEY_PREDICTION, -1)
+        set(value) {
+            field = value
+            c.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit().putInt(KEY_PREDICTION, value).apply()
         }
 
     /** 外部（MainActivity）通知：当前已加载语言模型。用于「生成」按钮给出更准确的提示。 */
@@ -1964,6 +1986,19 @@ class DrawPage(
         return "  cache=$m clip_skip=$cs"
     }
 
+    /**
+     * 预测类型的人类可读名（状态行与 draw.log 共用）。
+     *
+     * 只映射我们暴露给用户的三档；其它值（各家的 flow 变体）一律显示成 auto ——
+     * 那些由架构自动决定，用户改不了，也不该在界面上出现。
+     */
+    private fun predictionLabel(v: Int): String = when (v) {
+        SdCppEngine.PREDICTION_EPS -> "eps"
+        SdCppEngine.PREDICTION_V -> "v"
+        SdCppEngine.PREDICTION_EDM_V -> "EDM v"
+        else -> "auto"
+    }
+
     /** 日志用：把生效的 LoRA 写成 `name×0.80 + name2×0.50`，空列表写 none */
     private fun loraLog(list: List<SdCppEngine.Lora>): String =
         if (list.isEmpty()) "none"
@@ -2596,6 +2631,7 @@ class DrawPage(
                 flashAttn = flashAttn,
                 backend = b,
                 slots = SdCppEngine.buildSlots(slots),
+                prediction = prediction,
             )
             var used = gpuDev ?: "CPU"
             var h = createWith(used)
@@ -2645,6 +2681,10 @@ class DrawPage(
                 append(c.getString(R.string.s_094)).append(set.name)
                 append(" · ").append(activeBackend).append(" · ").append(nThreads).append(c.getString(R.string.s_001))
                 append(if (flashAttn) "FA" else c.getString(R.string.s_110))
+                // 只在手动覆盖时才显示：auto 是绝大多数情况，写出来只会让状态行变长
+                if (prediction != SdCppEngine.PREDICTION_AUTO) {
+                    append(" · ").append(predictionLabel(prediction))
+                }
                 if (set.files["taesd"] != null) append(" · TAESD")
                 append(" · sd.cpp")
             }
@@ -2693,7 +2733,7 @@ class DrawPage(
             val q = mainModel?.let { GgufProbe.quantType(it) }
             c.getString(R.string.s_094) + (mainModel?.name ?: c.getString(R.string.s_155)) +
                 (if (q != null) "（$q）" else "") +
-                " · CPU · " + nThreads + c.getString(R.string.s_002) +
+                " · " + activeBackend + " · " + nThreads + c.getString(R.string.s_002) +
                 (if (activeTaesd() != null) " · TAESD" else "")
         }
         hasModel() -> (activeSetOrSelected()?.name?.let { it + " · " } ?: "") + c.getString(R.string.s_088)
@@ -2743,6 +2783,13 @@ class DrawPage(
 
     private fun generateFromUi() {
         persistAll()   // 生成前先把参数落盘，保证「改完就生成」也被记住
+        // 视频模型不走这条管道：sd.cpp 的 generate_image() 对 supports_video_generation
+        // 的模型直接返回 false，跑下去只会得到一句"生成失败"。与其让用户等几十秒再看到
+        // 同一句话，不如在这里就说清楚去哪儿出片。
+        if (activeSetOrSelected()?.family == FAM_VIDEO) {
+            Toast.makeText(c, c.getString(R.string.s_819), Toast.LENGTH_LONG).show()
+            return
+        }
         if (!isReady()) {
             val msg = if (llmLoaded) c.getString(R.string.s_100)
             else c.getString(R.string.s_173)
@@ -2955,7 +3002,8 @@ class DrawPage(
         gstage("  size=${w}x$hgt steps=$steps cfg=$cfg seed=$useSeed sampler=$sampler sched=$scheduler")
         // flashAttn 必须记：它是唯一一个「我们和上游默认值不同」的开关，
         // 排查兼容性问题时第一个要看的就是它开没开。
-        gstage("  loras=${loraLog(loras)} backend=$activeBackend flashAttn=$flashAttn")
+        gstage("  loras=${loraLog(loras)} backend=$activeBackend flashAttn=$flashAttn " +
+            "prediction=${predictionLabel(prediction)}")
         // shift 单独记一行，**在 Kotlin 层记而不是靠 native 的 LOGI**：
         // native 的 LOGI 只进 logcat，而 draw.log 收的是 sd.cpp 自己的缓冲
         // （SdCppEngine.takeWarnings），两条通道不互通 —— 之前就因此看不见它。

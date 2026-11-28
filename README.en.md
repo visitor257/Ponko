@@ -20,9 +20,10 @@ All inference runs on-device: apart from the optional in-app LoRA download, no f
 |---|---|
 | **Chat** | `.litertlm` / `.gguf` dual backend; image, file and document input; separated reasoning, streaming Markdown |
 | **Drawing** | stable-diffusion.cpp; text-to-image / image-to-image / reference images / multiple LoRAs with per-file weights; optional TAESD and Vulkan |
+| **Video (first version)** | `generate_video()` from the same engine; text-to-video, one PNG per frame, played back in-app at the chosen fps |
 | **Tagging** | Fully offline ONNX (WD14 family); tags can be sent to T2I / I2I |
 | **API server** | Serves loaded models over OpenAI-compatible endpoints; chat 8080 / drawing 8081, fully independent |
-| **Plugins (Ponko-EX)** | Speech synthesis and similar live in separate APKs; the protocol is public, so third-party plugins work and you can write your own |
+| **Plugins (Ponko-EX)** | Speech synthesis and similar live in separate APKs; **JSON plugins** are the other kind - one data file that lays out a page and calls host actions |
 | **Diagnostics** | One log per module, flushed per line; a crash is traceable to loading vs. the Nth render step, and the report is one tap to copy |
 | **Local-first** | No telemetry, no account; no network needed except the manual LoRA download |
 
@@ -30,6 +31,8 @@ All inference runs on-device: apart from the optional in-app LoRA download, no f
 
 - [Chat](#chat)
 - [Drawing](#drawing)
+- [Video generation](#video-generation)
+- [JSON plugins](#json-plugins)
 - [API server (use the phone as a server)](#api-server-use-the-phone-as-a-server)
 - [Tagging (Tagger)](#tagging-tagger)
 - [Plugins (Ponko-EX)](#plugins-ponko-ex)
@@ -112,6 +115,27 @@ The engine is [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.
 - **Draw from chat**: when both a chat model and a draw model are loaded, just say "draw me ..." and the draw model is invoked.
 - **Drawing API (optional)**: exposes the loaded drawing model as an OpenAI-compatible `/v1/images/generations` endpoint for clients on the same network; off by default, toggled on the Models/API page -> Draw model -> API tab (see the API server section)
 - The "Parameters" / "Result" views can be swiped left/right; save images to the gallery from the Result view.
+
+## Video generation
+
+The other pipeline of the same engine: sd.cpp's `generate_video()`. Models still come in through Draw -> Models -> Import (type "Video (Wan / LTX-V ...)", slots diffusion + vae required, t5xxl / clip_vision / audio_vae as the model needs), but **frames are produced in Ponko-EX -> JSON plugins -> Video**, not on the drawing page.
+
+- Pick a model set and **load** it first (video models are 10-20 GB and take minutes); subsequent prompts do not pay the load cost again
+- Parameters: prompt / negative / frames / fps / width / height / steps / cfg / sampler / scheduler / seed
+- Every frame is written as a PNG under the app-private `draw/videos/<timestamp>/`; the result tab plays them at the fps you set, with a scrubber, and a preview image updates each sampling step while it runs
+- Two-stage progress: loading percentage, then "step N/M - X s elapsed - ~Y s left"; Stop exits before the next sampling step
+
+**Limits of this version** (spelled out so nobody downloads 20 GB on a wrong assumption): **text-to-video only** (no first/last frame, no reference video); the output is a **PNG sequence, not mp4** (no encoder in the app); audio tracks are dropped; one job at a time; leaving the page frees the model context (tens of GB of mapping - keeping it alive next to an image model kills an 8 GB phone). Which models work depends on what sd.cpp recognises at its 2026-11-13 snapshot - HunyuanVideo 1.0 / Wan 2.x / LTX-V / MiniMax-H3 are in; **HunyuanVideo 1.5 uses a different architecture than the loader probes for and is unverified**.
+
+## JSON plugins
+
+The other kind of plugin, next to Ponko-EX (separate APK + AIDL): **one `.json` file** describing the page layout and which host action each button calls. No code, no process, no signing. They live in `filesDir/json-plugins/`; "Import JSON" in the plugins tab copies one in through the system file picker.
+
+- The video page above is itself a JSON plugin; it ships in the APK and is unpacked on first run, so there is a template to copy
+- Controls: text / sections / switch / slider / choice / single- and multi-line text / buttons / progress / status row / log box / image / tab pages / rows and groups / dividers, plus two host-provided ones: **model-set picker** and **frame player**
+- Actions: `host.video`, `host.cancel`, `host.video.load`, `host.video.unload`; for Ponko-EX plugins `plugin.set` / `plugin.invoke` / `plugin.engine` / `plugin.synthesize`
+- The only variable is `$ui.<key>`; **one action = one call**, the file never describes a data flow and the host never writes back to it (control values are stored per plugin id in preferences)
+- Unknown control types and unknown host actions are shown on the page rather than failing silently
 
 ## API server (use the phone as a server)
 

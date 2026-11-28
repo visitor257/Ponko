@@ -6,15 +6,27 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
 #include <set>
 #include <string>
+#include <sys/stat.h>
+#include <sys/system_properties.h>
 #include <utility>
 #include <vector>
 
 #include "stable-diffusion.h"
+
+// 视频帧要走文件而不是 JNI 数组：一帧 832x480 RGB 就是 1.2 MB，33 帧一次性
+// NewByteArray + SetByteArrayRegion 会把手机那点内存挤爆（本机出图时 RSS 已到 7 GB）。
+// 这里把每帧编码成 PNG 落盘，Kotlin 只拿到一组路径，播放时按需解码 —— 峰值内存只有一帧。
+//
+// stb_image_write 在 sd.cpp 里已有但没有任何 TU 定义过 IMPLEMENTATION，
+// 所以在这里实例化一次；它只提供静态函数，不会和其它 .so 抢符号。
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "sd/thirdparty/stb_image_write.h"
 
 #define TAG "PonkoSd"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
@@ -326,7 +338,7 @@ enum SlotIndex {
     SLOT_COUNT
 };
 
-// nativeCreate(modelPath, vaePath, nThreads, wtype, flashAttn, backend, slots) -> handle
+// nativeCreate(modelPath, vaePath, nThreads, wtype, flashAttn, backend, slots, prediction) -> handle
 //
 // backend：ggml 后端/设备名（如 "CPU" / "Vulkan0" / "vulkan"），空串或 null = 交给 sd.cpp 自动挑。
 // 显式传值会关掉 sd.cpp 的 auto_fit，行为更可控（选 CPU 就真是 CPU）。
@@ -337,7 +349,7 @@ extern "C" JNIEXPORT jlong JNICALL
 Java_com_litertchat_app_draw_SdCppEngine_nativeCreate(
         JNIEnv* env, jobject /*thiz*/,
         jstring modelPath, jstring vaePath, jint nThreads, jint wtype, jboolean flashAttn,
-        jstring backend, jobjectArray slots) {
+        jstring backend, jobjectArray slots, jint prediction) {
     std::string model, vae, backendStr;
     jstr(env, modelPath, model);
     jstr(env, vaePath, vae);
@@ -399,12 +411,50 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeCreate(
     p.enable_mmap  = true;
     // 后端：非空则显式指定（同时关掉 auto_fit），空则保持 sd.cpp 默认（自动挑设备）
     if (!backendStr.empty()) p.backend = backendStr.c_str();
+    // GPU 后端要关掉 conv_direct 的自动探测。
+    // sd_probe_conv_direct 会为 Vulkan 额外建一个 probe graph 并在上面真跑一次 conv 比速度；
+    // 在 Adreno 650（Vulkan 1.1 / 驱动 2020-09）上这一步直接 SIGSEGV：
+    //   pc = 0x0，崩在 ggml_backend_buft_alloc_buffer_n —— 空函数指针，
+    //   调用栈 sd_probe_conv_direct -> sd_run_backend_probe -> ggml_backend_alloc_ctx_tensors。
+    // 表现是「后端选 GPU 一点加载就闪退」。conv_direct_mode="off" 让 conv_direct_for() 直接
+    // 返回、跳过探测，代价只是 UNet/VAE 少一条 direct conv 优化；CPU 路径保持 auto 不动。
+    if (backendStr.find("ulkan") != std::string::npos) p.conv_direct_mode = "off";
+    // ⚠ 下面两个开关是给「2020 年的 Adreno 老驱动」排障用的，**默认必须关**：
+    // 禁 f16 会让所有 GPU 掉到 fp32 累加（实测慢一大截），强制 MMVQ 会让大 matmul
+    // 全走 vec 内核（同样更慢）。当初为了在 Adreno 650 / 驱动 0502 上试通 Vulkan
+    // 是无条件打开的，若原样发版等于把所有正常 GPU 一起拖慢。
+    //
+    // 865 那台的最终结论是驱动层（kgsl）死锁，这条路本来就没通 —— 所以这里只保留
+    // 「排查时开启」的能力，不重编 APK 也能开：系统属性优先，环境变量兜底。
+    //   adb shell setprop debug.ponko.vk_legacy 1   （改完要 force-stop 再启动）
+    char legacyProp[PROP_VALUE_MAX] = {0};
+    __system_property_get("debug.ponko.vk_legacy", legacyProp);
+    const char* legacyEnv = getenv("PONKO_VK_LEGACY_ADRENO");
+    const bool legacyAdrenoWorkaround =
+        legacyProp[0] == '1' || (legacyEnv != nullptr && legacyEnv[0] == '1');
+    if (backendStr.find("ulkan") != std::string::npos && legacyAdrenoWorkaround) {
+        // matmul_quant_f32_f16acc_aligned_1 在 Vulkan 1.1 老驱动上链接失败 → ggml_abort
+        setenv("GGML_VK_DISABLE_F16", "1", 0);
+        // 关掉 f16 后换成 matmul_quant_f32_aligned_1 照样失败 → 整类改走 MMVQ
+        setenv("GGML_VK_FORCE_MMVQ", "1", 0);
+        LOGI("vulkan: legacy Adreno workaround ON (f16 off + force mmvq)");
+    }
     // 两个 FlashAttention 都要开：flash_attn 影响 CLIP，diffusion_flash_attn 影响 UNet（算力主体）。
     // 实测不开比开慢约 28%（6 步 125s vs 98s）。注意 sd_ctx_params_init 默认都是 false。
     const bool fa = (flashAttn == JNI_TRUE);
     p.flash_attn           = fa;
     p.diffusion_flash_attn = fa;
     p.lora_apply_mode = LORA_APPLY_AUTO;
+    // 预测参数化覆盖：<0 = 不碰，保持 sd_ctx_params_init 给的 PREDICTION_COUNT（自动判定）。
+    // 为什么需要手动覆盖：sd.cpp 的自动判定只认「GGUF 里有没有 edm_vpred.sigma_max 这个张量」
+    // （sd.cpp model/integrations/sd.cpp）。cosXL / SD2-v 这类模型的转换过程一旦丢掉该张量，
+    // 就会被当成 eps 跑 —— 不崩、不报错，只是出图糊成一片。issue #3 里
+    // "edm sampler for cosxl" 本质就是这个：EDM 是预测参数化，与采样器正交。
+    // 同时挡越界：强转一个不在枚举里的值会让 sd.cpp 的 switch 落到预期之外的分支。
+    if (prediction >= 0 && prediction < PREDICTION_COUNT) {
+        p.prediction = static_cast<enum prediction_t>(prediction);
+        LOGI("prediction override: %s (%d)", sd_prediction_name(p.prediction), (int) prediction);
+    }
 
     char* dump = sd_ctx_params_to_str(&p);
     g_last_dump = dump ? dump : "";
@@ -714,6 +764,162 @@ Java_com_litertchat_app_draw_SdCppEngine_nativeGenerate(
     sd_set_preview_callback(nullptr, PREVIEW_NONE, 1, true, false, nullptr);
     g_active = nullptr;
     return result;
+}
+
+// ==================== 视频生成 ====================
+//
+// sd.cpp 的两条管道是分开的：generate_image() 对 supports_video_generation 的模型
+// 直接拒绝（pipeline/image.cpp 的 "cannot be run with generate_image()"），
+// 视频只能走 generate_video()。参数结构是 sd_vid_gen_params_t（没有 LoRA 以外的
+// 参考图那套字段的名字差异，但 init_image / end_image / ref_videos 都在）。
+//
+// 进度回调复用同一个全局 sd_progress_callback：加载权重与采样共用，
+// 判据仍是「报告的总数 == 请求步数」，所以这里照旧设 req_steps。
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_litertchat_app_draw_SdCppEngine_nativeSupportsVideo(
+        JNIEnv* /*env*/, jobject /*thiz*/, jlong handle) {
+    SdHandle* h = reinterpret_cast<SdHandle*>(handle);
+    if (h == nullptr || h->ctx == nullptr) return JNI_FALSE;
+    return sd_ctx_supports_video_generation(h->ctx) ? JNI_TRUE : JNI_FALSE;
+}
+
+// nativeGenerateVideo(handle, prompt, negative, width, height, steps, cfg, seed,
+//                     sampleMethod, scheduler, videoFrames, fps, outDir, cb, pcb)
+//                     -> String[]（每帧 PNG 的绝对路径）
+//
+// 返回 null = 失败（原因在 takeWarnings() 里）。返回空数组 = 管道说成功但一帧没有，
+// 这在 sd.cpp 里只可能是内部异常，也当失败处理（由 Kotlin 侧判断 size == 0）。
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_com_litertchat_app_draw_SdCppEngine_nativeGenerateVideo(
+        JNIEnv* env, jobject /*thiz*/,
+        jlong handle,
+        jstring prompt, jstring negative,
+        jint width, jint height, jint steps, jfloat cfg, jlong seed,
+        jint sampleMethod, jint scheduler,
+        jint videoFrames, jint fps,
+        jstring outDir,
+        jobject cb, jobject pcb) {
+    SdHandle* h = reinterpret_cast<SdHandle*>(handle);
+    if (h == nullptr || h->ctx == nullptr) return nullptr;
+
+    // 先判能力再干活：非视频模型在这里失败时只花一瞬，不必等它把权重都 mmap 一遍。
+    if (!sd_ctx_supports_video_generation(h->ctx)) {
+        LOGE("generate_video: loaded model is not a video model");
+        return nullptr;
+    }
+
+    std::string sPrompt, sNeg, sOut;
+    jstr(env, prompt, sPrompt);
+    jstr(env, negative, sNeg);
+    jstr(env, outDir, sOut);
+    if (sOut.empty()) {
+        LOGE("generate_video: empty output dir");
+        return nullptr;
+    }
+    ::mkdir(sOut.c_str(), 0777);  // 已存在时返回 EEXIST，忽略
+
+    if (cb != nullptr) {
+        h->cb = env->NewGlobalRef(cb);
+        jclass cls = env->GetObjectClass(cb);
+        h->cb_mid = env->GetMethodID(cls, "onStep", "(IIZ)V");
+        if (h->cb_mid == nullptr) {
+            LOGE("StepCallback.onStep(IIZ)V not found");
+            env->DeleteGlobalRef(h->cb);
+            h->cb = nullptr;
+        }
+    }
+    if (pcb != nullptr) {
+        h->pcb = env->NewGlobalRef(pcb);
+        jclass pcls = env->GetObjectClass(pcb);
+        h->pcb_mid = env->GetMethodID(pcls, "onPreview", "(III[B)V");
+        if (h->pcb_mid == nullptr) {
+            LOGE("PreviewCallback.onPreview(III[B)V not found");
+            env->DeleteGlobalRef(h->pcb);
+            h->pcb = nullptr;
+        } else {
+            sd_set_preview_callback(previewTrampoline, PREVIEW_PROJ, 1, true, false, h);
+        }
+    } else {
+        sd_set_preview_callback(nullptr, PREVIEW_NONE, 1, true, false, nullptr);
+    }
+
+    h->cancelled.store(false);
+    h->req_steps        = steps;
+    h->sampling_started = false;
+    g_active = h;
+    sd_set_progress_callback(progressTrampoline, h);
+
+    sd_vid_gen_params_t g;
+    sd_vid_gen_params_init(&g);
+    g.prompt          = sPrompt.c_str();
+    g.negative_prompt = sNeg.empty() ? nullptr : sNeg.c_str();
+    g.width           = width;
+    g.height          = height;
+    g.seed            = seed;
+    g.video_frames    = videoFrames;
+    g.fps             = fps;
+    g.sample_params.sample_steps     = steps;
+    g.sample_params.guidance.txt_cfg = cfg;
+    g.sample_params.sample_method    = static_cast<enum sample_method_t>(sampleMethod);
+    g.sample_params.scheduler        = static_cast<enum scheduler_t>(scheduler);
+
+    LOGI("generate_video: %dx%d frames=%d fps=%d steps=%d cfg=%.2f seed=%lld",
+         width, height, videoFrames, fps, steps, cfg, static_cast<long long>(seed));
+
+    sd_video_generation_result_t* res = nullptr;
+    const bool ok = generate_video(h->ctx, &g, &res);
+    const int n = (res != nullptr) ? res->frame_count : 0;
+    LOGI("generate_video done: ok=%d frames=%d", ok ? 1 : 0, n);
+
+    jobjectArray out = nullptr;
+    if (ok && res != nullptr && n > 0 && res->frames != nullptr) {
+        jclass strCls = env->FindClass("java/lang/String");
+        out = env->NewObjectArray(n, strCls, nullptr);
+        int written = 0;
+        for (int i = 0; i < n; ++i) {
+            const sd_image_t& f = res->frames[i];
+            if (f.data == nullptr || f.width == 0 || f.height == 0) continue;
+            // stb 只接受 1/3/4 通道；2 通道（灰度+alpha）没有对应写法，直接跳过
+            if (f.channel != 1 && f.channel != 3 && f.channel != 4) continue;
+            char name[32];
+            std::snprintf(name, sizeof(name), "/frame_%04d.png", written);
+            const std::string path = sOut + name;
+            const int stride = static_cast<int>(f.width * f.channel);
+            if (stbi_write_png(path.c_str(), static_cast<int>(f.width),
+                               static_cast<int>(f.height), static_cast<int>(f.channel),
+                               f.data, stride) == 0) {
+                LOGE("frame %d: stbi_write_png failed (%s)", i, path.c_str());
+                continue;
+            }
+            jstring js = env->NewStringUTF(path.c_str());
+            env->SetObjectArrayElement(out, written, js);
+            env->DeleteLocalRef(js);
+            ++written;
+        }
+        // 写了 k 帧就把数组截到 k —— 留一堆 null 会让 Kotlin 侧多一层判空
+        if (written != n) {
+            jobjectArray trimmed = env->NewObjectArray(written, strCls, nullptr);
+            for (int i = 0; i < written; ++i) {
+                jobject s = env->GetObjectArrayElement(out, i);
+                env->SetObjectArrayElement(trimmed, i, s);
+                env->DeleteLocalRef(s);
+            }
+            env->DeleteLocalRef(out);
+            out = trimmed;
+        }
+        LOGI("generate_video: wrote %d PNG(s) to %s", written, sOut.c_str());
+    } else {
+        LOGE("generate_video failed (ok=%d, frames=%d)", ok ? 1 : 0, n);
+    }
+
+    if (res != nullptr) free_sd_video_generation_result(res);
+
+    if (h->cb) { env->DeleteGlobalRef(h->cb); h->cb = nullptr; h->cb_mid = nullptr; }
+    if (h->pcb) { env->DeleteGlobalRef(h->pcb); h->pcb = nullptr; h->pcb_mid = nullptr; }
+    sd_set_progress_callback(nullptr, nullptr);
+    sd_set_preview_callback(nullptr, PREVIEW_NONE, 1, true, false, nullptr);
+    g_active = nullptr;
+    return out;
 }
 
 extern "C" JNIEXPORT void JNICALL

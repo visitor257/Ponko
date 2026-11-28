@@ -1,0 +1,135 @@
+{
+  "formatVersion": 1,
+  "id": "video",
+  "name": "视频生成",
+  "author": "Ponko",
+
+  "requires": {
+    "plugins": [],
+    "hostActions": ["host.video", "host.cancel", "host.video.load", "host.video.unload"]
+  },
+
+  "ui": {
+    "intro": "文生视频。先选模型集并加载（十几 GB 的模型要几分钟），再调参数。帧数越多越慢，内存也越吃紧——先拿 33 帧试手感。",
+    "items": [
+      { "type": 15, "key": "main" },
+
+      { "type": 16, "key": "param", "label": "参数" },
+
+      { "type": 27, "key": "set", "label": "模型集",
+        "help": "来自「绘图 → 模型」，本页只列出已导入的模型集" },
+
+      { "type": 20, "value": "1,1" },
+      { "type": 6, "key": "load", "label": "加载模型", "value": "run:load" },
+      { "type": 6, "key": "unload", "label": "卸载模型", "value": "run:unload" },
+      { "type": 21 },
+
+      { "type": 24 },
+
+      { "type": 9, "key": "prompt", "label": "画面描述",
+        "help": "主体、动作、镜头、光线，越具体越好" },
+      { "type": 9, "key": "negative", "label": "反向提示词",
+        "value": "blurry, low quality, watermark, text, extra limbs" },
+
+      { "type": 24 },
+
+      { "type": 20, "value": "1,1" },
+      { "type": 3, "key": "frames", "label": "帧数",
+        "min": 5, "max": 121, "step": 4, "value": "33",
+        "help": "多数视频模型要求 4n+1：5 / 33 / 81 / 121" },
+      { "type": 3, "key": "fps", "label": "帧率",
+        "min": 6, "max": 30, "step": 1, "value": "16" },
+      { "type": 21 },
+
+      { "type": 20, "value": "1,1" },
+      { "type": 4, "key": "size_w", "label": "宽", "value": "832",
+        "options": [
+          { "value": "480", "label": "480" },
+          { "value": "512", "label": "512" },
+          { "value": "768", "label": "768" },
+          { "value": "832", "label": "832" } ] },
+      { "type": 4, "key": "size_h", "label": "高", "value": "480",
+        "options": [
+          { "value": "480", "label": "480" },
+          { "value": "512", "label": "512" },
+          { "value": "768", "label": "768" },
+          { "value": "832", "label": "832" } ] },
+      { "type": 21 },
+
+      { "type": 20, "value": "1,1" },
+      { "type": 3, "key": "steps", "label": "步数",
+        "min": 2, "max": 60, "step": 1, "value": "20" },
+      { "type": 3, "key": "cfg", "label": "文本引导",
+        "min": 1.0, "max": 12.0, "step": 0.1, "value": "6.0" },
+      { "type": 21 },
+
+      { "type": 20, "value": "1,1" },
+      { "type": 4, "key": "sampler", "label": "采样器", "value": "euler",
+        "options": [
+          { "value": "euler", "label": "Euler" },
+          { "value": "heun", "label": "Heun" },
+          { "value": "dpm++2m", "label": "DPM++ 2M" },
+          { "value": "res_multistep", "label": "Res Multistep" } ] },
+      { "type": 4, "key": "scheduler", "label": "调度器", "value": "discrete",
+        "options": [
+          { "value": "discrete", "label": "Discrete" },
+          { "value": "karras", "label": "Karras" },
+          { "value": "simple", "label": "Simple" },
+          { "value": "sgm_uniform", "label": "SGM Uniform" } ] },
+      { "type": 21 },
+
+      { "type": 5, "key": "seed", "label": "种子", "value": "0",
+        "help": "0 = 每次随机" },
+
+      { "type": 24 },
+
+      { "type": 6, "key": "go", "label": "生成",
+        "value": "run:generate", "primary": true },
+      { "type": 6, "key": "stop", "label": "停止", "value": "run:cancel",
+        "enabled": false },
+
+      { "type": 7, "key": "bar", "label": "进度" },
+      { "type": 8, "key": "status", "label": "状态", "value": "未开始" },
+
+      { "type": 16, "key": "result", "label": "结果" },
+      { "type": 13, "key": "preview", "label": "实时预览",
+        "help": "采样过程中每步更新" },
+      { "type": 26, "key": "video", "label": "结果",
+        "help": "按帧轮播，不是 mp4；帧图在应用私有目录 draw/videos/ 下" },
+      { "type": 12, "key": "log", "label": "日志" },
+
+      { "type": 17 }
+    ]
+  },
+
+  "actions": {
+    "generate": {
+      "call": "host.video",
+      "confirm": true,
+      "args": {
+        "set": "$ui.set",
+        "prompt": "$ui.prompt",
+        "negative_prompt": "$ui.negative",
+        "video_frames": "$ui.frames",
+        "fps": "$ui.fps",
+        "width": "$ui.size_w",
+        "height": "$ui.size_h",
+        "sample_steps": "$ui.steps",
+        "txt_cfg": "$ui.cfg",
+        "sample_method": "$ui.sampler",
+        "scheduler": "$ui.scheduler",
+        "seed": "$ui.seed"
+      }
+    },
+    "cancel": {
+      "call": "host.cancel"
+    },
+    "load": {
+      "call": "host.video.load",
+      "args": { "set": "$ui.set" }
+    },
+    "unload": {
+      "call": "host.video.unload"
+    }
+  }
+}

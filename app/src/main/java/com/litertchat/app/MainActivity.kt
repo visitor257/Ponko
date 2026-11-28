@@ -58,6 +58,7 @@ import com.google.ai.edge.litertlm.Content
 import com.google.ai.edge.litertlm.Contents
 import com.litertchat.app.draw.DrawPage
 import com.litertchat.app.draw.GgufProbe
+import com.litertchat.app.draw.SdCppEngine
 import com.litertchat.app.draw.TaggerEngine
 import com.google.ai.edge.litertlm.Conversation
 import com.google.ai.edge.litertlm.ConversationConfig
@@ -808,6 +809,15 @@ class MainActivity : Activity() {
     private var drawToggleBtn: TextView? = null
     /** 绘图模型的 FlashAttention 开关（加载时生效；已加载时禁用） */
     private var drawFlashAttnCheck: CheckBox? = null
+    /** 绘图模型的预测类型下拉（加载时生效；已加载时禁用）。顺序与 [predictionCodes] 一致 */
+    private var drawPredictionSpinner: Spinner? = null
+    /** 预测类型下拉的取值顺序，必须与 Spinner 里选项的顺序一一对应 */
+    private val predictionCodes = intArrayOf(
+        SdCppEngine.PREDICTION_AUTO,
+        SdCppEngine.PREDICTION_EPS,
+        SdCppEngine.PREDICTION_V,
+        SdCppEngine.PREDICTION_EDM_V,
+    )
     /** 绘图模型的「导入」按钮（复制期间禁用） */
     private var drawImportBtn: TextView? = null
     /** 绘图模型导入进度条（本地复制时显示） */
@@ -1791,6 +1801,41 @@ class MainActivity : Activity() {
             setOnCheckedChangeListener { _, v -> drawPage?.flashAttn = v }
         }
         drawCard.addView(drawFlashAttnCheck, matchWrap())
+        // 预测类型：与 FlashAttention 同为**加载期**参数，所以也放这一区、也在已加载时禁用。
+        // 存在的理由：sd.cpp 只按 GGUF 里有没有 `edm_vpred.sigma_max` 张量来判断 EDM v-pred，
+        // 转换时丢了那个张量就会静默走 eps —— 不崩、不报错，只是图糊成一片。
+        // cosXL 是典型受害者（issue #3 的 "edm sampler for cosxl"）。
+        val predRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        predRow.addView(TextView(this).apply {
+            text = getString(R.string.s_839)
+            textSize = 13f
+            setTextColor(C_TEXT)
+        }, wrapWrap())
+        val curPrediction = drawPage?.prediction ?: SdCppEngine.PREDICTION_AUTO
+        val predBox = Spinner(this).apply {
+            adapter = ArrayAdapter(
+                this@MainActivity,
+                android.R.layout.simple_spinner_dropdown_item,
+                listOf(getString(R.string.s_841), "eps", "v", "EDM v")
+            )
+            setSelection(predictionCodes.indexOf(curPrediction).coerceAtLeast(0), false)
+        }
+        drawPredictionSpinner = predBox
+        predRow.addView(predBox, wrapWrap().apply { leftMargin = dp(6) })
+        predBox.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long) {
+                drawPage?.prediction = predictionCodes[position]
+            }
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+        }
+        drawCard.addView(predRow, matchWrap().apply { topMargin = dp(6) })
+        drawCard.addView(
+            hintText(getString(R.string.s_840)),
+            matchWrap().apply { topMargin = dp(2) }
+        )
         drawCard.addView(
             smallButton(getString(R.string.s_749)) { showDiagnosticsDialog() },
             matchWrap().apply { topMargin = dp(10) }
@@ -3863,20 +3908,20 @@ class MainActivity : Activity() {
     /** 「选择绘图模型文件」→ 先挑类型（单文件 / 多文件 × 家族），再选文件。
      *  单文件 = 一个 all-in-one .gguf；多文件 = 主模型 + 若干配套文件（按家族给槽位模板）。 */
     private fun showDrawTypeMenu() {
-        // 「视频（Wan / LTX-V 等）」原本在这两个列表里 —— 1.6.0 做多文件槽位时顺手加的，
-        // 只为让视频模型的分件能按正确槽位归位。但 App 从来没接 generate_video()：选中之后
-        // 点生成，sd.cpp 会在 pipeline/image.cpp 里以 !supports_image_generation 为由直接
-        // 返回 false，用户只能看到一句「生成失败」。留着等于用一个看着能用的入口，骗人先下
-        // 一份 10~20 GB 的模型。所以从 2.2.0 起摘掉。
-        // FAM_VIDEO 常量、槽位模板、s_343 文案都保留：已经建过的视频模型集还要能正常显示，
-        // 将来真做完视频管道，把这两处的 "video" 加回来即可。
-        val single = listOf("sd15", "sdxl", "sd3", "flux", "qwen", "other")
+        // 「视频（Wan / LTX-V 等）」：
+        //   · 1.6.0 做多文件槽位时加进来，但那时没有 generate_video()，选中后点生成只会
+        //     得到一句「生成失败」（sd.cpp 在 pipeline/image.cpp 里以
+        //     !supports_image_generation 为由直接拒绝）
+        //   · 2.2.0 摘掉：不留"看着能用、其实一步都跑不出来"的入口
+        //   · 2.2.1 加回来：视频管道已经通了（VideoRunner + generate_video），
+        //     入口在「Ponko-EX → JSON 插件 → 视频生成」那一页，导入仍走这里
+        val single = listOf("sd15", "sdxl", "sd3", "flux", "qwen", "video", "other")
         // 三个 LLM 编码器架构只在「多文件」里出现 —— 它们的扩散模型和文本编码器
         // 几乎总是分开分发；塞进单文件模式会给人「一个文件就够」的错误暗示。
         val multi = listOf("sd3", "flux", "qwen", "hidream",
             DrawPage.FAM_IDEOGRAM, DrawPage.FAM_KREA2, DrawPage.FAM_KLEIN,
             DrawPage.FAM_FLUX3, DrawPage.FAM_MOSS, DrawPage.FAM_FIBO2,
-            DrawPage.FAM_PIXART, DrawPage.FAM_H3_IMAGE, "other")
+            DrawPage.FAM_PIXART, DrawPage.FAM_H3_IMAGE, "video", "other")
         val labels = ArrayList<String>()
         val picks = ArrayList<kotlin.Pair<String, String>>()
         for (kind in listOf("single", "multi")) {
@@ -4479,6 +4524,13 @@ class MainActivity : Activity() {
             cb.isEnabled = !ready
             cb.alpha = if (ready) 0.5f else 1f
             cb.isChecked = drawPage?.flashAttn ?: true
+        }
+        // 预测类型同理：加载期参数，模型跑着的时候改它没有任何作用
+        drawPredictionSpinner?.let { sp ->
+            sp.isEnabled = !ready
+            sp.alpha = if (ready) 0.5f else 1f
+            val i = predictionCodes.indexOf(drawPage?.prediction ?: SdCppEngine.PREDICTION_AUTO)
+            if (i >= 0 && i != sp.selectedItemPosition) sp.setSelection(i, false)
         }
     }
 

@@ -75,6 +75,18 @@ object SdCppEngine {
 
     /** 权重类型（对应 sd.cpp enum sd_type_t）；KEEP = 保持模型原样 */
     const val WTYPE_KEEP = -1
+
+    /**
+     * 预测类型覆盖值（对应 sd.cpp `enum prediction_t`）。
+     *
+     * AUTO = 不覆盖，让 sd.cpp 自己按模型定义判（它只看 GGUF 里有没有
+     * `edm_vpred.sigma_max` 之类的张量）。转换过程中张量丢了就会误判成 eps，
+     * 出图糊但不报错 —— 这时才需要手动指定 EDM_V。
+     */
+    const val PREDICTION_AUTO = -1
+    const val PREDICTION_EPS = 0
+    const val PREDICTION_V = 1
+    const val PREDICTION_EDM_V = 2
     const val WTYPE_F32 = 0
     const val WTYPE_F16 = 1
     const val WTYPE_Q4_0 = 2
@@ -123,6 +135,7 @@ object SdCppEngine {
         flashAttn: Boolean,
         backend: String?,
         slots: Array<String?>?,
+        prediction: Int,
     ): Long
 
     external fun nativeGenerate(
@@ -155,6 +168,39 @@ object SdCppEngine {
 
     /** 已加载模型自带的参考图预设名；不支持参考图时返回 null（见 nativeRefImagePreset 注释） */
     external fun nativeRefImagePreset(handle: Long): String?
+
+    /**
+     * 已加载的模型能不能出视频。
+     *
+     * sd.cpp 用同一个 ctx 承载两类模型，靠 `supports_video_generation` 区分；
+     * 对视频模型调 generate_image() 会被内部直接拒绝，所以生成前必须先问这一句，
+     * 否则用户要等几十秒加载完才看到一句"生成失败"。
+     */
+    external fun nativeSupportsVideo(handle: Long): Boolean
+
+    /**
+     * 生成一段视频：每帧写成 PNG 到 [outDir]，返回按时间排序的绝对路径。
+     *
+     * 帧不走 JNI 数组（33 帧 832×480 就是 40 MB，过 JNI 会直接把内存挤爆），
+     * 由 native 落盘、Kotlin 按需解码。失败返回 null，原因在 [takeWarnings] 里。
+     */
+    external fun nativeGenerateVideo(
+        handle: Long,
+        prompt: String,
+        negative: String,
+        width: Int,
+        height: Int,
+        steps: Int,
+        cfg: Float,
+        seed: Long,
+        sampleMethod: Int,
+        scheduler: Int,
+        videoFrames: Int,
+        fps: Int,
+        outDir: String,
+        cb: StepCallback?,
+        pcb: PreviewCallback?,
+    ): Array<String>?
 
     external fun nativeCancel(handle: Long)
 
@@ -191,6 +237,7 @@ object SdCppEngine {
      *
      *  flashAttn：CLIP 与 UNet 的 FlashAttention。实测不开会让每步慢约 28%，默认开。
      *  backend：ggml 后端/设备名（"CPU" / "Vulkan0"）；null = 交给 sd.cpp 自动挑。
+     *  prediction：预测参数化覆盖，[PREDICTION_AUTO] = 交给 sd.cpp。
      */
     fun create(
         modelPath: String,
@@ -200,7 +247,8 @@ object SdCppEngine {
         flashAttn: Boolean = true,
         backend: String? = null,
         slots: Array<String?>? = null,
-    ): Long = nativeCreate(modelPath, vaePath, nThreads, wtype, flashAttn, backend, slots)
+        prediction: Int = PREDICTION_AUTO,
+    ): Long = nativeCreate(modelPath, vaePath, nThreads, wtype, flashAttn, backend, slots, prediction)
 
     /**
      * 槽位顺序（与 JNI 里的 SlotIndex 一一对应；sd.cpp 的 sd_ctx_params_t 路径字段）。
@@ -299,6 +347,48 @@ object SdCppEngine {
 
     /** 一张参考图：RGB888 交错字节 + 尺寸 */
     class RefImage(val width: Int, val height: Int, val rgb: ByteArray)
+
+    /** 已加载的模型是不是视频模型 */
+    fun supportsVideo(handle: Long): Boolean =
+        runCatching { nativeSupportsVideo(handle) }.getOrDefault(false)
+
+    /**
+     * 生成一段视频，返回每帧 PNG 的路径（按帧序）。
+     *
+     * 和 [render] 的差别不只是"多几帧"：
+     *   · 没有 LoRA / 参考图 / img2img —— 这些在视频管道里另有字段（init_image、
+     *     ref_videos），2.2.1 只做文生视频，多给的参数会被静默忽略，不如不给
+     *   · [frames] 多数模型要求 4n+1（5 / 33 / 81 / 121），填错引擎会报错而不是取整
+     *   · 结果落盘而不是回内存：一帧 832×480 就是 1.2 MB，33 帧全留在内存里
+     *     在 8 GB 机器上等于自杀
+     */
+    fun renderVideo(
+        handle: Long,
+        prompt: String,
+        outDir: String,
+        negative: String = "",
+        width: Int = 832,
+        height: Int = 480,
+        steps: Int = 20,
+        cfg: Float = 6.0f,
+        seed: Long = -1L,
+        sampler: Sampler = Sampler.EULER,
+        scheduler: Scheduler = Scheduler.DISCRETE,
+        frames: Int = 33,
+        fps: Int = 16,
+        cb: StepCallback? = null,
+        onPreview: PreviewCallback? = null,
+    ): List<String>? {
+        val effectiveSeed = if (seed < 0) (System.currentTimeMillis() % 1_000_000_000L) else seed
+        val paths = nativeGenerateVideo(
+            handle, prompt, negative,
+            width, height, steps, cfg, effectiveSeed,
+            sampler.code, scheduler.code,
+            frames, fps, outDir, cb, onPreview,
+        ) ?: return null
+        if (paths.isEmpty()) return null
+        return paths.toList()
+    }
 
     /**
      * 一份要挂的 LoRA：文件路径 + 它自己的权重。

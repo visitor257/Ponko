@@ -773,4 +773,68 @@
     <string name="s_634">剩余时间单位</string>
     <string name="s_635">秒</string>
     <string name="s_636">分钟</string>
+
+    <!-- 2.2.1：JSON 插件 + 视频生成 -->
+    <string name="s_780">播放</string>
+    <string name="s_781">暂停</string>
+    <string name="s_782">JSON 插件</string>
+    <string name="s_783">导入 JSON</string>
+    <string name="s_784">还没有。JSON 插件就是一个 .json 文件：页面怎么排，加上每个按钮调哪个宿主动作。可以在下面导入一份。</string>
+    <string name="s_785">‹ 返回</string>
+    <string name="s_786">本页会调用：%1$s</string>
+    <string name="s_787">这个控件（type %1$d）只有 Ponko-EX 插件能用</string>
+    <string name="s_788">这个版本还不认识控件 type=%1$d，升级 Ponko 后再试</string>
+    <string name="s_789">还没有导入模型集。去「绘图 → 模型」里导入一个。</string>
+    <string name="s_790">actions 里没有绑定「%1$s」的动作</string>
+    <string name="s_791">宿主还没有这个动作：%1$s</string>
+    <string name="s_792">确定要执行「%1$s」吗？视频生成可能要几十分钟，而且很吃内存。</string>
+    <string name="s_793">执行</string>
+    <string name="s_794">取消</string>
+    <string name="s_795">已取消</string>
+    <string name="s_796">模型已卸载</string>
+    <string name="s_797">现在没有任务在跑</string>
+    <string name="s_798">提示词是空的</string>
+    <string name="s_799">已有任务在跑，先停下它</string>
+    <string name="s_800">没有选模型集</string>
+    <string name="s_801">开始…</string>
+    <string name="s_802">加载模型 %1$d%%</string>
+    <string name="s_803">第 %1$d/%2$d 步 · 已 %3$d 秒 · 剩余约 %4$d 秒</string>
+    <string name="s_804">完成：%1$d 帧</string>
+    <string name="s_805">帧已写入 %1$s</string>
+    <string name="s_806">失败（没有给出原因）</string>
+    <string name="s_807">失败：%1$s</string>
+    <string name="s_808">插件 %1$s 完成，%2$d 毫秒</string>
+    <string name="s_809">这条动作没有写插件包名</string>
+    <string name="s_810">这条动作没写 key</string>
+    <string name="s_811">已调用 %1$s</string>
+    <string name="s_812">已向 %1$s 发起合成</string>
+    <string name="s_813">模型已就绪</string>
+    <string name="s_814">%1$s · %2$d 条动作</string>
+    <string name="s_815">%1$s — %2$s</string>
+    <string name="s_816">打不开文件选择器</string>
+    <string name="s_817">已导入</string>
+    <string name="s_818">导入失败：%1$s</string>
+    <string name="s_819">这是视频模型，不能在这里出图。去「Ponko-EX → JSON 插件 → 视频生成」。</string>
+    <string name="s_820">没有找到模型集：%1$s</string>
+    <string name="s_821">这个模型集不是视频模型（sd.cpp 的 supports_video_generation 为 false）</string>
+    <string name="s_822">模型集里没有主模型文件</string>
+    <string name="s_823">释放上一个模型集：%1$s</string>
+    <string name="s_824">加载 %1$s（%2$s）</string>
+    <string name="s_825">模型已加载</string>
+    <string name="s_826">读不出来：%1$s</string>
+    <string name="s_827">不是合法 JSON：%1$s</string>
+    <string name="s_828">formatVersion=%1$d，本版只认 %2$d</string>
+    <string name="s_829">缺少 \"id\"</string>
+    <string name="s_830">缺少 \"ui\"</string>
+    <string name="s_831">缺少 \"ui.items\"</string>
+    <string name="s_832">\"ui.items\" 是空的</string>
+    <string name="s_833">id 与另一份重复（%1$s），已跳过</string>
+    <string name="s_834">读不了这个文件</string>
+    <string name="s_835">文件太大（上限 512 KB）</string>
+    <string name="s_836">不是 UTF-8 文本</string>
+    <string name="s_837">格式不对：%1$s</string>
+    <string name="s_838">保存失败：%1$s</string>
+    <string name="s_839">预测类型</string>
+    <string name="s_840">和 FlashAttention 一样在加载时读取，改完要卸载再加载才生效。自动 = 按模型自身的声明走；只有出图明显不对时才需要手动改（cosXL 这类 EDM v-pred 模型是常见情况）。</string>
+    <string name="s_841">自动</string>
 </resources>

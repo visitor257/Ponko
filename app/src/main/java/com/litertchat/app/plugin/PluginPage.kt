@@ -202,6 +202,18 @@ class PluginPage(
     private var listLayer: View? = null
     /** 当前正在显示的插件界面；null = 在列表 */
     private var currentUiPage: PluginUiPage? = null
+
+    /**
+     * 当前打开的 JSON 插件页（null = 没开）。
+     *
+     * 和 [currentUiPage] 并存而不是合并：两者的关闭动作不同 ——
+     * 插件页要保存试听参数、停播放器；JSON 页要释放视频 context。
+     * 合成一个 `View?` 之后每次关闭都得先判断"这是哪种"，反而更容易漏。
+     */
+    private var jsonUiPage: com.litertchat.app.jsonplugin.JsonUiPage? = null
+
+    /** 扫目录时发现的问题文件（文件名 → 原因），画在 JSON 区下面 */
+    private var jsonErrors: List<Pair<String, String>> = emptyList()
     /** 当前插件界面对应的包名；null = 在列表 */
     private var openUiPkg: String? = null
 
@@ -618,10 +630,12 @@ class PluginPage(
     }
 
     /** 当前是否正显示某个插件的界面（给 MainActivity 的返回键用） */
-    fun isShowingPluginUi(): Boolean = currentUiPage != null
+    fun isShowingPluginUi(): Boolean = currentUiPage != null || jsonUiPage != null
 
     /** 返回列表。给 MainActivity 的返回键用 */
-    fun backToList() = closePluginUi()
+    fun backToList() {
+        if (jsonUiPage != null) closeJsonUi() else closePluginUi()
+    }
 
     /** 搜索框当前是否展开（顶栏 🔍 按钮据此决定图标状态） */
     fun isSearchOpen(): Boolean = searchRowRef?.visibility == View.VISIBLE
@@ -888,6 +902,11 @@ class PluginPage(
 
     /** Activity 真正销毁时调，解绑所有插件。切换 tab 时**不要**调（切回来要保留状态） */
     fun release() {        // 先停播放：不停的话页面走了声音还在响
+        // JSON 页要额外收尾：停帧播放器、解绑它自己那条 PluginSession、
+        // 释放视频 context（几十 GB 的映射，不还回去下次出图就 OOM）
+        runCatching { jsonUiPage?.release() }
+        jsonUiPage = null
+        jsonErrors = emptyList()
         // 播放条的 200ms 轮询也要停 —— 它持着 handler 和 view，
         // 不停的话每次 release 都漏一个 Runnable 和一堆视图
         currentUiPage?.stopAudioTicker()
@@ -984,12 +1003,141 @@ class PluginPage(
                     )
                 }
             )
-            return
+        } else {
+            shown.forEach { item ->
+                host.addView(itemCard(item), matchWrap().apply { topMargin = dp(8) })
+            }
         }
 
-        shown.forEach { item ->
-            host.addView(itemCard(item), matchWrap().apply { topMargin = dp(8) })
+        // JSON 插件排在 APK 插件后面：它们没有进程、没有签名、也不需要"启用"，
+        // 混在卡片里会让人以为也是装出来的。单独一段、单独一个导入按钮。
+        appendJsonSection(host, q)
+    }
+
+    /**
+     * 「JSON 插件」区。
+     *
+     * 每次重画都重新扫目录：改一份 JSON 保存后就该立刻生效，缓存反而会出现
+     * "我明明改了，页面还是旧的"。目录里通常只有几份文件，扫一次是微秒级。
+     */
+    private fun appendJsonSection(host: LinearLayout, q: String) {
+        val scan = com.litertchat.app.jsonplugin.JsonPlugins.scan(act)
+        jsonErrors = scan.errors
+        val needle = q.trim().lowercase(java.util.Locale.ROOT)
+        val shown = if (needle.isEmpty()) scan.plugins else scan.plugins.filter {
+            it.name.lowercase(java.util.Locale.ROOT).contains(needle) ||
+                it.id.lowercase(java.util.Locale.ROOT).contains(needle)
         }
+
+        host.addView(TextView(act).apply {
+            text = getString(R.string.s_782)
+            textSize = 13f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(pal.primary)
+            setPadding(0, dp(18), 0, dp(2))
+        }, matchWrap())
+
+        if (shown.isEmpty()) {
+            host.addView(TextView(act).apply {
+                text = getString(R.string.s_784)
+                textSize = 11.5f
+                setTextColor(pal.hint)
+                setPadding(0, dp(2), 0, dp(4))
+            }, matchWrap())
+        }
+        shown.forEach { p ->
+            host.addView(jsonPluginCard(p), matchWrap().apply { topMargin = dp(6) })
+        }
+        // 坏文件要说出来：用户放了一份进去却没出现，最可能的原因就在这几行里
+        jsonErrors.forEach { (name, why) ->
+            host.addView(TextView(act).apply {
+                text = getString(R.string.s_815, name, why)
+                textSize = 10.5f
+                setTextColor(pal.err)
+                setPadding(0, dp(2), 0, 0)
+            }, matchWrap())
+        }
+
+        val row = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL }
+        row.addView(smallButton(getString(R.string.s_783)) { pickJsonPlugin() })
+        host.addView(row, matchWrap().apply { topMargin = dp(8) })
+    }
+
+    private fun jsonPluginCard(p: com.litertchat.app.jsonplugin.JsonPlugin): View {
+        val card = LinearLayout(act).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            background = rounded(pal.surface, 12)
+            isClickable = true
+            setOnClickListener { openJsonUi(p) }
+        }
+        card.addView(TextView(act).apply {
+            text = p.name
+            textSize = 14f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(pal.text)
+        })
+        card.addView(TextView(act).apply {
+            text = getString(R.string.s_814, p.id, p.actions.size)
+            textSize = 11f
+            setTextColor(pal.hint)
+            setPadding(0, dp(2), 0, 0)
+        })
+        if (p.intro.isNotEmpty()) {
+            card.addView(TextView(act).apply {
+                text = p.intro
+                textSize = 11.5f
+                setTextColor(pal.subText)
+                setPadding(0, dp(6), 0, 0)
+            })
+        }
+        return card
+    }
+
+    private fun pickJsonPlugin() {
+        val i = android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(android.content.Intent.CATEGORY_OPENABLE)
+            type = "application/json"
+            // 有些文件管理器把 .json 报成 text/plain 或 octet-stream，只给
+            // application/json 会让它显示成"没有可选文件"
+            putExtra(android.content.Intent.EXTRA_MIME_TYPES,
+                arrayOf("application/json", "text/plain", "application/octet-stream"))
+        }
+        try {
+            act.startActivityForResult(i, REQ_PICK_JSON_PLUGIN)
+        } catch (t: Throwable) {
+            android.util.Log.w("PonkoPluginPage", "打开 JSON 选择器失败", t)
+            toast(getString(R.string.s_816))
+        }
+    }
+
+    private fun openJsonUi(p: com.litertchat.app.jsonplugin.JsonPlugin) {
+        val root = pageRoot ?: return
+        closePluginUi()
+        val page = com.litertchat.app.jsonplugin.JsonUiPage(act, pal, p) { closeJsonUi() }
+        jsonUiPage = page
+        root.addView(
+            page.build(),
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+        listLayer?.visibility = View.GONE
+        onUiVisibilityChanged?.invoke(true)
+    }
+
+    private fun closeJsonUi() {
+        val root = pageRoot ?: return
+        val page = jsonUiPage
+        if (page != null) {
+            val v = root.getChildAt(root.childCount - 1)
+            if (v != null && v !== listLayer) root.removeView(v)
+            runCatching { page.release() }
+        }
+        jsonUiPage = null
+        listLayer?.visibility = View.VISIBLE
+        onUiVisibilityChanged?.invoke(false)
     }
 
     /** 一个插件是否命中查询串。三者任一包含即算命中 */
@@ -1893,6 +2041,19 @@ class PluginPage(
      * @return true = 这个请求码是我们的，已经处理完（调用方不要再往下走）
      */
     fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?): Boolean {
+        // 导入一份 JSON 插件
+        if (requestCode == REQ_PICK_JSON_PLUGIN) {
+            if (resultCode != Activity.RESULT_OK) return true
+            val uri = data?.data ?: return true
+            val err = com.litertchat.app.jsonplugin.JsonPlugins.importFrom(act, uri)
+            if (err == null) {
+                toast(getString(R.string.s_817))
+                refresh()
+            } else {
+                toast(getString(R.string.s_818, err))
+            }
+            return true
+        }
         // v6：给插件挑模型文件
         if (requestCode == REQ_PICK_PLUGIN_MODEL) {
             val pkg = pendingModelPkg
@@ -2870,6 +3031,9 @@ class PluginPage(
          * 两者走同一个 `onActivityResult`，共用一个码会把"选模型"当成"选音频"处理。
          */
         const val REQ_PICK_PLUGIN_MODEL = 0x9E02
+
+        /** 导入 JSON 插件的请求码。同样单独一个，别和上面两个混。 */
+        const val REQ_PICK_JSON_PLUGIN = 0x9E03
 
         /** 等引擎卸载完成的轮询间隔。200ms ≈ 5 次/秒，对一次几百毫秒的操作够细 */
         private const val ENGINE_POLL_MS = 200L
