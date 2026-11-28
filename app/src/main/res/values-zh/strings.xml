@@ -837,4 +837,5 @@
     <string name="s_839">预测类型</string>
     <string name="s_840">和 FlashAttention 一样在加载时读取，改完要卸载再加载才生效。自动 = 按模型自身的声明走；只有出图明显不对时才需要手动改（cosXL 这类 EDM v-pred 模型是常见情况）。</string>
     <string name="s_841">自动</string>
+    <string name="s_842">「%1$s」已经在模型集「%2$s」里（同名同大小），已切换到那个集，没有复制。要给它另配一套槽位文件，把原文件改个名再导入。</string>
 </resources>

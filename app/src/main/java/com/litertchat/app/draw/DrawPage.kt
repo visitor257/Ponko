@@ -338,6 +338,12 @@ class DrawPage(
 
     /** 当前模型集（单文件 = 只填主模型；多文件 = 主模型 + 各槽位配套文件） */
     private var activeSet: ModelSet? = null
+
+    init {
+        // 2.2.1 及以前的预测类型是**全局**一个值，迁移到当前模型集上，见 migratePredictionPref()
+        migratePredictionPref()
+    }
+
     /** 下一个要导入的类型（由「模型」页的类型菜单设定） */
     var pendingKind: String = KIND_SINGLE
     var pendingFamily: String = FAM_SD15
@@ -381,14 +387,41 @@ class DrawPage(
      * 一丢，就会被当成 eps 跑 —— 不会崩、也不报错，只是**图糊成一片**。
      * issue #3 里 "edm sampler for cosxl" 要的其实就是它：EDM 不是采样器，
      * 是预测参数化，和采样器正交。
+     *
+     * **它是模型自己的属性，不是全局偏好，所以按模型集存**（key 带集 id）。
+     * 2.2.1 存的是全局值，于是给 cosXL 选了 EDM v 之后，换回 SD1.5 也照样被强制
+     * EDM v —— 不崩、不报错，图就是糊的，而且没人会想到是这个开关。换模型就该换回
+     * 那个模型自己的设置（默认「自动」）。
      */
-    var prediction: Int = c.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        .getInt(KEY_PREDICTION, -1)
+    var prediction: Int
+        get() = prefs().getInt(predictionKey(), SdCppEngine.PREDICTION_AUTO)
         set(value) {
-            field = value
-            c.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .edit().putInt(KEY_PREDICTION, value).apply()
+            prefs().edit().putInt(predictionKey(), value).apply()
         }
+
+    /** 当前模型集对应的偏好 key；还没选定任何集时用 "default" 兜底。 */
+    private fun predictionKey(): String {
+        val id = activeSet?.id ?: prefs().getString(KEY_SEL_SET, null)
+        return "$KEY_PREDICTION.${id ?: "default"}"
+    }
+
+    /**
+     * 把 2.2.1 及以前的**全局**预测值迁到当前模型集，然后删掉旧 key。
+     *
+     * 旧值只有一个，属于"最后一次被改的那个模型"—— 用户是在它身上试出来的，而它通常
+     * 就是当时选中的那个集，所以迁到当前集是唯一合理的落点。迁完必须删旧 key，否则它
+     * 会在别的模型上继续生效，就又回到这次要修的问题。
+     */
+    private fun migratePredictionPref() {
+        val p = prefs()
+        if (!p.contains(KEY_PREDICTION)) return
+        val legacy = p.getInt(KEY_PREDICTION, SdCppEngine.PREDICTION_AUTO)
+        val key = predictionKey()
+        p.edit().apply {
+            if (!p.contains(key)) putInt(key, legacy)
+            remove(KEY_PREDICTION)
+        }.apply()
+    }
 
     /** 外部（MainActivity）通知：当前已加载语言模型。用于「生成」按钮给出更准确的提示。 */
     var llmLoaded: Boolean = false
@@ -2321,6 +2354,51 @@ class DrawPage(
             if (key == "taesd" && ext !in listOf("safetensors", "gguf")) {
                 return@withContext c.getString(R.string.s_445)
             }
+            // 大小要**在创建任何目录之前**拿到：导入去重要先判断"这个文件是不是已经在某个
+            // 模型集里了"，命中就不该再建一个空集目录出来。
+            val total = runCatching {
+                c.contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length } ?: -1L
+            }.getOrDefault(-1L).let { if (it > 0) it else (querySize(uri) ?: -1L) }
+
+            // 导入去重。以前同一个文件导一次就整份复制一次：7 GB 的模型导两遍占 14 GB，
+            // /data 里堆出过 6 份 8.8 GB 就是这么来的。
+            //
+            // 为什么不共享同一份：Android 上 `link(2)` 对应用数据目录被 SELinux 拒
+            // （实测 `link failed: EACCES`），NIO 的 createLink 一样过不去，硬链接这条路
+            // 在手机上不存在；软链又会在删目录时断掉。所以命中时**直接切到已有的那个集**，
+            // 由使用者决定是就用它、还是删掉/改名再导一次。
+            //
+            // 判据是「同名 + 同大小」：重名且字节数完全相同、内容却不同，现实中只可能是
+            // 被截断的坏副本，而截断件大小必然对不上。
+            if (total > 0) {
+                val owner = findOwnerSet(name, total)
+                if (owner != null) {
+                    val (ownerSet, ownerFile) = owner
+                    val curSet = activeSet
+                    // 同一个集里重复导入同一个文件：当作成功，别再把文件重写一遍
+                    if (!pendingNewSet && curSet != null && curSet.id == ownerSet.id) {
+                        curSet.files[key] = ownerFile
+                        writeSetJson(curSet)
+                        selectSet(curSet)
+                        LogBook.w(c, LogBook.DRAW, "import dedup: $name 已在当前集 ${ownerSet.id}，跳过复制")
+                        withContext(Dispatchers.Main) {
+                            statusText.text = c.getString(R.string.s_161)
+                        }
+                        return@withContext null
+                    }
+                    selectSet(ownerSet)
+                    LogBook.w(c, LogBook.DRAW,
+                        "import dedup: $name 已在模型集 ${ownerSet.id}，已切换，不复制")
+                    // 用**返回值**把话说清楚，不能返回 null：MainActivity 的成功分支会再弹一句
+                    // 「已复制，请点加载」，而那正是这次没有发生的事。
+                    return@withContext c.getString(R.string.s_842, name, ownerSet.name)
+                }
+                LogBook.w(c, LogBook.DRAW, "import dedup: $name 没有同名同大小的副本，正常复制")
+            } else {
+                // 拿不到大小就不去重：宁可按老路复制，也不能把一个不相干的文件当成同一个
+                LogBook.w(c, LogBook.DRAW, "import dedup skipped: size unknown for $name")
+            }
+
             val cur = activeSet
             val useSet: ModelSet = when {
                 pendingNewSet || cur == null -> {
@@ -2345,10 +2423,8 @@ class DrawPage(
 
             withContext(Dispatchers.Main) { onStage(c.getString(R.string.v_033, name)) }
             val dest = File(dir, name)
-            val total = runCatching {
-                c.contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length } ?: -1L
-            }.getOrDefault(-1L)
             withContext(Dispatchers.Main) { onProgress?.invoke(0L, total) }
+
             c.contentResolver.openInputStream(uri)?.use { ins ->
                 dest.outputStream().use { outs ->
                     val buf = ByteArray(1 shl 20)
@@ -2388,6 +2464,23 @@ class DrawPage(
         } catch (e: Throwable) {
             c.getString(R.string.v_038, (e.message ?: e.javaClass.simpleName))
         }
+    }
+
+    /**
+     * 在所有已登记的模型集里找「同名 + 同大小」的文件，返回它所属的集与那个文件。
+     *
+     * 只比对**大小**不比对内容：同名的模型文件字节数相同却内容不同，现实中只可能是
+     * 被截断的坏副本，而截断件大小必然对不上。真要逐字节比对得把整个文件读一遍
+     * （几 GB），反而比省下来的复制更慢。
+     */
+    private fun findOwnerSet(name: String, size: Long): Pair<ModelSet, File>? {
+        val sets = runCatching { listSets() }.getOrDefault(emptyList())
+        for (s in sets) {
+            for (f in s.files.values) {
+                if (f.name == name && f.length() == size && f.isFile) return s to f
+            }
+        }
+        return null
     }
 
     /**
@@ -2476,6 +2569,20 @@ class DrawPage(
         c.contentResolver.query(uri, null, null, null, null)?.use { cur ->
             val idx = cur.getColumnIndex(OpenableColumns.DISPLAY_NAME)
             if (idx >= 0 && cur.moveToFirst()) cur.getString(idx) else null
+        }
+
+    /**
+     * 文件大小（字节）；问不出来返回 null。
+     *
+     * 为什么需要它：SAF 的 `openAssetFileDescriptor(uri).length` 对不少 provider 直接返回
+     * `UNKNOWN_LENGTH`（-1），而导入去重就是靠"大小相同"来认同一个文件 —— 没有大小就
+     * 退化成不去重，等于功能没生效。`OpenableColumns.SIZE` 是 provider 自己报的，SAF 基本
+     * 都实现；两者都拿不到时宁可不匹配（错判成"同一个文件"会把用户的另一个权重顶掉）。
+     */
+    private fun querySize(uri: Uri): Long? =
+        c.contentResolver.query(uri, null, null, null, null)?.use { cur ->
+            val idx = cur.getColumnIndex(OpenableColumns.SIZE)
+            if (idx >= 0 && cur.moveToFirst() && !cur.isNull(idx)) cur.getLong(idx) else null
         }
 
     /** 加载当前选中的模型集（「加载绘图模型」按钮） */

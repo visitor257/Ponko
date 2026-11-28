@@ -550,7 +550,11 @@ SDVersion ModelLoader::get_sd_version() const {
         if (tensor_storage.name.find("model.diffusion_model.double_stream_modulation_img.lin.weight") != std::string::npos) {
             is_flux2 = true;
         }
-        if (tensor_storage.name.find("dual_time_embed.semantic_embedder.linear_1.weight") != std::string::npos) {
+        // [Ponko 补丁] 原来只认完整的 `dual_time_embed.semantic_embedder.linear_1.weight`，
+        // 层号换一位、或者导出脚本把 semantic_embedder 改名，就判不出来，用户看到的就是
+        // 一句 "not supported"（issue #3 的 sefi turbo）。`dual_time_embed.` 这个前缀是
+        // SEFI 独有的，放宽到前缀不会撞到别家架构。
+        if (tensor_storage.name.find("dual_time_embed.") != std::string::npos) {
             return VERSION_SEFI_IMAGE;
         }
         if (tensor_storage.name.find("single_blocks.47.linear1.weight") != std::string::npos) {
@@ -805,6 +809,27 @@ SDVersion ModelLoader::get_sd_version() const {
             return has_attn_1024 ? VERSION_SDXS_09 : VERSION_SD2_TINY_UNET;
         }
         return VERSION_SD2;
+    }
+    // [Ponko 补丁] 认不出架构时，把"见过什么张量"写进日志。
+    //
+    // 上层拿到 VERSION_COUNT 只会打一句 "get sd version from file failed"，用户报
+    // "not supported" 时我们手上没有任何线索，只能猜他导的是什么权重（issue #3 的
+    // sefi turbo 就是这样卡住的）。判定全靠张量名，那就把前若干个张量名原样吐出来，
+    // 下一次照着真实命名补一条判定即可，不用再靠猜。
+    {
+        std::string sample;
+        int         n = 0;
+        for (const auto& kv : tensor_storage_map) {
+            if (n++ >= 12) {
+                break;
+            }
+            if (!sample.empty()) {
+                sample += ", ";
+            }
+            sample += kv.first;
+        }
+        LOG_ERROR("unknown architecture - no version rule matched; first %d tensors: %s", n - 1,
+                  sample.c_str());
     }
     return VERSION_COUNT;
 }

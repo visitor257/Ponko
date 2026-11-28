@@ -837,4 +837,5 @@ Try a different word, or tap Clear above.</string>
     <string name="s_839">Prediction type</string>
     <string name="s_840">Read at load time, like FlashAttention — unload and load again after changing it. Auto follows whatever the model itself declares; only override when the picture comes out wrong (cosXL and other EDM v-pred models are the common case).</string>
     <string name="s_841">Auto</string>
+    <string name="s_842">%1$s is already in the model set \"%2$s\" (same name, same size). Switched to it and skipped the copy. To give the same file a second set of slot files, rename it and import again.</string>
 </resources>
